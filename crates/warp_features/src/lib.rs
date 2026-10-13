@@ -1015,6 +1015,16 @@ pub enum FeatureFlag {
     /// Removes every Warp Drive entry point (tools panel tab, palette and
     /// command-search results, menus, settings page and keybindings).
     DisableWarpDrive,
+
+    /// warpr kill switch: when enabled, every surface that talks to Warp's
+    /// hosted agent backend (Agent Mode and AI input, agent conversations,
+    /// `warp_multi_agent_api` traffic, AI suggestions, cloud/ambient agents) is
+    /// hidden or inert. The code stays in the tree so it can be revisited.
+    DisableHostedAgent,
+
+    /// warpr kill switch: when enabled, no usage telemetry is recorded, persisted
+    /// or sent to Warp's servers, and crash reporting is not started.
+    DisableUsageTelemetry,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

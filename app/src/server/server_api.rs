@@ -597,6 +597,26 @@ impl ServerApi {
         )
     }
 
+    /// `send_graphql_request` for operations served by Warp's hosted agent backend; refuses to
+    /// send them while the `DisableHostedAgent` kill switch is on.
+    pub(crate) fn send_hosted_agent_graphql_request<
+        'a,
+        QF,
+        O: warp_graphql::client::Operation<QF> + Send + 'a,
+    >(
+        &'a self,
+        operation: O,
+        timeout: Option<Duration>,
+    ) -> BoxFuture<'a, Result<QF>>
+    where
+        QF: 'a,
+    {
+        Box::pin(async move {
+            warp_server_client::ensure_hosted_agent_enabled()?;
+            self.send_graphql_request(operation, timeout).await
+        })
+    }
+
     fn send_graphql_request_for_team<'a, QF, O: warp_graphql::client::Operation<QF> + Send + 'a>(
         &'a self,
         operation: O,
@@ -642,6 +662,7 @@ impl ServerApi {
         run_ids: &[String],
         since_sequence: i64,
     ) -> Result<http_client::EventSourceStream> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         debug_assert!(!run_ids.is_empty(), "run_ids must not be empty");
         let auth_token = self
             .get_or_refresh_access_token()
@@ -677,6 +698,7 @@ impl ServerApi {
         include_self: bool,
         since_sequence: i64,
     ) -> Result<http_client::EventSourceStream> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         debug_assert!(
             !ancestor_run_id.is_empty(),
             "ancestor_run_id must not be empty"
@@ -715,6 +737,7 @@ impl ServerApi {
         run_ids: &[String],
         since_sequence: i64,
     ) -> Result<http_client::EventSourceStream> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         debug_assert!(!run_ids.is_empty(), "run_ids must not be empty");
         let auth_token = self
             .get_or_refresh_access_token()
@@ -765,6 +788,8 @@ impl ServerApi {
     where
         B: Serialize,
     {
+        // Public API routes are all served by the hosted agent backend.
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -805,6 +830,7 @@ impl ServerApi {
     where
         R: serde::de::DeserializeOwned,
     {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -929,6 +955,7 @@ impl ServerApi {
     where
         B: Serialize,
     {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -982,6 +1009,7 @@ impl ServerApi {
 
     /// Sends a DELETE request to a public API endpoint that returns no response body.
     async fn delete_public_api_unit(&self, path: &str) -> Result<()> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -1015,6 +1043,7 @@ impl ServerApi {
     where
         B: Serialize,
     {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -1172,6 +1201,7 @@ impl ServerApi {
         team_scope: RequestTeamScope,
     ) -> Result<generate_ai_input_suggestions::GenerateAIInputSuggestionsResponseV2, AIApiError>
     {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
 
         let mut request_builder = self.base_client.http_client().post(format!(
@@ -1201,6 +1231,7 @@ impl ServerApi {
         request: &GetRelevantFiles,
         team_scope: RequestTeamScope,
     ) -> Result<GetRelevantFilesResponse, AIApiError> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
 
         let mut request_builder = self.base_client.http_client().post(format!(
@@ -1231,6 +1262,7 @@ impl ServerApi {
         request: &GenerateAMQuerySuggestionsRequest,
         team_scope: RequestTeamScope,
     ) -> Result<generate_am_query_suggestions::GenerateAMQuerySuggestionsResponse, AIApiError> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
 
         cfg_if::cfg_if! {
@@ -1270,6 +1302,7 @@ impl ServerApi {
         request: &PredictAMQueriesRequest,
         team_scope: RequestTeamScope,
     ) -> Result<PredictAMQueriesResponse, AIApiError> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
         let mut request_builder = self.base_client.http_client().post(format!(
             "{}/ai/predict_am_queries",
@@ -1299,6 +1332,7 @@ impl ServerApi {
         request: &TranscribeRequest,
         team_scope: RequestTeamScope,
     ) -> Result<TranscribeResponse, TranscribeError> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
 
         let mut request_builder = self

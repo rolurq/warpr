@@ -41,7 +41,9 @@ impl ManagedMcpClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = CreateManagedMcpClientConfig::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.create_managed_mcp_client_config {
             CreateManagedMcpClientConfigResult::CreateManagedMcpClientConfigOutput(output) => {

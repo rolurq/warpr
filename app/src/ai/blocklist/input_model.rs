@@ -455,6 +455,14 @@ impl BlocklistAIInputModel {
         decision_source: Option<InputTypeAutoDetectionSource>,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
+        // Unlocked AI input is only reachable via NL autodetection, which hands the query to
+        // Warp's hosted agent. Locked AI input stays policy-gated (agent view / CLI rich input).
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            && new_config.input_type.is_ai()
+            && !new_config.is_locked
+        {
+            return false;
+        }
         // Locking the input to AI is only allowed when the view's policy permits it (e.g. the
         // GUI only allows it inside an agent view or an open CLI agent rich input session).
         if new_config.input_type.is_ai()

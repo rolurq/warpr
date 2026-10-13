@@ -210,6 +210,9 @@ pub enum EnablementState {
 
 impl EnablementState {
     pub fn is_enabled(&self) -> bool {
+        if FeatureFlag::DisableUsageTelemetry.is_enabled() {
+            return false;
+        }
         match self {
             EnablementState::Always => true,
             EnablementState::Flag(flag) => flag.is_enabled(),

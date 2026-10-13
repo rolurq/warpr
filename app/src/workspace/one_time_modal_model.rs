@@ -452,6 +452,10 @@ impl OneTimeModalModel {
     }
 
     fn set_chatgpt_plan_modal_open(&mut self, is_open: bool, ctx: &mut ModelContext<Self>) -> bool {
+        // This modal advertises or bills Warp's hosted agent.
+        if is_open && FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         if self.is_chatgpt_plan_modal_open != is_open {
             self.is_chatgpt_plan_modal_open = is_open;
             ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });
@@ -587,6 +591,9 @@ impl OneTimeModalModel {
     }
 
     fn set_oz_launch_modal_open(&mut self, is_open: bool, ctx: &mut ModelContext<Self>) -> bool {
+        if is_open && FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         if self.is_oz_launch_modal_open != is_open {
             self.is_oz_launch_modal_open = is_open;
             ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });
@@ -613,6 +620,9 @@ impl OneTimeModalModel {
         is_open: bool,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
+        if is_open && FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         if self.is_orchestration_launch_modal_open != is_open {
             self.is_orchestration_launch_modal_open = is_open;
             ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });
@@ -626,6 +636,9 @@ impl OneTimeModalModel {
         is_open: bool,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
+        if is_open && FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         if self.is_agent_cli_launch_modal_open != is_open {
             self.is_agent_cli_launch_modal_open = is_open;
             ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });
@@ -709,6 +722,9 @@ impl OneTimeModalModel {
         is_open: bool,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
+        if is_open && FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         if self.is_free_ai_removal_modal_open != is_open {
             self.is_free_ai_removal_modal_open = is_open;
             ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });
@@ -978,6 +994,9 @@ impl OneTimeModalModel {
         is_open: bool,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
+        if is_open && FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         if self.is_build_plan_migration_modal_open != is_open {
             self.is_build_plan_migration_modal_open = is_open;
             ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });

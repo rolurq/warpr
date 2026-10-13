@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use instant::Instant;
 use parking_lot::FairMutex;
+use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warpui::r#async::SpawnedFutureHandle;
 use warpui::keymap::Keystroke;
@@ -26,6 +27,8 @@ pub enum EnterAgentViewError {
     AlreadyInAgentView,
     #[error("Cannot enter agent mode while a command is running.")]
     LongRunningCommand,
+    #[error("Agent mode is unavailable.")]
+    HostedAgentDisabled,
 }
 
 /// Error returned when exiting the agent view fails.
@@ -781,6 +784,10 @@ impl AgentViewController {
         display_mode: AgentViewDisplayMode,
         ctx: &mut ModelContext<Self>,
     ) -> Result<AIConversationId, EnterAgentViewError> {
+        // Agent view hosts conversations with Warp's hosted agent.
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return Err(EnterAgentViewError::HostedAgentDisabled);
+        }
         self.clear_pending_confirmation(ctx);
         match &self.agent_view_state {
             AgentViewState::Active {

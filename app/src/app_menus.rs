@@ -70,8 +70,11 @@ pub fn menu_bar(ctx: &mut AppContext) -> MenuBar {
         make_new_view_menu(ctx),
         make_new_tab_menu(ctx),
         make_new_blocks_menu(ctx),
-        make_new_ai_menu(ctx),
     ];
+    // Every item in the AI menu drives Warp's hosted agent.
+    if !FeatureFlag::DisableHostedAgent.is_enabled() {
+        menus.push(make_new_ai_menu(ctx));
+    }
     if !FeatureFlag::DisableWarpDrive.is_enabled() {
         menus.push(make_new_drive_menu(ctx));
     }
@@ -396,7 +399,6 @@ fn make_new_view_menu(ctx: &AppContext) -> Menu {
         updateable_custom_item_without_checkmark(CustomAction::LaunchConfigPalette, ctx),
         updateable_custom_item_without_checkmark(CustomAction::FilesPalette, ctx),
         updateable_custom_item_without_checkmark(CustomAction::ToggleProjectExplorer, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::ToggleConversationListView, ctx),
         updateable_custom_item_without_checkmark(CustomAction::ToggleGlobalSearch, ctx),
         MenuItem::Separator,
         updateable_custom_item_without_checkmark(CustomAction::History, ctx),
@@ -450,6 +452,14 @@ fn make_new_view_menu(ctx: &AppContext) -> Menu {
             None,
         )),
     ]);
+
+    if !FeatureFlag::DisableHostedAgent.is_enabled() {
+        // Keep it grouped with the other left-panel toggles, right after Project Explorer.
+        items.insert(
+            7,
+            updateable_custom_item_without_checkmark(CustomAction::ToggleConversationListView, ctx),
+        );
+    }
 
     let is_compact_mode = matches!(
         TerminalSettings::handle(ctx)

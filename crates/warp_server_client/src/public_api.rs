@@ -112,6 +112,8 @@ impl BaseClient {
         path: &str,
         team_uid: Option<ServerId>,
     ) -> Result<http_client::Response> {
+        // Every public API route is served by the hosted agent backend.
+        crate::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await

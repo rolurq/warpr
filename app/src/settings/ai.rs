@@ -2263,6 +2263,11 @@ impl AISettings {
     }
 
     pub fn is_any_ai_enabled(&self, app: &AppContext) -> bool {
+        // Every AI surface is backed by Warp's hosted agent; none of them may appear without it.
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
+
         // Disable AI for anonymous and logged-out users.
         let is_anonymous_or_logged_out = AuthStateProvider::as_ref(app)
             .get()

@@ -186,6 +186,12 @@ pub(crate) fn init(ctx: &mut AppContext) -> bool {
         return false;
     }
 
+    // Crash and error reports go to Warp's Sentry project, which a warpr session must never reach.
+    if FeatureFlag::DisableUsageTelemetry.is_enabled() {
+        log::info!("Usage telemetry is disabled; not initializing sentry.");
+        return false;
+    }
+
     let window_manager = WindowManager::handle(ctx);
     ctx.subscribe_to_model(&window_manager, |_, event, _| match event {
         StateEvent::ValueChanged { current, previous } => {

@@ -1776,7 +1776,9 @@ impl ServerApi {
             },
             request_context: get_request_context(),
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
         let (config, attachments) = match response.task {
             BootstrapTaskResult::TaskOutput(output) => (
                 output.task.execution_config,
@@ -1894,7 +1896,7 @@ impl ServerApi {
         };
         let operation = TaskGitCredentials::build(variables);
         let response = self
-            .send_graphql_request(operation, None)
+            .send_hosted_agent_graphql_request(operation, None)
             .await
             .map_err(TaskGitCredentialsError::Request)?;
 
@@ -1932,7 +1934,7 @@ impl ServerApi {
         };
         let operation = TaskGitCredentialsLegacy::build(variables);
         let response = self
-            .send_graphql_request(operation, None)
+            .send_hosted_agent_graphql_request(operation, None)
             .await
             .map_err(TaskGitCredentialsError::Request)?;
 
@@ -2027,7 +2029,7 @@ impl AIClient for ServerApi {
 
         let operation = GenerateCommands::build(variables);
         let response = self
-            .send_graphql_request(
+            .send_hosted_agent_graphql_request(
                 operation,
                 Some(Duration::from_secs(AI_ASSISTANT_REQUEST_TIMEOUT_SECONDS)),
             )
@@ -2074,7 +2076,7 @@ impl AIClient for ServerApi {
 
         let operation = GenerateDialogue::build(variables);
         let response = self
-            .send_graphql_request(
+            .send_hosted_agent_graphql_request(
                 operation,
                 Some(Duration::from_secs(AI_ASSISTANT_REQUEST_TIMEOUT_SECONDS)),
             )
@@ -2117,7 +2119,7 @@ impl AIClient for ServerApi {
 
         let operation = GenerateMetadataForCommand::build(variables);
         let response = self
-            .send_graphql_request(
+            .send_hosted_agent_graphql_request(
                 operation,
                 Some(Duration::from_secs(AI_ASSISTANT_REQUEST_TIMEOUT_SECONDS)),
             )
@@ -2156,7 +2158,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = GetRequestLimitInfo::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.user {
             warp_graphql::queries::get_request_limit_info::UserResult::UserOutput(user_output) => {
@@ -2217,7 +2221,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = GetAICreditAvailability::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.user {
             warp_graphql::queries::get_ai_credit_availability::UserResult::UserOutput(output) => {
@@ -2238,7 +2244,9 @@ impl AIClient for ServerApi {
         let operation = GetChatGPTConnection::build(GetChatGPTConnectionVariables {
             request_context: get_request_context(),
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.user {
             UserResult::UserOutput(output) => Ok(match output.user.chatgpt_connection {
@@ -2258,7 +2266,9 @@ impl AIClient for ServerApi {
         let operation = DisconnectChatGPT::build(DisconnectChatGPTVariables {
             request_context: get_request_context(),
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.disconnect_chatgpt {
             DisconnectChatGPTResult::DisconnectChatGPTOutput(_) => Ok(()),
@@ -2274,7 +2284,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
             continue_url,
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.start_chatgpt_link {
             StartChatGPTLinkResult::StartChatGPTLinkOutput(output) => Ok(output.authorization_url),
@@ -2297,7 +2309,9 @@ impl AIClient for ServerApi {
             limit,
             last_updated_end_timestamp,
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
         match response.user {
             UserResult::UserOutput(output) => Ok(output.user.conversation_usage),
             UserResult::Unknown => Err(anyhow!("Unable to fetch conversation usage")),
@@ -2309,7 +2323,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = GetFeatureModelChoices::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.user {
             warp_graphql::queries::get_feature_model_choices::UserResult::UserOutput(
@@ -2330,7 +2346,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = GetAvailableHarnesses::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.user {
             warp_graphql::queries::get_available_harnesses::UserResult::UserOutput(output) => {
@@ -2365,6 +2383,7 @@ impl AIClient for ServerApi {
         &self,
         referrer: Option<String>,
     ) -> Result<ModelsByFeature, anyhow::Error> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         // This resolver is public; it does not require an auth token. We must NOT go through
         // `send_graphql_request`, which awaits `get_or_refresh_access_token()`
         let variables = FreeAvailableModelsVariables {
@@ -2421,7 +2440,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = UpdateMerkleTree::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.update_merkle_tree {
             UpdateMerkleTreeResult::UpdateMerkleTreeOutput(output) => {
@@ -2457,7 +2478,9 @@ impl AIClient for ServerApi {
         };
 
         let operation = GenerateCodeEmbeddings::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.generate_code_embeddings {
             GenerateCodeEmbeddingsResult::GenerateCodeEmbeddingsOutput(output) => {
@@ -2491,7 +2514,9 @@ impl AIClient for ServerApi {
         };
 
         let operation = ProvideNegativeFeedbackResponseForAiConversation::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.provide_negative_feedback_response_for_ai_conversation {
             RequestsRefundedResult::RequestsRefundedOutput(output) => Ok(output.requests_refunded),
@@ -2551,6 +2576,7 @@ impl AIClient for ServerApi {
         };
 
         let operation = CreateAgentTask::build(variables);
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let response = self
             .send_graphql_request_for_team(operation, team_scope)
             .await?;
@@ -2600,7 +2626,9 @@ impl AIClient for ServerApi {
         };
 
         let operation = UpdateAgentTask::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.update_agent_task {
             UpdateAgentTaskResult::UpdateAgentTaskOutput(_) => Ok(()),
@@ -2733,7 +2761,9 @@ impl AIClient for ServerApi {
         };
 
         let operation = GetScheduledAgentHistory::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.scheduled_agent_history {
             ScheduledAgentHistoryResult::ScheduledAgentHistoryOutput(output) => Ok(output.history),
@@ -2763,7 +2793,9 @@ impl AIClient for ServerApi {
             },
             request_context: get_request_context(),
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         let gql_conversation = match response.list_ai_conversations {
             ListAIConversationsResult::ListAIConversationsOutput(output) => output
@@ -2796,7 +2828,9 @@ impl AIClient for ServerApi {
         &self,
         conversation_ids: Option<Vec<String>>,
     ) -> anyhow::Result<Vec<ServerAIConversationMetadata>> {
-        if !FeatureFlag::CloudConversations.is_enabled() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !FeatureFlag::CloudConversations.is_enabled()
+        {
             return Ok(vec![]);
         }
         use warp_graphql::queries::list_ai_conversations::{
@@ -2815,7 +2849,9 @@ impl AIClient for ServerApi {
         };
 
         let operation = ListAIConversationMetadata::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.list_ai_conversations {
             ListAIConversationMetadataResult::ListAIConversationsOutput(output) => {
@@ -2852,7 +2888,9 @@ impl AIClient for ServerApi {
             },
             request_context: get_request_context(),
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.list_ai_conversations {
             GetAIConversationFormatResult::ListAIConversationsOutput(output) => {
@@ -2903,7 +2941,9 @@ impl AIClient for ServerApi {
         };
 
         let operation = DeleteAIConversation::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.delete_conversation {
             DeleteConversationResult::DeleteConversationOutput(_) => Ok(()),
@@ -3152,7 +3192,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = SetupFailureDebugAuthorization::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.setup_failure_debug_authorization {
             SetupFailureDebugAuthorizationResult::SetupFailureDebugAuthorizationOutput(output) => {
@@ -3179,7 +3221,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = TaskAttachmentsQuery::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         task_attachments_from_result(response.task)
     }
@@ -3201,7 +3245,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = CreateFileArtifactUploadTarget::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.create_file_artifact_upload_target {
             CreateFileArtifactUploadTargetResult::CreateFileArtifactUploadTargetOutput(output) => {
@@ -3252,7 +3298,9 @@ impl AIClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = ConfirmFileArtifactUpload::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.confirm_file_artifact_upload {
             ConfirmFileArtifactUploadResult::ConfirmFileArtifactUploadOutput(output) => {
@@ -3523,6 +3571,7 @@ impl AIClient for ServerApi {
         &self,
         request: GenerateCodeReviewContentRequest,
     ) -> Result<GenerateCodeReviewContentResponse, anyhow::Error> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
         let request_builder = self.base_client.http_client().post(format!(
             "{}/ai/generate_code_review_content",
@@ -3950,7 +3999,9 @@ impl StoreClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = PopulateMerkleTreeCache::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.populate_merkle_tree_cache {
             PopulateMerkleTreeCacheResult::PopulateMerkleTreeCacheOutput(output) => {
@@ -3981,7 +4032,9 @@ impl StoreClient for ServerApi {
         };
 
         let operation = SyncMerkleTree::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.sync_merkle_tree {
             SyncMerkleTreeResult::SyncMerkleTreeOutput(output) => {
@@ -4010,7 +4063,9 @@ impl StoreClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = RerankFragments::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.rerank_fragments {
             RerankFragmentsResult::RerankFragmentsOutput(output) => Ok(output
@@ -4041,7 +4096,9 @@ impl StoreClient for ServerApi {
             repo_metadata: repo_metadata.into(),
         };
         let operation = GetRelevantFragmentsQuery::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.get_relevant_fragments {
             GetRelevantFragmentsResult::GetRelevantFragmentsOutput(output) => Ok(output
@@ -4068,7 +4125,9 @@ impl StoreClient for ServerApi {
             request_context: get_request_context(),
         };
         let operation = CodebaseContextConfigQuery::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.codebase_context_config {
             CodebaseContextConfigResult::CodebaseContextConfigOutput(output) => {
