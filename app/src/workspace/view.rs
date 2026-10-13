@@ -10,6 +10,7 @@ mod crash_recovery;
 pub(crate) mod feature_intro_modal;
 pub(crate) mod free_ai_removal_modal;
 pub mod global_search;
+mod herdr_tabs;
 pub(crate) mod launch_modal;
 pub(crate) mod left_panel;
 pub(crate) mod onboarding;
@@ -3436,6 +3437,8 @@ impl Workspace {
             ctx.notify();
         });
 
+        Self::subscribe_to_herdr_session(ctx);
+
         ctx.subscribe_to_model(
             &crate::workspace::bonus_grant_notification_model::BonusGrantNotificationModel::handle(
                 ctx,
@@ -3606,6 +3609,7 @@ impl Workspace {
         };
 
         ws.configure_new_workspace(workspace_setting, ctx);
+        ws.present_herdr_workspaces(ctx);
         ws.sync_panel_positions_from_config(ctx);
         ws.sync_window_button_visibility(ctx);
         ws.update_titlebar_height(ctx);

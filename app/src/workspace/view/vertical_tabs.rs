@@ -4470,6 +4470,7 @@ impl PaneGroup {
             IPaneType::ExecutionProfileEditor => TypedPane::ExecutionProfileEditor,
             IPaneType::CustomRouterEditor
             | IPaneType::GetStarted
+            | IPaneType::HerdrWorkspace
             | IPaneType::NetworkLog
             | IPaneType::DeferredPlaceholder => TypedPane::Other,
             #[cfg(test)]

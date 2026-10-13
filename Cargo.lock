@@ -6298,6 +6298,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "herdr_client"
+version = "0.1.0"
+dependencies = [
+ "command",
+ "herdr_fake",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "herdr_fake"
+version = "0.1.0"
+dependencies = [
+ "command",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15338,6 +15358,8 @@ dependencies = [
  "gloo",
  "handlebars",
  "hashbrown 0.17.1",
+ "herdr_client",
+ "herdr_fake",
  "hex",
  "http 1.4.0",
  "http_client",

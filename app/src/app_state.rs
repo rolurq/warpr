@@ -153,6 +153,15 @@ pub enum LeafContents {
     NetworkLog,
     /// A new first-time user experience which prioritizes choosing a coding repository.
     GetStarted,
+    /// Stands in for a Herdr workspace in its top-level tab. Herdr owns the workspace, so it is
+    /// not persisted.
+    HerdrWorkspace(HerdrWorkspaceSnapshot),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HerdrWorkspaceSnapshot {
+    pub workspace_id: herdr_client::WorkspaceId,
+    pub label: String,
 }
 
 #[cfg(feature = "local_fs")]
@@ -172,6 +181,9 @@ impl LeafContents {
             // starts empty on launch; persisting would also regress back to
             // an on-disk log via the app-state database.
             LeafContents::NetworkLog
+            // Herdr is the source of truth for its workspaces, and a restored session reconnects
+            // to it.
+            | LeafContents::HerdrWorkspace(_)
             // Environment management panes are opened on-demand via workspace
             // actions and have no persistable state.
             | LeafContents::EnvironmentManagement(_) => false,

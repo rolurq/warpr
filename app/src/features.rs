@@ -249,6 +249,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::SyncAmbientPlans,
         #[cfg(feature = "get_started_tab")]
         FeatureFlag::GetStartedTab,
+        #[cfg(feature = "herdr_workspace_tabs")]
+        FeatureFlag::HerdrWorkspaceTabs,
         #[cfg(feature = "projects")]
         FeatureFlag::Projects,
         #[cfg(feature = "drive_objects_as_context")]
