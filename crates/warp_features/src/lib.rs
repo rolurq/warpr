@@ -1006,6 +1006,15 @@ pub enum FeatureFlag {
     /// mirrors kept in the persistent build cache instead of cloning each one
     /// from the remote. Disabling it restores direct, network-only checkouts.
     GitMirrorCache,
+
+    /// Removes every Warp account surface: the login wall, onboarding sign-up
+    /// slides, sign-in/sign-up prompts and the account, billing, teams and
+    /// referral settings pages. Used by warpr, which never requires a Warp account.
+    DisableWarpAccount,
+
+    /// Removes every Warp Drive entry point (tools panel tab, palette and
+    /// command-search results, menus, settings page and keybindings).
+    DisableWarpDrive,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

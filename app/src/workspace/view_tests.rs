@@ -5824,3 +5824,27 @@ fn test_tab_group_rename_blur_does_not_commit_unfinished_name() {
         });
     });
 }
+
+#[test]
+fn warp_drive_bindings_are_hidden_when_warp_drive_is_disabled() {
+    const DRIVE_BINDINGS: [&str; 3] = [
+        "workspace:search_drive",
+        "workspace:toggle_warp_drive",
+        "workspace:left_panel_warp_drive",
+    ];
+
+    let _disable_drive = FeatureFlag::DisableWarpDrive.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        app.update(|ctx| {
+            for name in DRIVE_BINDINGS {
+                assert!(
+                    !ctx.editable_bindings().any(|binding| binding.name == name),
+                    "{name} must not be listed when Warp Drive is disabled"
+                );
+            }
+        });
+    });
+}

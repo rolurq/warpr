@@ -136,7 +136,7 @@ impl FromStr for UriHost {
 
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "auth" => Ok(Self::Auth),
+            "auth" if !FeatureFlag::DisableWarpAccount.is_enabled() => Ok(Self::Auth),
             "team" => Ok(Self::Team),
             "action" => Ok(Self::Action),
             "launch" => Ok(Self::Launch),

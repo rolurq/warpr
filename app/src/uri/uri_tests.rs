@@ -1116,3 +1116,11 @@ fn test_decode_uuid_hex_rejects_wrong_length() {
 fn test_decode_uuid_hex_rejects_invalid_chars() {
     assert!(super::decode_uuid_hex("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ").is_none());
 }
+
+#[test]
+fn test_auth_uri_host_is_rejected_when_warp_account_is_disabled() {
+    assert!(matches!(UriHost::from_str("auth"), Ok(UriHost::Auth)));
+
+    let _disable_account = FeatureFlag::DisableWarpAccount.override_enabled(true);
+    assert!(UriHost::from_str("auth").is_err());
+}

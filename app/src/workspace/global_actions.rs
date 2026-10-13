@@ -10,6 +10,7 @@ use warpui::{AppContext, SingletonEntity, TypedActionView};
 use crate::ai::agent::AIAgentExchangeId;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::app_state::get_app_state;
+use crate::features::FeatureFlag;
 use crate::network::NetworkStatus;
 use crate::persistence::ModelEvent;
 use crate::root_view::OpenPath;
@@ -93,10 +94,12 @@ pub fn init_global_actions(app: &mut AppContext) {
         "workspace:toggle_debug_network_status",
         toggle_debug_network_status,
     );
-    app.add_global_action(
-        "workspace:debug_create_anonymous_user",
-        create_anonymous_user,
-    );
+    if !FeatureFlag::DisableWarpAccount.is_enabled() {
+        app.add_global_action(
+            "workspace:debug_create_anonymous_user",
+            create_anonymous_user,
+        );
+    }
     app.add_global_action("workspace:open_repository", open_repository);
     app.add_global_action("app:undo_close", undo_close);
     app.add_global_action("app:maybe_log_out", trigger_maybe_log_out);

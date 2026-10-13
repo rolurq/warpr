@@ -6799,6 +6799,9 @@ impl Workspace {
                 );
             }
             LeftPanelEvent::SignInRequested => {
+                if FeatureFlag::DisableWarpAccount.is_enabled() {
+                    return;
+                }
                 self.open_require_login_modal(AuthViewVariant::RequireLoginCloseable, ctx);
                 self.require_login_modal.update(ctx, |modal, ctx| {
                     modal.start_sign_in(ctx);
@@ -9515,6 +9518,9 @@ impl Workspace {
         explicit_user_action: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        if FeatureFlag::DisableWarpDrive.is_enabled() {
+            return;
+        }
         // Closing all left panels will also close warp drive so we need to retrieve
         // whether warp drive was open first, and toggle based on the initial value.
         let was_warp_drive_open = self.current_workspace_state.is_warp_drive_open;
@@ -10087,12 +10093,17 @@ impl Workspace {
                 .into_item(),
         );
 
-        items.extend([
+        items.push(
             MenuItemFields::new("Join our Slack community")
                 .with_on_select_action(WorkspaceAction::JoinSlack)
                 .into_item(),
-            MenuItem::Separator,
-        ]);
+        );
+
+        // Sign-up, plan and referral entries all depend on a Warp account.
+        if FeatureFlag::DisableWarpAccount.is_enabled() {
+            return items;
+        }
+        items.push(MenuItem::Separator);
 
         if self.auth_state.is_anonymous_or_logged_out() {
             items.push(
@@ -14965,6 +14976,9 @@ impl Workspace {
     }
 
     fn open_require_login_modal(&mut self, variant: AuthViewVariant, ctx: &mut ViewContext<Self>) {
+        if FeatureFlag::DisableWarpAccount.is_enabled() {
+            return;
+        }
         self.require_login_modal.update(ctx, |modal, ctx| {
             modal.set_variant(ctx, variant);
         });
@@ -23912,6 +23926,9 @@ impl Workspace {
         entrypoint: AnonymousUserSignupEntrypoint,
         ctx: &mut ViewContext<Self>,
     ) {
+        if FeatureFlag::DisableWarpAccount.is_enabled() {
+            return;
+        }
         if self.auth_state.is_user_anonymous().unwrap_or_default() {
             // User has a Firebase anonymous account — use the linking flow.
             AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
@@ -24087,7 +24104,9 @@ impl Workspace {
                 entry_focus: GlobalSearchEntryFocus::Results,
             });
         }
-        if *WarpDriveSettings::as_ref(ctx).enable_warp_drive {
+        if *WarpDriveSettings::as_ref(ctx).enable_warp_drive
+            && !FeatureFlag::DisableWarpDrive.is_enabled()
+        {
             views.push(ToolPanelView::WarpDrive);
         }
         views

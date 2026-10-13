@@ -636,7 +636,8 @@ fn requires_post_onboarding_login(
     ai_enabled: bool,
     warp_drive_enabled: bool,
 ) -> bool {
-    !is_logged_in
+    !FeatureFlag::DisableWarpAccount.is_enabled()
+        && !is_logged_in
         && (FeatureFlag::AccountFirstOnboarding.is_enabled() || ai_enabled || warp_drive_enabled)
 }
 
@@ -1934,7 +1935,11 @@ impl RootView {
                     AuthOnboardingState::WebImport(AuthOnboardingTarget::Workspace(workspace_args.into()))
                 } else {
 
-                    if FeatureFlag::ForceLogin.is_enabled() {
+                    if FeatureFlag::DisableWarpAccount.is_enabled() {
+                        // Onboarding only exists to funnel users into a Warp account and
+                        // Warp's own agent, so with accounts disabled we go straight to the app.
+                        AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
+                    } else if FeatureFlag::ForceLogin.is_enabled() {
                         // ForceLogin is true for Preview
                         AuthOnboardingState::Auth(workspace_args.into())
                     } else if FeatureFlag::AgentOnboarding.is_enabled()

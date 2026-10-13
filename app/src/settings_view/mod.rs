@@ -2111,6 +2111,22 @@ impl SettingsView {
     }
 
     fn should_render_page(&self, settings_page: &SettingsPage, app: &AppContext) -> bool {
+        if FeatureFlag::DisableWarpAccount.is_enabled()
+            && matches!(
+                settings_page.section,
+                SettingsSection::BillingAndUsage
+                    | SettingsSection::Referrals
+                    | SettingsSection::SharedBlocks
+                    | SettingsSection::Teams
+            )
+        {
+            return false;
+        }
+        if FeatureFlag::DisableWarpDrive.is_enabled()
+            && settings_page.section == SettingsSection::WarpDrive
+        {
+            return false;
+        }
         match &settings_page.view_handle {
             SettingsPageViewHandle::Main(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Teams(v) => v.as_ref(app).should_render(app),
