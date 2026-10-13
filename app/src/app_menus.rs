@@ -904,12 +904,14 @@ fn debug_menu_items() -> Vec<MenuItem> {
             None,
         )));
 
-        debug_menu_items.push(MenuItem::Custom(CustomMenuItem::new(
-            "Create anonymous user",
-            move |ctx| ctx.dispatch_global_action("workspace:debug_create_anonymous_user", &()),
-            no_updates,
-            None,
-        )));
+        if !FeatureFlag::DisableWarpAccount.is_enabled() {
+            debug_menu_items.push(MenuItem::Custom(CustomMenuItem::new(
+                "Create anonymous user",
+                move |ctx| ctx.dispatch_global_action("workspace:debug_create_anonymous_user", &()),
+                no_updates,
+                None,
+            )));
+        }
     }
 
     if FeatureFlag::RuntimeFeatureFlags.is_enabled() {
