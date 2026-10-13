@@ -659,3 +659,48 @@ fn onboarding_slides_skip_content_deep_link_terminal() {
         });
     });
 }
+
+/// With Warp accounts disabled, a first launch must reach the workspace without a
+/// login wall or onboarding, even though the user has no credentials.
+#[test]
+fn root_view_new_reaches_workspace_without_login_when_warp_account_is_disabled() {
+    let _disable_account = FeatureFlag::DisableWarpAccount.override_enabled(true);
+    let _agent_onboarding = FeatureFlag::AgentOnboarding.override_enabled(true);
+    let _force_login = FeatureFlag::ForceLogin.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        crate::workspace::view::tests::initialize_app(&mut app);
+        app.update(|ctx| {
+            let auth_state = AuthStateProvider::as_ref(ctx).get();
+            auth_state.set_credentials(None);
+            auth_state.set_user(None);
+        });
+
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let (_, root_view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                global_resource_handles,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: None,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+
+        app.read(|ctx| {
+            assert!(matches!(
+                root_view.as_ref(ctx).auth_onboarding_state,
+                AuthOnboardingState::Terminal(_)
+            ));
+        });
+    });
+}
+
+#[test]
+fn no_login_is_required_after_onboarding_when_warp_account_is_disabled() {
+    let _disable_account = FeatureFlag::DisableWarpAccount.override_enabled(true);
+    let _account_first = FeatureFlag::AccountFirstOnboarding.override_enabled(true);
+
+    assert!(!requires_post_onboarding_login(false, true, true));
+}

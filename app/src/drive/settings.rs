@@ -47,6 +47,9 @@ impl WarpDriveSettings {
     /// feature remains unavailable until then.
     pub fn is_warp_drive_available(app: &warpui::AppContext) -> bool {
         use warpui::SingletonEntity as _;
+        if FeatureFlag::DisableWarpDrive.is_enabled() {
+            return false;
+        }
         !FeatureFlag::SkipFirebaseAnonymousUser.is_enabled()
             || !crate::auth::AuthStateProvider::as_ref(app)
                 .get()
@@ -60,3 +63,7 @@ impl WarpDriveSettings {
         *Self::as_ref(app).enable_warp_drive && Self::is_warp_drive_available(app)
     }
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

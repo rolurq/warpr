@@ -3,11 +3,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::anyhow;
+use warp_core::features::FeatureFlag;
+use warp_core::telemetry::testing::MockTelemetryContextProvider;
 use warpui::{App, SingletonEntity};
 
 use super::{AuthManager, AuthManagerEvent, request_device_code_with_timeout};
 use crate::ServerApiProvider;
-use crate::auth::auth_view_modal::AuthRedirectPayload;
+use crate::auth::auth_view_modal::{AuthRedirectPayload, AuthViewVariant};
 use crate::auth::credentials::{Credentials, LoginToken, RefreshToken};
 use crate::auth::user::{FirebaseAuthTokens, TEST_USER_UID, User};
 use crate::auth::{AuthStateProvider, UserUid};
@@ -349,5 +351,48 @@ fn test_persist_skips_when_api_key_authenticated() {
         AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
             auth_manager.persist(ctx);
         });
+    });
+}
+
+/// Logs the user out, attempts a login-gated feature, and reports whether the
+/// app asked to show a login prompt.
+fn login_prompt_requested_by_gated_feature(app: &mut App) -> bool {
+    app.add_singleton_model(|_ctx| ServerApiProvider::new_for_test());
+    app.add_singleton_model(|_| AuthStateProvider::new_logged_out_for_test());
+    app.add_singleton_model(AuthManager::new_for_test);
+    app.update(MockTelemetryContextProvider::register);
+
+    let prompted = Arc::new(AtomicBool::new(false));
+    let prompted_for_closure = prompted.clone();
+    app.update(|ctx| {
+        ctx.subscribe_to_model(&AuthManager::handle(ctx), move |_, event, _| {
+            if matches!(event, AuthManagerEvent::AttemptedLoginGatedFeature { .. }) {
+                prompted_for_closure.store(true, Ordering::Relaxed);
+            }
+        });
+    });
+
+    AuthManager::handle(app).update(app, |auth_manager, ctx| {
+        auth_manager.attempt_login_gated_feature(
+            "test_feature",
+            AuthViewVariant::RequireLoginCloseable,
+            ctx,
+        );
+    });
+    prompted.load(Ordering::Relaxed)
+}
+
+#[test]
+fn logged_out_user_is_prompted_to_log_in_for_gated_features() {
+    App::test((), |mut app| async move {
+        assert!(login_prompt_requested_by_gated_feature(&mut app));
+    });
+}
+
+#[test]
+fn gated_features_never_prompt_for_login_when_warp_account_is_disabled() {
+    let _disabled = FeatureFlag::DisableWarpAccount.override_enabled(true);
+    App::test((), |mut app| async move {
+        assert!(!login_prompt_requested_by_gated_feature(&mut app));
     });
 }
