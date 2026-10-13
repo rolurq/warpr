@@ -42,8 +42,12 @@ pub(crate) fn request(
     };
 
     let mut stream = UnixStream::connect(socket_path).map_err(unreachable)?;
-    stream.set_read_timeout(Some(TIMEOUT)).map_err(unreachable)?;
-    stream.set_write_timeout(Some(TIMEOUT)).map_err(unreachable)?;
+    stream
+        .set_read_timeout(Some(TIMEOUT))
+        .map_err(unreachable)?;
+    stream
+        .set_write_timeout(Some(TIMEOUT))
+        .map_err(unreachable)?;
 
     let request = json!({ "id": REQUEST_ID, "method": method, "params": params });
     writeln!(stream, "{request}").map_err(unreachable)?;

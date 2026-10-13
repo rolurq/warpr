@@ -99,6 +99,7 @@ use crate::palette::PaletteMode;
 use crate::pane_group::focus_state::PaneGroupFocusEvent;
 use crate::pane_group::pane::ActionOrigin;
 use crate::pane_group::pane::get_started_pane::GetStartedPane;
+use crate::pane_group::pane::herdr_workspace_pane::HerdrWorkspacePane;
 #[cfg(not(target_family = "wasm"))]
 use crate::pane_group::pane::terminal_pane::{
     host_terminal_shared_session_source_type, inherit_share_for_local_child,
@@ -2020,6 +2021,17 @@ impl PaneGroup {
                     };
                     Ok((PaneData::new(pane_id), focus))
                 }
+            }
+            LeafContents::HerdrWorkspace(workspace) => {
+                let pane: Box<dyn AnyPaneContent + 'static> =
+                    Box::new(HerdrWorkspacePane::new(workspace, ctx));
+                let pane_id = pane.as_pane().id();
+                pane_contents.insert(pane_id, pane);
+                let focus = InitialFocus {
+                    focused_pane: leaf.is_focused.then_some(pane_id),
+                    active_session: None,
+                };
+                Ok((PaneData::new(pane_id), focus))
             }
             LeafContents::EnvironmentManagement(_) => {
                 // Environment management panes are not restored from persistence.

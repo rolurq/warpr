@@ -79,7 +79,13 @@ impl Drop for FakeSession {
         if let Some(thread) = self.accept_thread.take() {
             let _ = thread.join();
         }
-        for stream in self.shared.subscribers.lock().expect("subscribers lock").drain(..) {
+        for stream in self
+            .shared
+            .subscribers
+            .lock()
+            .expect("subscribers lock")
+            .drain(..)
+        {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
         let _ = std::fs::remove_file(&self.socket_path);

@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::process::Command;
 
+use command::blocking::Command;
 use serde_json::{Value, json};
 
 use super::*;
@@ -79,7 +79,10 @@ fn unknown_methods_get_an_error_response() {
 
     let mut stream = UnixStream::connect(session.socket_path()).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
-    send(&mut stream, json!({"id": "x", "method": "nope", "params": {}}));
+    send(
+        &mut stream,
+        json!({"id": "x", "method": "nope", "params": {}}),
+    );
     let response = read_json(&mut reader);
 
     assert_eq!(response["id"], "x");

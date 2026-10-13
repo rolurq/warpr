@@ -20,6 +20,7 @@ pub(super) mod execution_profile_editor_pane;
 pub(super) mod file_pane;
 pub(super) mod get_started_pane;
 pub(super) mod get_started_view;
+pub(super) mod herdr_workspace_pane;
 #[cfg(not(target_family = "wasm"))]
 pub(super) mod local_harness_launch;
 pub(super) mod network_log_pane;
@@ -53,6 +54,7 @@ use crate::code::buffer_location::LocalOrRemotePath;
 use crate::code::view::CodeView;
 use crate::drive::sharing::ShareableObject;
 use crate::env_vars::view::env_var_collection::EnvVarCollectionView;
+use crate::herdr::HerdrWorkspaceView;
 use crate::menu::MenuItem;
 use crate::notebooks::file::FileNotebookView;
 use crate::notebooks::notebook::NotebookView;
@@ -145,6 +147,7 @@ pub(crate) enum IPaneType {
     CustomRouterEditor,
     ExecutionProfileEditor,
     GetStarted,
+    HerdrWorkspace,
     NetworkLog,
     DeferredPlaceholder,
     /// A pane type only for tests.
@@ -169,6 +172,7 @@ impl Display for IPaneType {
             IPaneType::CustomRouterEditor => write!(f, "Custom Router Editor"),
             IPaneType::ExecutionProfileEditor => write!(f, "Execution Profile Editor"),
             IPaneType::GetStarted => write!(f, "GetStarted"),
+            IPaneType::HerdrWorkspace => write!(f, "Herdr Workspace"),
             IPaneType::NetworkLog => write!(f, "Network Log"),
             IPaneType::DeferredPlaceholder => write!(f, "Placeholder"),
             #[cfg(test)]
@@ -267,6 +271,10 @@ impl PaneId {
 
     pub fn from_get_started_pane_ctx(ctx: &ViewContext<PaneView<GetStartedView>>) -> Self {
         Self::new_from_ctx(IPaneType::GetStarted, ctx)
+    }
+
+    pub fn from_herdr_workspace_pane_ctx(ctx: &ViewContext<PaneView<HerdrWorkspaceView>>) -> Self {
+        Self::new_from_ctx(IPaneType::HerdrWorkspace, ctx)
     }
 
     /// Creates a [`PaneId`] from a [`ViewContext<PaneView<NetworkLogView>>`].
@@ -369,6 +377,12 @@ impl PaneId {
         get_started_pane_view: &ViewHandle<PaneView<GetStartedView>>,
     ) -> Self {
         Self::new(IPaneType::GetStarted, get_started_pane_view)
+    }
+
+    pub fn from_herdr_workspace_pane_view(
+        herdr_workspace_pane_view: &ViewHandle<PaneView<HerdrWorkspaceView>>,
+    ) -> Self {
+        Self::new(IPaneType::HerdrWorkspace, herdr_workspace_pane_view)
     }
 
     /// Creates a [`PaneId`] from a [`PaneView<NetworkLogView>`] entity ID.
@@ -493,6 +507,9 @@ impl PaneId {
             }
             IPaneType::GetStarted => {
                 ChildView::<PaneView<GetStartedView>>::with_id(self.0.pane_view_id).finish()
+            }
+            IPaneType::HerdrWorkspace => {
+                ChildView::<PaneView<HerdrWorkspaceView>>::with_id(self.0.pane_view_id).finish()
             }
             IPaneType::NetworkLog => {
                 ChildView::<PaneView<NetworkLogView>>::with_id(self.0.pane_view_id).finish()

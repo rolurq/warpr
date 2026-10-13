@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::ConnectionFailure;
+
 /// The session Herdr starts and attaches to when none is named.
 pub const DEFAULT_SESSION: &str = "default";
 
@@ -56,6 +58,18 @@ impl SessionTarget {
         Self { name, socket_path }
     }
 
+    /// Locates the session called `name` for the current user.
+    pub fn for_current_user(name: &str) -> Result<Self, ConnectionFailure> {
+        let unresolvable = |reason: String| ConnectionFailure::SessionUnresolvable {
+            name: name.to_owned(),
+            reason,
+        };
+        let name = SessionName::new(name).map_err(|error| unresolvable(error.to_string()))?;
+        let config_dir = config_dir()
+            .ok_or_else(|| unresolvable("neither XDG_CONFIG_HOME nor HOME is set".to_owned()))?;
+        Ok(Self::new(&config_dir, name))
+    }
+
     pub fn name(&self) -> &SessionName {
         &self.name
     }
@@ -76,7 +90,10 @@ pub fn config_dir() -> Option<PathBuf> {
     )
 }
 
-pub(crate) fn config_dir_from(xdg_config_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+pub(crate) fn config_dir_from(
+    xdg_config_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Option<PathBuf> {
     let base = match xdg_config_home.filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => PathBuf::from(home.filter(|dir| !dir.is_empty())?).join(".config"),

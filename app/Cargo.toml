@@ -111,6 +111,7 @@ futures.workspace = true
 fuzzy_match.workspace = true
 getset.workspace = true
 handlebars.workspace = true
+herdr_client.workspace = true
 hex.workspace = true
 http.workspace = true
 http_client.workspace = true
@@ -421,6 +422,7 @@ ai = { workspace = true, features = ["test-util"] }
 async-process.workspace = true
 computer_use = { workspace = true, features = ["test-util"] }
 firebase.workspace = true
+herdr_fake.workspace = true
 jsonschema = { workspace = true, default-features = false }
 async-executor = "1.5.1"
 command = { workspace = true, features = ["test-util"] }
@@ -566,6 +568,7 @@ default = [
     "code_review_save_changes",
     "create_project_flow",
     "get_started_tab",
+    "herdr_workspace_tabs",
     "file_tree",
     "vim_code_editor",
     "code_launch_modal",
@@ -746,6 +749,7 @@ msys2_shells = []
 file_backed_execution_profiles = []
 file_retrieval_tools = []
 get_started_tab = []
+herdr_workspace_tabs = []
 code_mode_chip = []
 github_pr_prompt_chip = []
 create_project_flow = []

@@ -15,14 +15,13 @@ mod binary;
 mod script;
 mod server;
 
-pub use binary::Invocation;
-pub use script::SessionScript;
-pub use server::FakeSession;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub use binary::Invocation;
 use binary::ScriptedBinary;
+pub use script::SessionScript;
+pub use server::FakeSession;
 use tempfile::TempDir;
 
 /// A scratch Herdr config directory plus a scripted `herdr` executable.

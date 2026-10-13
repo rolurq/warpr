@@ -1,6 +1,8 @@
 use std::io;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
+
+use command::blocking::Command;
 
 use crate::SessionTarget;
 

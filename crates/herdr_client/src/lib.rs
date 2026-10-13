@@ -17,10 +17,9 @@ pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,
 };
-pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarget, config_dir};
-
 use serde::Deserialize;
 use serde_json::json;
+pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarget, config_dir};
 
 /// Connects to `target` and presents its current workspaces.
 ///

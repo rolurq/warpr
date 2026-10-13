@@ -384,6 +384,10 @@ pub enum FeatureFlag {
     /// A new first-time user experience which prioritizes choosing a coding repository.
     GetStartedTab,
 
+    /// Presents the workspaces of a Herdr session as top-level tabs. warpr is a Herdr client, so
+    /// this is on by default in its builds.
+    HerdrWorkspaceTabs,
+
     /// Enables Projects and Project management
     Projects,
 

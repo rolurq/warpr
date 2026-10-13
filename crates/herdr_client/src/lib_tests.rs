@@ -114,7 +114,10 @@ fn a_named_session_socket_sits_under_sessions() {
 #[test]
 fn session_names_cannot_escape_the_sessions_directory() {
     for name in ["", ".", "..", "a/b", "../x", "a\\b"] {
-        assert!(SessionName::new(name).is_err(), "{name:?} should be rejected");
+        assert!(
+            SessionName::new(name).is_err(),
+            "{name:?} should be rejected"
+        );
     }
 }
 
@@ -135,4 +138,14 @@ fn config_dir_prefers_xdg_config_home_and_falls_back_to_dot_config() {
         Some("/home/u/.config/herdr".into())
     );
     assert_eq!(config_dir_from(None, None), None);
+}
+
+#[test]
+fn an_invalid_session_name_is_reported_as_unresolvable() {
+    let failure = SessionTarget::for_current_user("../escape").unwrap_err();
+
+    assert!(matches!(
+        failure,
+        ConnectionFailure::SessionUnresolvable { .. }
+    ));
 }

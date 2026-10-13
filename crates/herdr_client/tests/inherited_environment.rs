@@ -3,9 +3,7 @@
 
 use std::path::Path;
 
-use herdr_client::{
-    ConnectionStatus, HerdrCli, SessionName, SessionTarget, present_session,
-};
+use herdr_client::{ConnectionStatus, HerdrCli, SessionName, SessionTarget, present_session};
 use herdr_fake::{FakeHerdr, SessionScript};
 
 fn labels(workspaces: &herdr_client::PresentedSession) -> Vec<&str> {

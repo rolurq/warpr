@@ -35,6 +35,8 @@ pub enum ConnectionFailure {
     Protocol(String),
     #[error("Herdr rejected the request ({code}): {message}")]
     Rejected { code: String, message: String },
+    #[error("could not locate the Herdr session {name:?}: {reason}")]
+    SessionUnresolvable { name: String, reason: String },
     #[error("Herdr sessions are only reachable over unix sockets, which this platform lacks")]
     UnsupportedPlatform,
 }
@@ -60,7 +62,7 @@ impl PresentedSession {
         Self::without_workspaces(ConnectionStatus::Connecting)
     }
 
-    pub(crate) fn failed(failure: ConnectionFailure) -> Self {
+    pub fn failed(failure: ConnectionFailure) -> Self {
         Self::without_workspaces(ConnectionStatus::Failed(failure))
     }
 
