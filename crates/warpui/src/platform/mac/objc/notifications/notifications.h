@@ -9,7 +9,10 @@ void warp_on_request_notification_permissions_completed(NSUInteger outcome_type,
                                                         void* callback);
 
 // Sends a desktop notification.
-void sendNotification(id, id, id, void*, BOOL);
+void sendNotification(id, id, id, id, void*, BOOL);
+
+// Removes a pending or delivered notification by its identifier.
+void withdrawNotification(id);
 
 // This method, implemented in Rust, invokes the callback to allow the App to
 // take action when a notification fails to send.

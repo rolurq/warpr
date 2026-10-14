@@ -35,9 +35,12 @@ unsafe extern "C" {
         title: id,
         body: id,
         data: id,
+        identifier: id,
         on_error_callback: *const c_void,
         play_sound: BOOL,
     );
+    // Withdraws a desktop notification by the identifier it was sent with.
+    fn withdrawNotification(identifier: id);
     fn isDarkMode() -> BOOL;
     fn registerGlobalHotkey(key_code: NSUInteger, modifiers_key: NSUInteger);
     fn unregisterGlobalHotkey(key_code: NSUInteger, modifiers_key: NSUInteger);
@@ -45,6 +48,10 @@ unsafe extern "C" {
     fn absolutePathForApplicationBundleWithIdentifier(bundle_identifier: id) -> id;
     fn isVoiceOverEnabled() -> BOOL;
 }
+
+/// What a notification is named when its sender gives it no name, so each such notification
+/// replaces the previous one.
+const DEFAULT_NOTIFICATION_IDENTIFIER: &str = "CUSTOMIZED_NOTIFICATION";
 
 type RequestNotificationPermissionsCallback = Box<dyn FnOnce(RequestPermissionsOutcome) + Send>;
 type NotificationSendErrorCallback = Box<dyn FnOnce(NotificationSendError) + Send>;
@@ -340,6 +347,11 @@ impl platform::Delegate for AppDelegate {
                 make_nsstring(notification_content.title()),
                 make_nsstring(notification_content.body()),
                 make_nsstring(notification_content.data().unwrap_or_default()),
+                make_nsstring(
+                    notification_content
+                        .identifier()
+                        .unwrap_or(DEFAULT_NOTIFICATION_IDENTIFIER),
+                ),
                 Box::into_raw(Box::new(callback)) as *const c_void,
                 if notification_content.play_sound() {
                     YES
@@ -348,6 +360,10 @@ impl platform::Delegate for AppDelegate {
                 },
             );
         };
+    }
+
+    fn withdraw_desktop_notification(&self, identifier: &str) {
+        unsafe { withdrawNotification(make_nsstring(identifier)) };
     }
 
     fn clipboard(&mut self) -> &mut dyn crate::Clipboard {

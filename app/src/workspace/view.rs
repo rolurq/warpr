@@ -5625,6 +5625,7 @@ impl Workspace {
         };
 
         self.active_tab_index = index;
+        self.report_shown_herdr_workspace(ctx);
 
         // The range selection's anchor is the active tab, so any change to
         // the active tab makes the existing selection stale; clear it.
@@ -9671,6 +9672,7 @@ impl Workspace {
             return;
         }
         self.current_workspace_state.is_agent_management_view_open = is_open;
+        self.report_shown_herdr_workspace(ctx);
         // Warp's conversations model polls its hosted backend while the view is registered, which
         // a Herdr window must never trigger.
         if self.herdr_agent_panel.is_none() {

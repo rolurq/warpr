@@ -56,6 +56,31 @@ impl Workspace {
         ctx.notify();
     }
 
+    /// Tells the Herdr session which workspace this window shows the user: none while the agent
+    /// panel covers the tabs or the selected tab is not a workspace. Only warpr's own notion:
+    /// Herdr is not told.
+    pub(super) fn report_shown_herdr_workspace(&self, ctx: &mut ViewContext<Self>) {
+        if !Self::presents_herdr_workspaces(ctx) {
+            return;
+        }
+        let selected = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id())
+            .filter(|_| !self.current_workspace_state.is_agent_management_view_open);
+        let workspace = selected.and_then(|selected| {
+            self.herdr_workspace_tabs(ctx)
+                .into_iter()
+                .find_map(|(pane_group_id, workspace_id)| {
+                    (pane_group_id == selected).then_some(workspace_id)
+                })
+        });
+        let window_id = ctx.window_id();
+        HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
+            model.select_workspace(window_id, workspace, ctx);
+        });
+    }
+
     pub(super) fn subscribe_to_herdr_session(ctx: &mut ViewContext<Self>) {
         if !Self::presents_herdr_workspaces(ctx) {
             return;
@@ -97,6 +122,7 @@ impl Workspace {
             | ConnectionStatus::Disconnected(_)
             | ConnectionStatus::Failed(_) => {}
         }
+        self.report_shown_herdr_workspace(ctx);
     }
 
     fn reconcile_herdr_workspace_tabs(

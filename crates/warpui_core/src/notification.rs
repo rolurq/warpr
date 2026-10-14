@@ -15,6 +15,8 @@ pub struct UserNotification {
     data: Option<String>,
     // Whether to play sound with the notification.
     play_sound: bool,
+    // Names the notification so it replaces and can be withdrawn like the one with the same name.
+    identifier: Option<String>,
 }
 
 impl UserNotification {
@@ -32,6 +34,7 @@ impl UserNotification {
             body,
             data,
             play_sound: true,
+            identifier: None,
         }
     }
 
@@ -46,11 +49,17 @@ impl UserNotification {
             body,
             data,
             play_sound,
+            identifier: None,
         }
     }
 
     pub fn with_data(mut self, data: impl Into<String>) -> Self {
         self.data = Some(data.into());
+        self
+    }
+
+    pub fn with_identifier(mut self, identifier: impl Into<String>) -> Self {
+        self.identifier = Some(identifier.into());
         self
     }
 
@@ -68,6 +77,10 @@ impl UserNotification {
 
     pub fn play_sound(&self) -> bool {
         self.play_sound
+    }
+
+    pub fn identifier(&self) -> Option<&str> {
+        self.identifier.as_deref()
     }
 }
 

@@ -16,4 +16,6 @@ pub enum NotificationContext {
         pane_group_id: EntityId,
         pane_id: PaneId,
     },
+    /// For notifications about the Herdr agent in the pane with this id.
+    HerdrAgent { pane: String },
 }

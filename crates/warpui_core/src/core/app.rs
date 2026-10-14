@@ -2397,6 +2397,37 @@ impl AppContext {
         )
     }
 
+    /// Delegates to the OS to request permissions for sending desktop notifications, telling
+    /// `on_completion` what the user decided without involving any view.
+    pub fn request_desktop_notification_permissions_detached(
+        &mut self,
+        on_completion: impl 'static + Send + Sync + FnOnce(RequestPermissionsOutcome, &mut AppContext),
+    ) {
+        self.platform_delegate
+            .request_desktop_notification_permissions(Box::new(on_completion));
+    }
+
+    /// Delegates to the OS to send a desktop notification that no view waits on: if it cannot be
+    /// sent, `on_error` is told and nothing else happens.
+    pub fn send_desktop_notification_detached(
+        &mut self,
+        content: UserNotification,
+        window_id: WindowId,
+        on_error: impl 'static + Send + Sync + FnOnce(NotificationSendError),
+    ) {
+        self.platform_delegate.send_desktop_notification(
+            content,
+            window_id,
+            Box::new(move |notification_error, _| on_error(notification_error)),
+        )
+    }
+
+    /// Delegates to the OS to withdraw the desktop notification sent with `identifier`.
+    pub fn withdraw_desktop_notification(&self, identifier: &str) {
+        self.platform_delegate
+            .withdraw_desktop_notification(identifier);
+    }
+
     fn active_cursor_position(&mut self, window_id: WindowId) -> Option<CursorInfo> {
         let focused_view_id = self.focused_view_id(window_id)?;
         let view = self
