@@ -461,10 +461,13 @@ impl LaunchMode {
     fn api_key(&self) -> Option<String> {
         match self {
             LaunchMode::CommandLine { global_options, .. } => global_options.api_key.clone(),
-            LaunchMode::App { api_key, .. }
-            | LaunchMode::Tui {
+            LaunchMode::App { api_key, .. } => api_key.clone(),
+            // Validating the key is a login to Warp's servers.
+            LaunchMode::Tui {
                 entrypoint: TuiEntryPoint::Interactive { api_key, .. },
-            } => api_key.clone(),
+            } => api_key
+                .clone()
+                .filter(|_| !FeatureFlag::DisableWarpAccount.is_enabled()),
             LaunchMode::Test { .. }
             | LaunchMode::RemoteServerProxy
             | LaunchMode::RemoteServerDaemon { .. }

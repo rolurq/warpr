@@ -1052,7 +1052,11 @@ fn make_new_elements_menu_items(ctx: &AppContext) -> Vec<MenuItem> {
             },
             Some(Keystroke::parse("cmd-t").expect("Valid keystroke")),
         )),
-        MenuItem::Custom(CustomMenuItem::new(
+    ];
+
+    // Agent tabs are backed by Warp's hosted agent; hide the item rather than leave it greyed out.
+    if !FeatureFlag::DisableHostedAgent.is_enabled() {
+        new_elements_menu.push(MenuItem::Custom(CustomMenuItem::new(
             "New Agent Tab",
             open_new_agent_tab_or_window,
             move |_props: &MenuItemProperties, ctx: &mut AppContext| {
@@ -1082,9 +1086,9 @@ fn make_new_elements_menu_items(ctx: &AppContext) -> Vec<MenuItem> {
                 changes
             },
             None,
-        )),
-        non_updateable_custom_item(CustomAction::NewFile, ctx),
-    ];
+        )));
+    }
+    new_elements_menu.push(non_updateable_custom_item(CustomAction::NewFile, ctx));
 
     let reopen_session_action_updater =
         custom_action_updater(CustomAction::ReopenClosedSession, Box::new(|_| false));
@@ -1230,3 +1234,7 @@ fn custom_action_updater(
         changes
     }
 }
+
+#[cfg(test)]
+#[path = "app_menus_tests.rs"]
+mod tests;

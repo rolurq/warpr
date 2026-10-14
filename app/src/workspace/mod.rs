@@ -759,7 +759,8 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::NewAgentTab)
         .with_context_predicate(
             id!("Workspace") & id!(flags::IS_ANY_AI_ENABLED) & !id!("Workspace_PaneDragging"),
-        ),
+        )
+        .with_enabled(|| !FeatureFlag::DisableHostedAgent.is_enabled()),
         EditableBinding::new(
             NEW_AMBIENT_AGENT_TAB_BINDING_NAME,
             BindingDescription::new("New Cloud Agent Tab"),

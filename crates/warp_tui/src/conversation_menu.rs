@@ -12,6 +12,7 @@ use warp::tui_export::{
     HarnessFilter, TeamContextResolver, agent_conversations_cloud_metadata_load_failed,
     query_conversation_entries,
 };
+use warp_core::features::FeatureFlag;
 use warp_editor::model::CoreEditorModel;
 use warpui_core::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity, WindowId};
 
@@ -103,7 +104,7 @@ impl TuiConversationMenuModel {
 
     /// Opens the menu and registers it as an active conversation-list consumer.
     pub(crate) fn open(&mut self, ctx: &mut ModelContext<Self>) {
-        if self.has_open_state() {
+        if self.has_open_state() || FeatureFlag::DisableHostedAgent.is_enabled() {
             return;
         }
         let did_open = self.suggestions_mode.update(ctx, |mode, ctx| {

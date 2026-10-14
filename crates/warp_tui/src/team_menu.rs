@@ -2,6 +2,7 @@
 
 use warp::editor::{CodeEditorModel, CodeEditorModelEvent};
 use warp::tui_export::{ServerId, UserWorkspaces, UserWorkspacesEvent};
+use warp_core::features::FeatureFlag;
 use warp_editor::model::CoreEditorModel;
 use warpui_core::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity, WindowId};
 
@@ -80,7 +81,7 @@ impl TuiTeamMenuModel {
     }
 
     pub(crate) fn open(&mut self, ctx: &mut ModelContext<Self>) {
-        if self.has_open_state() {
+        if self.has_open_state() || FeatureFlag::DisableWarpAccount.is_enabled() {
             return;
         }
         let did_open = self.suggestions_mode.update(ctx, |mode, ctx| {

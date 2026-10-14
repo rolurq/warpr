@@ -193,7 +193,7 @@ impl TuiApiKeysMenuModel {
     }
 
     pub(crate) fn open(&mut self, ctx: &mut ModelContext<Self>) {
-        if self.is_open(ctx) {
+        if self.is_open(ctx) || FeatureFlag::DisableHostedAgent.is_enabled() {
             return;
         }
         let did_open = self.suggestions_mode.update(ctx, |mode, ctx| {

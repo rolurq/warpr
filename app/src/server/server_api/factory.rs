@@ -116,6 +116,7 @@ impl FactoryClient for ServerApi {
     }
 
     async fn delete_runner(&self, uid: String) -> Result<String> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let operation = DeleteRunner::build(DeleteRunnerVariables {
             input: DeleteRunnerInput {
                 uid: cynic::Id::new(uid),

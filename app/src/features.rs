@@ -546,6 +546,7 @@ fn enabled_features() -> HashSet<FeatureFlag> {
     flags.extend([
         FeatureFlag::DisableHostedAgent,
         FeatureFlag::DisableUsageTelemetry,
+        FeatureFlag::DisableWarpUpdates,
     ]);
 
     flags

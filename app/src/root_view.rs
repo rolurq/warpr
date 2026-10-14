@@ -4180,6 +4180,14 @@ impl AuthOnboardingState {
     }
 
     fn try_open_onboarding_slides(&mut self, ctx: &mut ViewContext<RootView>) {
+        // The slides funnel users into a Warp account and Warp's hosted agent, so no entry point
+        // (including the debug shortcut) may open them once either is disabled.
+        if FeatureFlag::DisableWarpAccount.is_enabled()
+            || FeatureFlag::DisableHostedAgent.is_enabled()
+        {
+            return;
+        }
+
         let target = match self {
             AuthOnboardingState::Auth(args) | AuthOnboardingState::ConfirmIncomingAuth(args) => {
                 if args.workspace_setting.is_content_deep_link() {

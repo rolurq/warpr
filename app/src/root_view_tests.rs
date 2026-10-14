@@ -697,6 +697,91 @@ fn root_view_new_reaches_workspace_without_login_when_warp_account_is_disabled()
     });
 }
 
+/// With the hosted-agent kill switch on, no code path may wrap a fresh install's terminal in the
+/// onboarding slides, which only exist to sell Warp's account and agent.
+#[test]
+fn fresh_install_with_account_and_hosted_agent_disabled_stays_in_terminal() {
+    let _disable_account = FeatureFlag::DisableWarpAccount.override_enabled(true);
+    let _disable_hosted_agent = FeatureFlag::DisableHostedAgent.override_enabled(true);
+    let _agent_onboarding = FeatureFlag::AgentOnboarding.override_enabled(true);
+    let _force_login = FeatureFlag::ForceLogin.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        crate::workspace::view::tests::initialize_app(&mut app);
+        app.update(|ctx| {
+            let auth_state = AuthStateProvider::as_ref(ctx).get();
+            auth_state.set_credentials(None);
+            auth_state.set_user(None);
+        });
+
+        let global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        let (_, root_view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            RootView::new(
+                global_resource_handles,
+                NewWorkspaceSource::Empty {
+                    previous_active_window: None,
+                    shell: None,
+                },
+                ctx,
+            )
+        });
+
+        let workspace_id = app.read(|ctx| {
+            let AuthOnboardingState::Terminal(workspace) =
+                &root_view.as_ref(ctx).auth_onboarding_state
+            else {
+                panic!("a fresh install must land in the terminal, not auth or onboarding");
+            };
+            workspace.id()
+        });
+
+        root_view.update(&mut app, |root_view, ctx| {
+            root_view
+                .auth_onboarding_state
+                .try_open_onboarding_slides(ctx);
+        });
+        app.read(|ctx| {
+            let AuthOnboardingState::Terminal(workspace) =
+                &root_view.as_ref(ctx).auth_onboarding_state
+            else {
+                panic!("onboarding slides must not open while the kill switches are on");
+            };
+            assert_eq!(workspace.id(), workspace_id);
+        });
+    });
+}
+
+/// On a channel that keeps accounts, a user finishing login must not be routed into the agent
+/// onboarding slides once the hosted agent is switched off.
+#[test]
+fn completing_auth_with_hosted_agent_disabled_skips_agent_onboarding() {
+    let _disable_hosted_agent = FeatureFlag::DisableHostedAgent.override_enabled(true);
+    let _agent_onboarding = FeatureFlag::AgentOnboarding.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        let root_view = root_view_for_join_test(&mut app);
+        set_local_onboarding_completed(&mut app, false);
+        app.update(|ctx| {
+            AuthStateProvider::as_ref(ctx).get().set_is_onboarded(false);
+        });
+
+        let args = pending_workspace_args(&mut app);
+        root_view.update(&mut app, |root_view, ctx| {
+            root_view.auth_onboarding_state = AuthOnboardingState::Auth(args);
+            root_view
+                .auth_onboarding_state
+                .complete_auth_and_create_workspace(ctx);
+        });
+
+        app.read(|ctx| {
+            assert!(matches!(
+                root_view.as_ref(ctx).auth_onboarding_state,
+                AuthOnboardingState::Terminal(_)
+            ));
+        });
+    });
+}
+
 #[test]
 fn no_login_is_required_after_onboarding_when_warp_account_is_disabled() {
     let _disable_account = FeatureFlag::DisableWarpAccount.override_enabled(true);

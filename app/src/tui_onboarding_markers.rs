@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use cloud_object_models::JsonSerializer;
 use settings::{RespectUserSyncSetting, SyncToCloud};
+use warp_core::features::FeatureFlag;
 use warpui::r#async::Timer;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
@@ -124,6 +125,11 @@ impl TuiOnboardingMarkers {
     /// this request; consumers keep one-time UI hidden until
     /// [`TuiOnboardingMarkersEvent::Ready`].
     pub fn load_current_account(&mut self, ctx: &mut ModelContext<Self>) {
+        // Markers are account-scoped cloud preferences; with no account none can be loaded.
+        if FeatureFlag::DisableWarpAccount.is_enabled() {
+            self.resolve_unavailable(ctx);
+            return;
+        }
         self.state = TuiOnboardingMarkersState::Loading;
         self.load_generation = self.load_generation.wrapping_add(1);
         ctx.emit(TuiOnboardingMarkersEvent::Loading);

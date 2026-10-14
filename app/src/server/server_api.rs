@@ -42,6 +42,7 @@ use team::TeamClient;
 use tui_onboarding::TuiOnboardingClient;
 use url::Url;
 use warp_core::context_flag::ContextFlag;
+use warp_core::features::FeatureFlag;
 use warp_core::telemetry::TelemetryEvent;
 use warp_errors::{AnyhowErrorExt, ErrorExt, register_error, report_error};
 use warp_server_client::HttpStatusError;
@@ -443,6 +444,16 @@ pub struct ServerApi {
     last_server_time: Arc<Mutex<Option<ServerTime>>>,
 }
 
+/// Refuses requests to Warp's account-backed services while the `DisableWarpAccount` kill switch
+/// is on.
+fn ensure_warp_account_enabled() -> Result<()> {
+    anyhow::ensure!(
+        !FeatureFlag::DisableWarpAccount.is_enabled(),
+        "Warp account services are disabled"
+    );
+    Ok(())
+}
+
 impl ServerApi {
     fn new(
         auth_state: Arc<AuthState>,
@@ -590,6 +601,9 @@ impl ServerApi {
     where
         QF: 'a,
     {
+        if let Err(error) = ensure_warp_account_enabled() {
+            return Box::pin(async move { Err(error) });
+        }
         warp_server_client::graphql_helpers::send_graphql_request(
             &self.base_client,
             operation,
@@ -625,6 +639,9 @@ impl ServerApi {
     where
         QF: 'a,
     {
+        if let Err(error) = ensure_warp_account_enabled() {
+            return Box::pin(async move { Err(error) });
+        }
         match Self::team_uid_header_value(team_scope) {
             Some(team_uid) => {
                 warp_server_client::graphql_helpers::send_team_scoped_graphql_request(
@@ -1075,6 +1092,9 @@ impl ServerApi {
     /// Sends an authenticated empty POST request to /client/login, which signals to the server
     /// that the user is logged in.
     pub async fn notify_login(&self) {
+        if ensure_warp_account_enabled().is_err() {
+            return;
+        }
         match self.get_or_refresh_access_token().await {
             Ok(auth_token) => {
                 let url = format!("{}/client/login", ChannelState::server_root_url());
@@ -1122,6 +1142,10 @@ impl ServerApi {
     }
 
     pub async fn send_agent_tip_shown_analytics_event(&self, tip: String) -> Result<()> {
+        anyhow::ensure!(
+            !FeatureFlag::DisableUsageTelemetry.is_enabled(),
+            "Usage telemetry is disabled"
+        );
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -1396,6 +1420,7 @@ impl ServerApi {
     }
 
     pub async fn server_time(&self) -> Result<ServerTime> {
+        ensure_warp_account_enabled()?;
         if let Some(cached) = self.cached_server_time() {
             return Ok(cached);
         }

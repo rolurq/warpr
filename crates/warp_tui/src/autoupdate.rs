@@ -38,6 +38,7 @@ use channel_versions::{ChannelVersions, ParsedVersion};
 use futures::TryStreamExt as _;
 use warp::settings::TuiAutoupdateSettings;
 use warp_core::channel::{Channel, ChannelState};
+use warp_core::features::FeatureFlag;
 use warp_core::{safe_warn, send_telemetry_from_ctx};
 use warpui::r#async::Timer;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
@@ -413,6 +414,11 @@ impl AutoupdateEligibility {
     /// The `general.autoupdate_enabled` setting is read once here, at startup;
     /// toggling it takes effect on the next launch.
     fn determine(ctx: &AppContext) -> Self {
+        if FeatureFlag::DisableWarpUpdates.is_enabled() {
+            return Self::Disabled {
+                reason: "disabled by the Warp updates kill switch",
+            };
+        }
         if std::env::var_os(DISABLE_ENV_VAR).is_some() {
             return Self::Disabled {
                 reason: "opted out via the WARP_TUI_DISABLE_AUTOUPDATE environment variable",

@@ -422,7 +422,7 @@ impl AgentDriver {
         taken_server_names: &HashSet<String>,
         ambient_headers: &[(String, String)],
     ) -> Option<TemplatableMCPServerInstallation> {
-        if !FeatureFlag::FactoryMcp.is_enabled() {
+        if !FeatureFlag::FactoryMcp.is_enabled() || FeatureFlag::DisableHostedAgent.is_enabled() {
             return None;
         }
         if taken_server_names.contains(builtin::FACTORY_MCP_SERVER_NAME) {
@@ -445,7 +445,8 @@ impl AgentDriver {
         taken_server_names: &HashSet<String>,
         ambient_headers: &[(String, String)],
     ) -> Option<TemplatableMCPServerInstallation> {
-        if !FeatureFlag::PreviewUrlsMcp.is_enabled() {
+        if !FeatureFlag::PreviewUrlsMcp.is_enabled() || FeatureFlag::DisableHostedAgent.is_enabled()
+        {
             return None;
         }
         if !ambient_headers

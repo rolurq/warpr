@@ -1025,6 +1025,10 @@ pub enum FeatureFlag {
     /// warpr kill switch: when enabled, no usage telemetry is recorded, persisted
     /// or sent to Warp's servers, and crash reporting is not started.
     DisableUsageTelemetry,
+
+    /// warpr kill switch: when enabled, Warp's servers are never polled for
+    /// app updates or changelogs.
+    DisableWarpUpdates,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

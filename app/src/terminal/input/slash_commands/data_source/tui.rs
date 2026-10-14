@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::FairMutex;
+use warp_core::features::FeatureFlag;
 use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity as _};
 
 use super::core::subscribe_to_shared_dependencies;
@@ -119,12 +120,21 @@ impl TuiSlashCommandDataSource {
             && self.local_skills_available(ctx);
         #[cfg(not(feature = "voice_input"))]
         let voice_command_is_available = false;
+        let account_disabled = FeatureFlag::DisableWarpAccount.is_enabled();
         let commands = HashMap::from_iter(
             COMMAND_REGISTRY
                 .all_commands_by_id()
                 .filter(|(_, command)| {
                     command.supports_tui()
                         && (command.name != VOICE.name || voice_command_is_available)
+                        && !(account_disabled
+                            && matches!(
+                                command.kind,
+                                SlashCommandKind::Logout
+                                    | SlashCommandKind::Upgrade
+                                    | SlashCommandKind::ManageBilling
+                                    | SlashCommandKind::Team
+                            ))
                         && (command.kind != SlashCommandKind::ManageBilling
                             || self.manage_billing_url(ctx).is_some())
                         && self.command_passes_common_gates(command, availability, &gates)

@@ -8393,6 +8393,11 @@ impl Workspace {
             return false;
         }
 
+        // The Get Started tab drives project creation through Warp's hosted agent.
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
+
         if self.auth_state.is_onboarded().unwrap_or_default() {
             return false;
         }
@@ -8425,6 +8430,12 @@ impl Workspace {
         // Onboarding requires a real user to interact with it; suppress when
         // running in a headless mode like the SDK/CLI.
         if !AppExecutionMode::as_ref(ctx).can_show_onboarding() {
+            return false;
+        }
+
+        // First-run onboarding marks the Warp account as onboarded on the server; with accounts
+        // disabled there is no user to mark and nothing to introduce.
+        if FeatureFlag::DisableWarpAccount.is_enabled() {
             return false;
         }
 

@@ -242,7 +242,9 @@ impl HarnessAvailabilityModel {
             return;
         };
 
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             return;
         }
 
@@ -437,7 +439,9 @@ impl HarnessAvailabilityModel {
     }
     pub fn refresh(&self, ctx: &mut ModelContext<Self>) {
         // The endpoint queries `user`, which requires auth.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             return;
         }
 

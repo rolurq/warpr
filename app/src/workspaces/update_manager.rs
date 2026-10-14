@@ -18,6 +18,7 @@ use super::workspace::WorkspaceUid;
 use crate::ai::request_usage_model::AIRequestUsageModel;
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::CloudObjectEventEntrypoint;
+use crate::features::FeatureFlag;
 use crate::network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind};
 use crate::persistence::ModelEvent;
 use crate::pricing::PricingInfoModel;
@@ -156,7 +157,9 @@ impl TeamUpdateManager {
         ctx: &mut ModelContext<Self>,
     ) -> Receiver<Result<()>> {
         // Skip the refresh when logged out to avoid noisy auth errors.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableWarpAccount.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             let (tx, rx) = oneshot::channel::<Result<()>>();
             let _ = tx.send(Ok(()));
             return rx;
@@ -212,7 +215,9 @@ impl TeamUpdateManager {
 
         // Don't poll when the user is logged out to avoid spamming auth errors in the logs.
         // Polling will be restarted when the user logs in via `initiate_data_pollers`.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableWarpAccount.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             self.should_poll_for_workspace_metadata_updates = false;
             return;
         }

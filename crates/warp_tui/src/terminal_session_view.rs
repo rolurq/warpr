@@ -1355,6 +1355,9 @@ impl TuiTerminalSessionView {
     ///
     /// Returns false when a stale action no longer targets an eligible block.
     fn try_attach_agent_to_running_command(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
         let did_attach = {
             let mut terminal_model = self.terminal_model.lock();
             let active_block = terminal_model.block_list_mut().active_block_mut();

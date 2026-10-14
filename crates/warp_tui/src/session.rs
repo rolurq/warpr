@@ -20,6 +20,7 @@ use warp::settings::{TuiVoiceSettings, TuiVoiceSettingsChangedEvent};
 use warp::tui_export::{AIConversationAutoexecuteMode, Appearance, ServerConversationToken};
 use warp::{TuiLoginEvent, TuiLoginModel, TuiLoginPhase};
 use warp_core::channel::ChannelState;
+use warp_core::features::FeatureFlag;
 use warp_core::settings::Setting as _;
 use warp_core::telemetry::TelemetryEvent as _;
 use warp_errors::report_error;
@@ -387,7 +388,16 @@ fn ensure_terminal_session(
         return;
     }
 
-    let resume_token = sessions.update(ctx, |sessions, _| sessions.take_resume_token());
+    let resume_token = sessions
+        .update(ctx, |sessions, _| sessions.take_resume_token())
+        .filter(|_| {
+            // Restoring a conversation fetches it from Warp's servers.
+            let hosted_agent_enabled = !FeatureFlag::DisableHostedAgent.is_enabled();
+            if !hosted_agent_enabled {
+                log::warn!("Ignoring --resume because the hosted agent is disabled");
+            }
+            hosted_agent_enabled
+        });
     let window_id = root.window_id(ctx);
     let handles_first_run_onboarding = resume_token.is_none();
     let (_, surface) = TuiSessions::create_local_terminal_session(

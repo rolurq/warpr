@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use warp_core::features::FeatureFlag;
 use warp_errors::report_error;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
@@ -81,7 +82,9 @@ impl ConnectedSelfHostedWorkersModel {
     }
 
     pub fn refresh(&mut self, scope: &impl TeamScope, ctx: &mut ModelContext<Self>) {
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             self.clear_workers(ctx);
             return;
         }

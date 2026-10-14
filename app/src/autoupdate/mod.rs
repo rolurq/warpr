@@ -138,6 +138,9 @@ impl AutoupdateState {
         if self.polling_started {
             return;
         }
+        if FeatureFlag::DisableWarpUpdates.is_enabled() {
+            return;
+        }
         if FeatureFlag::Autoupdate.is_enabled() && AppExecutionMode::as_ref(ctx).can_autoupdate() {
             log::info!("Starting autoupdate polling loop");
             self.polling_started = true;

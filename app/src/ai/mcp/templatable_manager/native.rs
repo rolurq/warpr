@@ -780,6 +780,7 @@ impl TemplatableMCPServerManager {
         // Built-ins attach only in interactive clients (GUI and TUI); CLI
         // agent runs manage their MCP servers explicitly.
         let eligible = FeatureFlag::FactoryMcp.is_enabled()
+            && !FeatureFlag::DisableHostedAgent.is_enabled()
             && AppExecutionMode::as_ref(ctx).can_autostart_mcp_servers()
             && !auth_state.is_anonymous_or_logged_out();
         let is_active = self.is_server_active_or_pending(installation_uuid);
