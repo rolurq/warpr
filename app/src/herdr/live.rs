@@ -17,6 +17,7 @@ impl HerdrSessionModel {
         policy: ReconnectPolicy,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.track_agents(cli.clone(), target.clone(), policy, ctx);
         let name = target.name().clone();
         let (updates_tx, updates_rx) = async_channel::unbounded();
         self.live_session = Some(LiveSession::start(cli, target, policy, move |presented| {

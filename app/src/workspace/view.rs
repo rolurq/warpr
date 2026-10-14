@@ -286,6 +286,7 @@ use crate::editor::{
 use crate::env_vars::CloudEnvVarCollection;
 use crate::env_vars::manager::{EnvVarCollectionManager, EnvVarCollectionSource};
 use crate::experiments::{BlockOnboarding, Experiment};
+use crate::herdr::HerdrAgentPanelView;
 use crate::launch_configs::launch_config::WindowTemplate;
 use crate::launch_configs::save_modal::{LaunchConfigModalEvent, LaunchConfigSaveModal};
 use crate::menu::{
@@ -1205,6 +1206,9 @@ pub struct Workspace {
     right_panel_view: ViewHandle<RightPanelView>,
     working_directories_model: ModelHandle<pane_group::WorkingDirectoriesModel>,
     agent_management_view: ViewHandle<AgentManagementView>,
+    /// The agent panel that stands in for `agent_management_view` while the window presents a
+    /// Herdr session.
+    herdr_agent_panel: Option<ViewHandle<HerdrAgentPanelView>>,
     notification_mailbox_view: Option<ViewHandle<NotificationMailboxView>>,
     notification_toast_stack: Option<ViewHandle<AgentNotificationToastStack>>,
     lightbox_view: Option<ViewHandle<LightboxView>>,
@@ -3160,6 +3164,8 @@ impl Workspace {
         ctx.subscribe_to_view(&agent_management_view, |me, _, event, ctx| {
             me.handle_agent_management_view_event(event, ctx);
         });
+        let herdr_agent_panel = crate::herdr::presents_herdr_workspaces(ctx)
+            .then(|| ctx.add_typed_action_view(HerdrAgentPanelView::new));
 
         let notification_mailbox_view = if FeatureFlag::HOANotifications.is_enabled() {
             let view = ctx.add_typed_action_view(NotificationMailboxView::new);
@@ -3584,6 +3590,7 @@ impl Workspace {
             chatgpt_plan_modal: chatgpt_plan_view,
             enable_auto_reload_modal,
             agent_management_view,
+            herdr_agent_panel,
             notification_mailbox_view,
             notification_toast_stack,
             codex_modal,
@@ -9664,17 +9671,21 @@ impl Workspace {
             return;
         }
         self.current_workspace_state.is_agent_management_view_open = is_open;
-        let window_id = self.window_id;
-        let view_id = self.agent_management_view.id();
-        let team_context_resolver =
-            UserWorkspaces::team_context_resolver(self.agent_management_view.downgrade());
-        AgentConversationsModel::handle(ctx).update(ctx, move |model, ctx| {
-            if is_open {
-                model.register_view_open(window_id, view_id, team_context_resolver, ctx);
-            } else {
-                model.register_view_closed(window_id, view_id, ctx);
-            }
-        });
+        // Warp's conversations model polls its hosted backend while the view is registered, which
+        // a Herdr window must never trigger.
+        if self.herdr_agent_panel.is_none() {
+            let window_id = self.window_id;
+            let view_id = self.agent_management_view.id();
+            let team_context_resolver =
+                UserWorkspaces::team_context_resolver(self.agent_management_view.downgrade());
+            AgentConversationsModel::handle(ctx).update(ctx, move |model, ctx| {
+                if is_open {
+                    model.register_view_open(window_id, view_id, team_context_resolver, ctx);
+                } else {
+                    model.register_view_closed(window_id, view_id, ctx);
+                }
+            });
+        }
 
         // Notify panels about the agent management view state change so they can
         // update their top border visibility accordingly.
@@ -22383,7 +22394,7 @@ impl Workspace {
         let active_content = if FeatureFlag::AgentManagementView.is_enabled()
             && self.current_workspace_state.is_agent_management_view_open
         {
-            ChildView::new(&self.agent_management_view).finish()
+            self.agent_management_content()
         } else {
             ChildView::new(&active_tab_data.pane_group).finish()
         };
@@ -25256,9 +25267,7 @@ impl TypedActionView for Workspace {
                 ctx.notify();
             }
             ToggleAgentManagementView => {
-                if AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
-                    && FeatureFlag::AgentManagementView.is_enabled()
-                {
+                if self.is_agent_panel_available(ctx) {
                     let is_open = !self.current_workspace_state.is_agent_management_view_open;
                     self.set_is_agent_management_view_open(is_open, ctx);
 
@@ -25268,7 +25277,7 @@ impl TypedActionView for Workspace {
                     );
 
                     if is_open {
-                        ctx.focus(&self.agent_management_view);
+                        self.focus_agent_management_view(ctx);
                     } else {
                         self.focus_active_tab(ctx);
                     }
@@ -25277,11 +25286,9 @@ impl TypedActionView for Workspace {
                 }
             }
             OpenAgentManagementView => {
-                if AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
-                    && FeatureFlag::AgentManagementView.is_enabled()
-                {
+                if self.is_agent_panel_available(ctx) {
                     self.set_is_agent_management_view_open(true, ctx);
-                    ctx.focus(&self.agent_management_view);
+                    self.focus_agent_management_view(ctx);
                     ctx.notify();
                 }
             }

@@ -2,17 +2,29 @@
 //!
 //! Herdr owns every workspace, tab and pane; this module only holds the state the UI presents.
 
+mod agent_panel;
+mod agents;
 mod live;
 mod pane_frames;
 mod session_picker;
 mod sessions;
 mod workspace_view;
 
-use herdr_client::{ConnectionFailure, ConnectionStatus, HerdrCli, LiveSession, PresentedSession};
+pub use agent_panel::HerdrAgentPanelView;
+use agents::AgentTracking;
+use herdr_client::{
+    AgentJump, ConnectionFailure, ConnectionStatus, HerdrCli, LiveSession, PresentedSession,
+};
 pub use session_picker::HerdrSessionPicker;
 use sessions::SessionSelection;
-use warpui::{Entity, ModelContext, SingletonEntity};
+use warp_core::features::FeatureFlag;
+use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 pub use workspace_view::HerdrWorkspaceView;
+
+/// Whether this window presents a Herdr session instead of Warp's own tabs and agents.
+pub(crate) fn presents_herdr_workspaces(app: &AppContext) -> bool {
+    FeatureFlag::HerdrWorkspaceTabs.is_enabled() && app.has_singleton_model::<HerdrSessionModel>()
+}
 
 /// Names the Herdr session to present. Defaults to Herdr's `default` session.
 const SESSION_ENV: &str = "WARPR_HERDR_SESSION";
@@ -22,12 +34,17 @@ pub(crate) struct HerdrSessionModel {
     sessions: SessionSelection,
     /// Keeps the presented session current for as long as it lives.
     live_session: Option<LiveSession>,
+    agents: AgentTracking,
 }
 
 pub(crate) enum HerdrSessionEvent {
     Presented,
     /// Herdr's session listing was read again.
     SessionsListed,
+    /// The session's agents, or the connection they are read over, changed.
+    AgentsPresented,
+    /// The user asked to go to an agent's pane. Windows show it locally; Herdr is not told.
+    JumpedToAgent(AgentJump),
 }
 
 impl HerdrSessionModel {
@@ -65,6 +82,7 @@ impl HerdrSessionModel {
             presented: PresentedSession::connecting(),
             sessions,
             live_session: None,
+            agents: AgentTracking::default(),
         };
         model.go_live(cli, target, policy, ctx);
         model
@@ -76,6 +94,7 @@ impl HerdrSessionModel {
             presented: PresentedSession::failed(failure),
             sessions,
             live_session: None,
+            agents: AgentTracking::default(),
         }
     }
 

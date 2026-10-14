@@ -9,6 +9,7 @@
 //! `HERDR_SOCKET_PATH` points at whichever session the launching shell lives in, so it is never
 //! consulted.
 
+mod agents;
 mod cli;
 mod compat;
 #[cfg(unix)]
@@ -18,6 +19,11 @@ mod live;
 #[cfg(not(unix))]
 #[path = "live_unsupported.rs"]
 mod live;
+#[cfg(unix)]
+mod live_agents;
+#[cfg(not(unix))]
+#[path = "live_agents_unsupported.rs"]
+mod live_agents;
 mod metadata;
 mod presented;
 mod reconnect;
@@ -28,9 +34,11 @@ mod tabs;
 
 use std::time::Duration;
 
+pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, PresentedAgents};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
 pub use live::LiveSession;
+pub use live_agents::LiveAgents;
 pub use metadata::MetadataToken;
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,

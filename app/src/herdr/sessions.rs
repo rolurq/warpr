@@ -8,6 +8,7 @@ use herdr_client::{
 };
 use warpui::ModelContext;
 
+use super::agents::AgentTracking;
 use super::{HerdrSessionEvent, HerdrSessionModel};
 
 /// The picker's side of [`HerdrSessionModel`]: the session being presented and Herdr's listing.
@@ -84,6 +85,7 @@ impl HerdrSessionModel {
             presented: PresentedSession::connecting(),
             sessions,
             live_session: None,
+            agents: AgentTracking::default(),
         };
         model.refresh_sessions(ctx);
         model
@@ -132,6 +134,7 @@ impl HerdrSessionModel {
 
         self.sessions.current = Some(name.clone());
         self.live_session = None;
+        self.stop_tracking_agents(ctx);
         let target = match self.sessions.target(name) {
             Ok(target) => target,
             Err(failure) => {

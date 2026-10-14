@@ -11,7 +11,7 @@ use std::time::Duration;
 use parking_lot::{Condvar, Mutex};
 use serde_json::{Value, json};
 
-use crate::SessionScript;
+use crate::{AgentState, SessionScript};
 
 /// Subscription types Herdr accepts without naming a pane.
 const LIFECYCLE_SUBSCRIPTIONS: [&str; 24] = [
@@ -47,6 +47,13 @@ const PANE_SUBSCRIPTIONS: [&str; 3] = [
     "pane.agent_status_changed",
     "pane.scroll_changed",
 ];
+
+const AGENT_STATUS_CHANGED: &str = "pane.agent_status_changed";
+
+/// How a pane-scoped subscription is remembered among a subscriber's event names.
+fn pane_event_key(kind: &str, pane_id: &str) -> String {
+    format!("{kind}@{pane_id}")
+}
 
 const EVENTS_LOST_MESSAGE: &str =
     "event subscription fell behind retained history; resubscribe and resync with session.snapshot";
@@ -163,7 +170,15 @@ impl Shared {
             } else if !LIFECYCLE_SUBSCRIPTIONS.contains(&kind) {
                 return Err(invalid(format!("unknown variant `{kind}`")));
             }
-            events.insert(kind.replace('.', "_"));
+            events.insert(
+                match entry["pane_id"]
+                    .as_str()
+                    .filter(|_| PANE_SUBSCRIPTIONS.contains(&kind))
+                {
+                    Some(pane) => pane_event_key(kind, pane),
+                    None => kind.replace('.', "_"),
+                },
+            );
         }
         Ok(events)
     }
@@ -240,6 +255,61 @@ impl FakeSession {
         delivered
     }
 
+    /// Pushes `pane.agent_status_changed` for `pane_id` to the connections that subscribed to
+    /// that pane, framed as Herdr frames pane-scoped events: named with a dot, unlike lifecycle
+    /// events. Returns how many connections received it.
+    pub fn emit_agent_status_changed(
+        &self,
+        pane_id: &str,
+        agent: &str,
+        state: AgentState,
+    ) -> usize {
+        let workspace_id = pane_id.split(':').next().unwrap_or(pane_id);
+        let line = format!(
+            "{}\n",
+            json!({
+                "event": AGENT_STATUS_CHANGED,
+                "data": {
+                    "pane_id": pane_id,
+                    "workspace_id": workspace_id,
+                    "agent": agent,
+                    "agent_status": state.wire_name(),
+                },
+            })
+        );
+        let key = pane_event_key(AGENT_STATUS_CHANGED, pane_id);
+        let mut subscribers = self.shared.subscribers.lock();
+        let mut delivered = 0;
+        subscribers.retain_mut(|subscriber| {
+            if !subscriber.events.contains(&key) {
+                return true;
+            }
+            let written = subscriber.stream.write_all(line.as_bytes()).is_ok();
+            delivered += usize::from(written);
+            written
+        });
+        delivered
+    }
+
+    /// The panes whose agent status the open subscriptions follow, one entry per subscription.
+    pub fn agent_status_subscriptions(&self) -> Vec<String> {
+        let prefix = pane_event_key(AGENT_STATUS_CHANGED, "");
+        let mut panes: Vec<_> = self
+            .shared
+            .subscribers
+            .lock()
+            .iter()
+            .flat_map(|subscriber| {
+                subscriber
+                    .events
+                    .iter()
+                    .filter_map(|event| event.strip_prefix(&prefix).map(str::to_owned))
+            })
+            .collect();
+        panes.sort();
+        panes
+    }
+
     /// Ends every subscription the way Herdr does when subscribers fall behind its retained
     /// history: an `events_lost` error carrying the request's `id`, then the connection closes.
     pub fn lose_events(&self) {
@@ -300,9 +370,9 @@ impl FakeSession {
         *listener = Some(Listener { stop, thread });
     }
 
-    /// Holds back every `session.snapshot` response until the returned guard is dropped. A held
-    /// response is computed when the request arrives, so it goes stale if the script changes
-    /// before it is released, as a response overtaken by an event would.
+    /// Holds back every `session.snapshot` and `agent.list` response until the returned guard is
+    /// dropped. A held response is computed when the request arrives, so it goes stale if the
+    /// script changes before it is released, as a response overtaken by an event would.
     pub fn pause_snapshots(&self) -> SnapshotPause {
         self.shared.snapshot_gate.set_held(true);
         SnapshotPause {
@@ -392,6 +462,16 @@ fn serve_connection(stream: UnixStream, shared: &Shared, connection_id: u64) {
                     &id,
                     json!({ "type": "session_snapshot", "snapshot": shared.script.lock().snapshot() }),
                 );
+                shared.snapshot_gate.pass();
+                response
+            }
+            "pane.list" => {
+                let panes = shared.script.lock().snapshot()["panes"].clone();
+                ok(&id, json!({ "type": "pane_list", "panes": panes }))
+            }
+            "agent.list" => {
+                let agents = shared.script.lock().snapshot()["agents"].clone();
+                let response = ok(&id, json!({ "type": "agent_list", "agents": agents }));
                 shared.snapshot_gate.pass();
                 response
             }

@@ -56,6 +56,52 @@ impl PaneTree {
     }
 }
 
+/// An agent state as Herdr reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentState {
+    Idle,
+    Working,
+    Blocked,
+    Done,
+    Unknown,
+}
+
+impl AgentState {
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Working => "working",
+            Self::Blocked => "blocked",
+            Self::Done => "done",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// An agent Herdr recognizes in a pane.
+#[derive(Clone, Debug)]
+pub struct AgentScript {
+    pub(crate) kind: String,
+    pub(crate) name: Option<String>,
+    pub(crate) state: AgentState,
+}
+
+impl AgentScript {
+    pub fn new(kind: &str, state: AgentState) -> Self {
+        Self {
+            kind: kind.to_owned(),
+            name: None,
+            state,
+        }
+    }
+
+    /// Gives the agent a live name, as `agent.rename` does. Herdr reports none otherwise.
+    pub fn named(mut self, name: &str) -> Self {
+        self.name = Some(name.to_owned());
+        self
+    }
+}
+
 /// One Herdr tab of a scripted workspace.
 #[derive(Clone, Debug)]
 pub struct TabScript {
@@ -63,6 +109,8 @@ pub struct TabScript {
     pub(crate) tree: PaneTree,
     pub(crate) focused_pane: usize,
     pub(crate) zoomed: bool,
+    /// By pane index in the tree's order.
+    pub(crate) agents: Vec<(usize, AgentScript)>,
 }
 
 impl TabScript {
@@ -72,7 +120,27 @@ impl TabScript {
             tree,
             focused_pane: 0,
             zoomed: false,
+            agents: Vec::new(),
         }
+    }
+
+    /// Puts `agent` in the pane at `index` in the tree's order, replacing any agent there.
+    pub fn agent(mut self, index: usize, agent: AgentScript) -> Self {
+        assert!(
+            index < self.tree.pane_count(),
+            "tab {:?} has no pane at index {index}",
+            self.label
+        );
+        self.agents.retain(|(existing, _)| *existing != index);
+        self.agents.push((index, agent));
+        self
+    }
+
+    fn agent_at(&self, index: usize) -> Option<&AgentScript> {
+        self.agents
+            .iter()
+            .find(|(existing, _)| *existing == index)
+            .map(|(_, agent)| agent)
     }
 
     /// Focuses the pane at `index` in the tree's left-to-right, top-to-bottom order; the first
@@ -183,6 +251,49 @@ impl SessionScript {
         self
     }
 
+    /// Puts `agent` in pane `pane_index` of the Herdr tab labelled `tab_label` in the workspace
+    /// labelled `workspace_label`, replacing any agent already there.
+    pub fn agent_in(
+        self,
+        workspace_label: &str,
+        tab_label: &str,
+        pane_index: usize,
+        agent: AgentScript,
+    ) -> Self {
+        self.edit_tab(workspace_label, tab_label, |tab| {
+            tab.agents.retain(|(existing, _)| *existing != pane_index);
+            tab.agents.push((pane_index, agent));
+        })
+    }
+
+    /// Takes the agent out of pane `pane_index` of the named Herdr tab, if there is one.
+    pub fn without_agent_in(
+        self,
+        workspace_label: &str,
+        tab_label: &str,
+        pane_index: usize,
+    ) -> Self {
+        self.edit_tab(workspace_label, tab_label, |tab| {
+            tab.agents.retain(|(existing, _)| *existing != pane_index);
+        })
+    }
+
+    fn edit_tab(
+        mut self,
+        workspace_label: &str,
+        tab_label: &str,
+        edit: impl FnOnce(&mut TabScript),
+    ) -> Self {
+        let tab = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.label == workspace_label)
+            .and_then(|workspace| workspace.tabs.iter_mut().find(|tab| tab.label == tab_label))
+            .unwrap_or_else(|| panic!("no tab {tab_label:?} in workspace {workspace_label:?}"));
+        edit(tab);
+        self
+    }
+
     /// Removes the workspace labelled `label`, leaving the others' ids untouched.
     pub fn without_workspace(mut self, label: &str) -> Self {
         self.workspaces.retain(|workspace| workspace.label != label);
@@ -232,6 +343,7 @@ impl SessionScript {
         let focused = self.focused_index();
         let mut workspaces = Vec::new();
         let mut tabs = Vec::new();
+        let mut agents = Vec::new();
         let mut panes = Vec::new();
         let mut layouts = Vec::new();
         let mut focused_tab_id = Value::Null;
@@ -266,7 +378,7 @@ impl SessionScript {
                 }));
                 for (pane_index, pane_id) in pane_ids.iter().enumerate() {
                     let terminal_number = next_pane_number + pane_index;
-                    panes.push(json!({
+                    let pane = json!({
                         "pane_id": pane_id,
                         "terminal_id": terminal_id(workspace.id, terminal_number),
                         "workspace_id": workspace_id,
@@ -274,14 +386,21 @@ impl SessionScript {
                         "focused": pane_id == tab_focused_pane,
                         "cwd": "/",
                         "foreground_cwd": "/",
-                        "agent_status": "unknown",
+                        "agent_status": tab
+                            .agent_at(pane_index)
+                            .map_or(AgentState::Unknown, |agent| agent.state)
+                            .wire_name(),
                         "scroll": {
                             "offset_from_bottom": 0,
                             "max_offset_from_bottom": 0,
                             "viewport_rows": AREA_HEIGHT,
                         },
                         "revision": 0,
-                    }));
+                    });
+                    if let Some(agent) = tab.agent_at(pane_index) {
+                        agents.push(agent_info(&pane, agent));
+                    }
+                    panes.push(pane);
                 }
                 layouts.push(json!({
                     "workspace_id": workspace_id,
@@ -336,9 +455,30 @@ impl SessionScript {
             "tabs": tabs,
             "panes": panes,
             "layouts": layouts,
-            "agents": [],
+            "agents": agents,
         })
     }
+}
+
+/// What `agent.list` reports for the agent in `pane`, a pane as `session.snapshot` reports it.
+fn agent_info(pane: &Value, agent: &AgentScript) -> Value {
+    let mut info = json!({
+        "terminal_id": pane["terminal_id"],
+        "agent": agent.kind,
+        "agent_status": agent.state.wire_name(),
+        "workspace_id": pane["workspace_id"],
+        "tab_id": pane["tab_id"],
+        "pane_id": pane["pane_id"],
+        "focused": pane["focused"],
+        "state_change_seq": 1,
+        "cwd": pane["cwd"],
+        "foreground_cwd": pane["foreground_cwd"],
+        "revision": pane["revision"],
+    });
+    if let Some(name) = &agent.name {
+        info["name"] = json!(name);
+    }
+    info
 }
 
 fn terminal_id(workspace_id: usize, pane_number: usize) -> String {

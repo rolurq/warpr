@@ -4,10 +4,11 @@ use herdr_client::{HerdrCli, ReconnectPolicy, Refusal, SessionName, SessionTarge
 use herdr_fake::{FakeHerdr, FakeSession, HerdrStatus, SessionScript};
 use serde_json::json;
 use warp_core::features::FeatureFlag;
-use warpui::{App, EntityId, ViewHandle};
+use warpui::{App, EntityId, TypedActionView as _, ViewHandle};
 
 use super::*;
 use crate::test_util::assert_eventually;
+use crate::workspace::WorkspaceAction;
 use crate::workspace::view::tests::{initialize_app, mock_workspace};
 
 fn fake_with(status: HerdrStatus) -> FakeHerdr {
@@ -462,5 +463,76 @@ fn a_server_restarted_as_an_incompatible_release_is_refused_until_it_is_compatib
             "tabs were {:?}", tab_titles(&app, &workspace)
         );
         assert_eq!(connection(&app), ConnectionStatus::Connected);
+    });
+}
+
+/// A window as warpr runs it: Herdr tabs on, Warp's hosted agent off.
+fn agent_panel_flags() -> impl Sized {
+    (
+        FeatureFlag::HerdrWorkspaceTabs.override_enabled(true),
+        FeatureFlag::AgentManagementView.override_enabled(true),
+        FeatureFlag::DisableHostedAgent.override_enabled(true),
+    )
+}
+
+fn is_agent_panel_open(app: &App, workspace: &ViewHandle<Workspace>) -> bool {
+    workspace.read(app, |workspace, _| {
+        workspace
+            .current_workspace_state
+            .is_agent_management_view_open
+    })
+}
+
+fn toggle_agent_panel(app: &mut App, workspace: &ViewHandle<Workspace>) {
+    app.update(|ctx| {
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::ToggleAgentManagementView, ctx);
+        });
+    });
+}
+
+#[test]
+fn the_agent_panel_opens_without_warps_hosted_agent_and_selecting_an_agent_goes_to_its_workspace() {
+    let _flags = agent_panel_flags();
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session(
+            "default",
+            workspaces(&["api", "web"]).agent_in(
+                "web",
+                "1",
+                0,
+                herdr_fake::AgentScript::new("claude", herdr_fake::AgentState::Blocked),
+            ),
+        );
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eventually!(
+            600 => HerdrSessionModel::handle(&app)
+                .read(&app, |model, _| model.agent_jump_target(&"w2:p1".into()).is_some()),
+            "agents were {:?}", HerdrSessionModel::handle(&app).read(&app, |model, _| model.agents().clone())
+        );
+        assert_eq!(active_tab_title(&app, &workspace), "api");
+
+        toggle_agent_panel(&mut app, &workspace);
+        assert!(is_agent_panel_open(&app, &workspace));
+        app.update(|ctx| {
+            HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
+                model.jump_to_agent(&"w2:p1".into(), ctx);
+            });
+        });
+
+        assert_eq!(active_tab_title(&app, &workspace), "web");
+        assert!(!is_agent_panel_open(&app, &workspace));
+        let moved_focus = session
+            .served_methods()
+            .iter()
+            .any(|method| method.ends_with(".focus") || method.ends_with(".focused"));
+        assert!(!moved_focus, "{:?}", session.served_methods());
     });
 }

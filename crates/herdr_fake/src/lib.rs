@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 pub use binary::Invocation;
 use binary::ScriptedBinary;
 use launcher::ServerLauncher;
-pub use script::{PaneTree, SessionScript, SplitDirection, TabScript};
+pub use script::{AgentScript, AgentState, PaneTree, SessionScript, SplitDirection, TabScript};
 pub use server::{FakeSession, SnapshotPause};
 pub use status::HerdrStatus;
 use tempfile::TempDir;
