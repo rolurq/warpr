@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 
 use herdr_client::{PaneOwnership, PaneSize};
 use warp_core::ui::theme::WarpTheme;
-use warpui::elements::Point;
+use warpui::elements::{Border, Point};
 use warpui::fonts::{FamilyId, Properties};
 use warpui::geometry::rect::RectF;
 use warpui::geometry::vector::{Vector2F, vec2f};
@@ -14,13 +14,18 @@ use warpui::{
 };
 
 use super::pane_contents::HerdrPaneContents;
+use super::pane_terminal::PaneCursor;
 use crate::settings::EnforceMinimumContrast;
 use crate::terminal::color::{self, OverrideList};
 use crate::terminal::grid_renderer::{CellGlyphCache, render_grid};
 use crate::terminal::grid_size_util::grid_cell_dimensions;
+use crate::terminal::model::ansi::CursorShape;
 use crate::terminal::model::grid::RespectDisplayedOutput;
 use crate::terminal::model::index::Point as GridPoint;
 use crate::terminal::model::secrets::ObfuscateSecrets;
+
+/// The cursor's thickness for beam and underline shapes, relative to a cell's width.
+const CURSOR_THICKNESS_SCALE_FACTOR: f32 = 0.15;
 
 /// How the cells of a pane's screen are drawn.
 pub struct PaneGridStyle {
@@ -64,6 +69,49 @@ pub(super) fn contested_scale(frame: Vector2F, cell: Vector2F, cols: u16, rows: 
     (frame.x() / grid.x())
         .min(frame.y() / grid.y())
         .clamp(0., 1.)
+}
+
+impl PaneGridElement {
+    fn paint_cursor(
+        &self,
+        cursor: PaneCursor,
+        origin: Vector2F,
+        cell: Vector2F,
+        ctx: &mut PaintContext,
+    ) {
+        let cell_origin = origin + cell * vec2f(f32::from(cursor.col), f32::from(cursor.row));
+        let thickness = (CURSOR_THICKNESS_SCALE_FACTOR * cell.x().round()).max(1.);
+        let fill = self.style.theme.cursor();
+        match cursor.shape {
+            CursorShape::Block => {
+                ctx.scene
+                    .draw_rect_with_hit_recording(RectF::new(cell_origin, cell))
+                    .with_background(fill);
+            }
+            CursorShape::Underline => {
+                ctx.scene
+                    .draw_rect_with_hit_recording(RectF::new(
+                        cell_origin + vec2f(0., cell.y() - thickness),
+                        vec2f(cell.x(), thickness),
+                    ))
+                    .with_background(fill);
+            }
+            CursorShape::Beam => {
+                ctx.scene
+                    .draw_rect_with_hit_recording(RectF::new(
+                        cell_origin,
+                        vec2f(thickness, cell.y()),
+                    ))
+                    .with_background(fill);
+            }
+            CursorShape::HollowBlock => {
+                ctx.scene
+                    .draw_rect_with_hit_recording(RectF::new(cell_origin, cell))
+                    .with_border(Border::all(thickness).with_border_fill(fill));
+            }
+            CursorShape::Hidden => {}
+        }
+    }
 }
 
 impl Element for PaneGridElement {
@@ -125,6 +173,7 @@ impl Element for PaneGridElement {
         } else {
             1.
         };
+        let cursor = terminal.cursor();
         let grid = terminal.screen().grid_handler();
         let no_matches: Option<std::slice::Iter<'_, RangeInclusive<GridPoint>>> = None;
         ctx.scene.start_layer(ClipBounds::BoundedBy(bounds));
@@ -152,14 +201,17 @@ impl Element for PaneGridElement {
             ObfuscateSecrets::No,
             None,
             false, /* use_ligature_rendering */
-            None,
+            cursor.map(|cursor| cursor.shape),
             RespectDisplayedOutput::No,
             &HashMap::new(),
             None,
-            true, /* hide_cursor_cell */
+            false, /* hide_cursor_cell */
             ctx,
             app,
         );
+        if let Some(cursor) = cursor {
+            self.paint_cursor(cursor, origin, cell * factor, ctx);
+        }
         ctx.scene.stop_layer();
     }
 

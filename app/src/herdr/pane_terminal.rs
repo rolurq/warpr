@@ -7,9 +7,18 @@ use crate::terminal::SizeInfo;
 use crate::terminal::event::Event as TerminalEvent;
 use crate::terminal::event_listener::ChannelEventListener;
 use crate::terminal::model::alt_screen::AltScreen;
-use crate::terminal::model::ansi::Processor;
+use crate::terminal::model::ansi::{CursorShape, Processor};
 use crate::terminal::model::grid::Dimensions as _;
+use crate::terminal::model::grid::grid_handler::TermMode;
 use crate::terminal::model::secrets::ObfuscateSecrets;
+
+/// The cursor a program has left on its screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneCursor {
+    pub row: u16,
+    pub col: u16,
+    pub shape: CursorShape,
+}
 
 /// A pane's screen, kept by feeding the ANSI bytes of Herdr's frames to Warp's VT parser.
 ///
@@ -65,6 +74,20 @@ impl PaneTerminal {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.screen.output_to_string()
+    }
+
+    /// Where the program has left the cursor, or `None` while it has hidden it.
+    pub fn cursor(&self) -> Option<PaneCursor> {
+        let style = self.screen.cursor_style();
+        if !self.screen.is_mode_set(TermMode::SHOW_CURSOR) || style.shape == CursorShape::Hidden {
+            return None;
+        }
+        let point = self.screen.grid_handler().cursor_render_point();
+        Some(PaneCursor {
+            row: point.row as u16,
+            col: point.col as u16,
+            shape: style.shape,
+        })
     }
 
     pub(super) fn screen(&self) -> &AltScreen {

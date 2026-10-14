@@ -3,8 +3,7 @@ use std::collections::HashMap;
 
 use herdr_client::{
     AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneOwnership, PresentedHerdrTab,
-    PresentedPane,
-    PresentedWorkspace,
+    PresentedPane, PresentedWorkspace,
 };
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,

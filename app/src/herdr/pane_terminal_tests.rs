@@ -125,3 +125,39 @@ fn wide_characters_occupy_two_cells() {
 
     assert_eq!(lines(&terminal), ["漢字X"]);
 }
+
+#[test]
+fn the_cursor_sits_where_the_frame_left_it_with_the_shape_the_program_chose() {
+    let mut terminal = PaneTerminal::new(12, 3);
+
+    terminal.apply(&frame(
+        1,
+        true,
+        12,
+        3,
+        "\x1b[?25l\x1b[2J\x1b[1;1Hab\x1b[2;5H\x1b[6 q\x1b[?25h",
+    ));
+
+    assert_eq!(
+        terminal.cursor(),
+        Some(PaneCursor {
+            row: 1,
+            col: 4,
+            shape: CursorShape::Beam
+        })
+    );
+}
+
+#[test]
+fn a_cursor_the_program_hides_is_not_reported_until_it_shows_it_again() {
+    let mut terminal = PaneTerminal::new(12, 3);
+    terminal.apply(&frame(1, true, 12, 3, "\x1b[2J\x1b[1;1Hab\x1b[?25l"));
+
+    assert_eq!(terminal.cursor(), None);
+
+    terminal.apply(&frame(2, false, 12, 3, "\x1b[3;3H\x1b[?25h"));
+    assert_eq!(
+        terminal.cursor().map(|cursor| (cursor.row, cursor.col)),
+        Some((2, 2))
+    );
+}
