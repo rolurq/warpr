@@ -19,12 +19,12 @@ mod live;
 #[cfg(not(unix))]
 #[path = "live_unsupported.rs"]
 mod live;
-mod metadata;
 #[cfg(unix)]
 mod live_agents;
 #[cfg(not(unix))]
 #[path = "live_agents_unsupported.rs"]
 mod live_agents;
+mod metadata;
 mod presented;
 mod reconnect;
 mod session;
@@ -38,8 +38,8 @@ pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, Presented
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
 pub use live::LiveSession;
-pub use metadata::MetadataToken;
 pub use live_agents::LiveAgents;
+pub use metadata::MetadataToken;
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,
 };

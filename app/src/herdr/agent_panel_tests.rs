@@ -91,7 +91,7 @@ fn state_of(app: &App, pane: &str) -> Option<AgentState> {
 }
 
 fn wait_for_agent_subscriptions(session: &FakeSession) {
-    let start = std::time::Instant::now();
+    let start = instant::Instant::now();
     while session.agent_status_subscriptions().is_empty() {
         assert!(
             start.elapsed() < std::time::Duration::from_secs(10),
