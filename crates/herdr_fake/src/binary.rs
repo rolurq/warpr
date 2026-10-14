@@ -165,8 +165,11 @@ impl ScriptedBinary {
 
     fn render(&self, dir: &Path) -> String {
         let dir = shell_quote(&dir.to_string_lossy());
-        let mut script =
-            format!("#!/bin/sh\ndir={dir}\n{{\nprintf 'begin\\n'\nprintf 'pid:%s\\n' \"$$\"\n");
+        // The record is staged and appended with a single `cat` write, so that concurrent
+        // invocations cannot interleave their lines.
+        let mut script = format!(
+            "#!/bin/sh\ndir={dir}\nrecord=\"$dir/record.$$\"\n{{\nprintf 'begin\\n'\nprintf 'pid:%s\\n' \"$$\"\n"
+        );
         script.push_str("for arg in \"$@\"; do printf 'arg:%s\\n' \"$arg\"; done\n");
         for var in RECORDED_ENV {
             script.push_str(&format!(
@@ -174,7 +177,7 @@ impl ScriptedBinary {
             ));
         }
         script.push_str(&format!(
-            "printf 'end\\n'\n}} >> \"$dir/{INVOCATION_LOG}\"\n"
+            "printf 'end\\n'\n}} > \"$record\"\ncat \"$record\" >> \"$dir/{INVOCATION_LOG}\"\nrm -f \"$record\"\n"
         ));
 
         for (index, command) in self.commands.iter().enumerate() {

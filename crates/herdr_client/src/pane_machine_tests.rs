@@ -233,6 +233,63 @@ fn a_failed_stream_is_not_restarted_until_the_pane_is_hidden_and_shown() {
     );
 }
 
+/// A visible pane whose control was refused, so it is being watched at `grid`.
+fn contested(size: PaneSize, grid: GridSize) -> Clock {
+    let mut clock = Clock::new();
+    clock.input(Input::Grid(grid));
+    clock.input(Input::Size(size));
+    clock.input(Input::Visible(true));
+    clock.input(Input::ControlClosed(Closure::Refused));
+    clock
+}
+
+#[test]
+fn forwarded_input_takes_a_contested_pane_at_the_pane_size_and_reports_it() {
+    let mut clock = contested(size(80, 24), grid(60, 20));
+
+    assert_eq!(
+        clock.input(Input::Forward),
+        [
+            Action::StopObserve,
+            Action::TakeOverControl(size(80, 24)),
+            Action::SendResize(size(80, 24)),
+        ]
+    );
+    assert_eq!(
+        clock.input(Input::ControlFrame),
+        [Action::Publish(PaneOwnership::TookControl)]
+    );
+    assert_eq!(clock.input(Input::Forward), []);
+}
+
+#[test]
+fn a_pane_acquired_again_after_a_takeover_is_plainly_owned() {
+    let mut clock = contested(size(80, 24), grid(60, 20));
+    clock.input(Input::Forward);
+    clock.input(Input::ControlFrame);
+    clock.input(Input::Visible(false));
+    clock.after(GRACE, Input::Tick);
+    clock.input(Input::Visible(true));
+
+    assert_eq!(
+        clock.input(Input::ControlFrame),
+        [Action::Publish(PaneOwnership::Owned)]
+    );
+}
+
+#[test]
+fn forwarded_input_changes_nothing_unless_the_pane_is_contested() {
+    let mut idle = Clock::new();
+    assert_eq!(idle.input(Input::Forward), []);
+
+    let mut owned = Clock::controlling(size(80, 24));
+    assert_eq!(owned.input(Input::Forward), []);
+
+    let mut over = Clock::controlling(size(80, 24));
+    over.input(Input::ControlClosed(Closure::Exited));
+    assert_eq!(over.input(Input::Forward), []);
+}
+
 #[test]
 fn control_is_released_only_after_the_grace_and_acquired_again_on_return() {
     let mut clock = Clock::controlling(size(80, 24));

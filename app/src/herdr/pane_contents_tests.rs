@@ -1,5 +1,6 @@
 use herdr_client::{
-    Contest, GridSize, HerdrCli, PaneId, PaneOwnership, PaneSize, SessionName, SessionTarget,
+    Contest, GridSize, HerdrCli, PaneId, PaneInput, PaneOwnership, PaneSize, SessionName,
+    SessionTarget,
 };
 use herdr_fake::{
     FakeFrame, FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, StreamKind,
@@ -159,6 +160,44 @@ fn a_contested_pane_is_watched_at_herdrs_grid_and_marked() {
                 .map(|terminal| (terminal.cols(), terminal.rows()))),
             Some((grid.cols, grid.rows))
         );
+    });
+}
+
+#[test]
+fn input_forwarded_to_a_contested_pane_takes_it_and_shows_the_taken_pane() {
+    App::test((), |mut app| async move {
+        let (mut fake, _session) = fake_with_session();
+        fake.script_terminal_stream(
+            StreamKind::Control,
+            PANE,
+            [
+                TerminalStreamScript::new().closed(REFUSED),
+                TerminalStreamScript::new().frame(frame(1, true, "mine")),
+            ],
+        );
+        fake.script_terminal_stream(
+            StreamKind::Observe,
+            PANE,
+            [TerminalStreamScript::new().frame(FakeFrame::full(
+                1,
+                120,
+                40,
+                "\x1b[2J\x1b[1;1Hother owner",
+            ))],
+        );
+        let contents = show_pane(&mut app, &fake).await;
+        assert_eventually!(200 => ownership(&app, &contents)
+            == Some(PaneOwnership::Contested(Contest::Refused)), "contested");
+
+        contents.read(&app, |contents, _| {
+            contents
+                .stream()
+                .forward(PaneInput::Text("hello".to_owned()));
+        });
+
+        assert_eventually!(200 => ownership(&app, &contents)
+            == Some(PaneOwnership::TookControl), "taken");
+        assert_eventually!(200 => text(&app, &contents).first().is_some_and(|line| line == "mine"), "taken text");
     });
 }
 

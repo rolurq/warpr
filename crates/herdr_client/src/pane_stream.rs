@@ -53,6 +53,86 @@ pub enum PaneStreamEvent {
     Ownership(PaneOwnership),
 }
 
+/// Which way scrolling moves the pane's view: `Up` towards older output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+}
+
+/// A left-button transition, with `Drag` for movement while it is held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseAction {
+    Down,
+    Up,
+    Drag,
+}
+
+/// Input for the program in a pane. Cells are zero-based, counted from the pane's top left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PaneInput {
+    /// Text reaching the program unchanged.
+    Text(String),
+    /// A key by its Herdr name, such as `up` or `enter`. Herdr encodes it for the cursor-key mode
+    /// the program has set, which frames do not reveal.
+    Key(String),
+    /// Scrolling the pane's view of its history.
+    Scroll {
+        direction: ScrollDirection,
+        lines: u16,
+        column: u16,
+        row: u16,
+    },
+    /// A left-button event, which Herdr drops unless the program asked for mouse input.
+    Mouse {
+        action: MouseAction,
+        column: u16,
+        row: u16,
+    },
+}
+
+impl PaneInput {
+    /// The `terminal.*` line that carries this input, or `None` for a key, which goes through
+    /// `herdr pane send-keys`.
+    fn control_line(&self) -> Option<Value> {
+        match self {
+            Self::Text(text) => Some(json!({ "type": "terminal.input", "text": text })),
+            Self::Key(_) => None,
+            Self::Scroll {
+                direction,
+                lines,
+                column,
+                row,
+            } => Some(json!({
+                "type": "terminal.scroll",
+                "direction": match direction {
+                    ScrollDirection::Up => "up",
+                    ScrollDirection::Down => "down",
+                },
+                "lines": lines,
+                "source": "wheel",
+                "column": column,
+                "row": row,
+            })),
+            Self::Mouse {
+                action,
+                column,
+                row,
+            } => Some(json!({
+                "type": "terminal.mouse",
+                "action": match action {
+                    MouseAction::Down => "down",
+                    MouseAction::Up => "up",
+                    MouseAction::Drag => "drag",
+                },
+                "button": "left",
+                "column": column,
+                "row": row,
+            })),
+        }
+    }
+}
+
 /// The stdin of a pane's control session, which takes `terminal.*` JSON lines.
 ///
 /// It stays the same handle as the session is replaced, and is empty while warpr holds none.
@@ -161,6 +241,12 @@ impl PaneStream {
         self.send(Input::Grid(grid));
     }
 
+    /// Sends `input` to the program in the pane. If another client owns the pane, warpr takes it
+    /// first, evicting that client; a pane warpr is not holding otherwise drops the input.
+    pub fn forward(&self, input: PaneInput) {
+        let _ = self.messages.send(Message::Forward(input));
+    }
+
     /// The stdin of the control session, for forwarding input to the pane.
     pub fn control_channel(&self) -> ControlChannel {
         self.control.clone()
@@ -182,6 +268,7 @@ impl Drop for PaneStream {
 
 enum Message {
     Command(Input),
+    Forward(PaneInput),
     Frame { process: u64, frame: PaneFrame },
     Ended { process: u64, closure: Closure },
     Shutdown,
@@ -189,7 +276,7 @@ enum Message {
 
 #[derive(Clone, Copy)]
 enum Kind {
-    Control,
+    Control { takeover: bool },
     Observe,
 }
 
@@ -232,6 +319,10 @@ impl Worker {
             };
             let input = match message {
                 Some(Message::Command(input)) => input,
+                Some(Message::Forward(input)) => {
+                    self.forward(input);
+                    continue;
+                }
                 Some(Message::Frame { process, frame }) => {
                     self.frame(process, frame);
                     continue;
@@ -263,14 +354,8 @@ impl Worker {
 
     fn perform(&mut self, action: Action) -> Option<Input> {
         match action {
-            Action::SpawnControl(size) => {
-                let cols = size.cols.to_string();
-                let rows = size.rows.to_string();
-                match self.spawn(Kind::Control, &cols, &rows) {
-                    Ok(process) => self.controlling = Some(process),
-                    Err(error) => return Some(Input::ControlClosed(spawn_failure(&error))),
-                }
-            }
+            Action::SpawnControl(size) => return self.spawn_control(size, false),
+            Action::TakeOverControl(size) => return self.spawn_control(size, true),
             Action::SendResize(size) => {
                 // A failed write means the session already ended, which its `terminal.closed`
                 // reports.
@@ -313,27 +398,71 @@ impl Worker {
         None
     }
 
-    fn spawn(&mut self, kind: Kind, cols: &str, rows: &str) -> io::Result<Process> {
-        let subcommand = match kind {
-            Kind::Control => "control",
-            Kind::Observe => "observe",
-        };
+    fn spawn_control(&mut self, size: PaneSize, takeover: bool) -> Option<Input> {
+        let cols = size.cols.to_string();
+        let rows = size.rows.to_string();
+        match self.spawn(Kind::Control { takeover }, &cols, &rows) {
+            Ok(process) => {
+                self.controlling = Some(process);
+                None
+            }
+            Err(error) => Some(Input::ControlClosed(spawn_failure(&error))),
+        }
+    }
+
+    /// Takes the pane first when it is contested, then delivers `input`.
+    fn forward(&mut self, input: PaneInput) {
+        self.apply(Input::Forward);
+        match input.control_line() {
+            // A failed write means the session already ended, which its `terminal.closed`
+            // reports.
+            Some(line) => {
+                let _ = self.control.send(&line);
+            }
+            None => {
+                if let PaneInput::Key(key) = input
+                    && self.controlling.is_some()
+                {
+                    self.send_key(&key);
+                }
+            }
+        }
+    }
+
+    fn send_key(&self, key: &str) {
         let mut command = self.cli.command(
             &self.target,
-            &[
-                "terminal",
-                "session",
-                subcommand,
-                self.pane.as_str(),
-                "--cols",
-                cols,
-                "--rows",
-                rows,
-            ],
+            &["pane", "send-keys", self.pane.as_str(), key],
         );
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let _ = command.status();
+    }
+
+    fn spawn(&mut self, kind: Kind, cols: &str, rows: &str) -> io::Result<Process> {
+        let subcommand = match kind {
+            Kind::Control { .. } => "control",
+            Kind::Observe => "observe",
+        };
+        let mut args = vec![
+            "terminal",
+            "session",
+            subcommand,
+            self.pane.as_str(),
+            "--cols",
+            cols,
+            "--rows",
+            rows,
+        ];
+        if matches!(kind, Kind::Control { takeover: true }) {
+            args.push("--takeover");
+        }
+        let mut command = self.cli.command(&self.target, &args);
         command.stdout(Stdio::piped()).stderr(Stdio::null());
         command.stdin(match kind {
-            Kind::Control => Stdio::piped(),
+            Kind::Control { .. } => Stdio::piped(),
             Kind::Observe => Stdio::null(),
         });
         let mut child = command.spawn()?;

@@ -53,8 +53,8 @@ pub use notifications::{
     AgentNotification, AgentNotifications, NotificationChange, NotificationKind,
 };
 pub use pane_stream::{
-    Contest, ControlChannel, GridSize, PaneFrame, PaneOwnership, PaneSize, PaneStream,
-    PaneStreamEvent, RELEASE_GRACE, RESIZE_INTERVAL,
+    Contest, ControlChannel, GridSize, MouseAction, PaneFrame, PaneInput, PaneOwnership, PaneSize,
+    PaneStream, PaneStreamEvent, RELEASE_GRACE, RESIZE_INTERVAL, ScrollDirection,
 };
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,

@@ -10,6 +10,7 @@ mod notifications;
 mod pane_contents;
 mod pane_frames;
 mod pane_grid;
+mod pane_input;
 mod pane_terminal;
 mod session_picker;
 mod sessions;

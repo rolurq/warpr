@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use herdr_client::{
-    AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneOwnership, PresentedHerdrTab,
-    PresentedPane, PresentedWorkspace,
+    AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput, PaneOwnership,
+    PresentedHerdrTab, PresentedPane, PresentedWorkspace,
 };
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
@@ -11,13 +11,13 @@ use warpui::elements::{
 };
 use warpui::platform::Cursor;
 use warpui::{
-    AppContext, Element, Entity, ModelHandle, SingletonEntity as _, TypedActionView, View,
-    ViewContext,
+    AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity as _, TypedActionView,
+    View, ViewContext, WindowId,
 };
 
 use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
 use super::pane_frames::PaneFrames;
-use super::pane_grid::{PaneGridElement, PaneGridStyle};
+use super::pane_grid::{PaneGridElement, PaneGridStyle, PaneInputTarget};
 use super::{HerdrSessionEvent, HerdrSessionModel};
 use crate::app_state::HerdrWorkspaceContents;
 use crate::appearance::Appearance;
@@ -38,6 +38,11 @@ pub enum HerdrWorkspaceViewAction {
     /// Shows a Herdr tab in this view. It only changes what is displayed: Herdr's own focus is
     /// left alone, so other Herdr clients see no change.
     SelectTab(HerdrTabId),
+    /// Gives a pane the focus of this view, so that typing goes to it. Like `SelectTab` it is
+    /// view state: Herdr is not told, and nothing is taken from another client.
+    SelectPane(PaneId),
+    /// Sends the clipboard's text to a pane's program.
+    Paste(PaneId),
 }
 
 /// The contents of the pane that stands for a Herdr workspace in its top-level tab, or for the
@@ -54,6 +59,8 @@ pub struct HerdrWorkspaceView {
     tab_mouse_states: RefCell<HashMap<HerdrTabId, MouseStateHandle>>,
     pane_configuration: ModelHandle<PaneConfiguration>,
     focus_handle: Option<PaneFocusHandle>,
+    window_id: WindowId,
+    view_id: EntityId,
 }
 
 impl HerdrWorkspaceView {
@@ -84,6 +91,8 @@ impl HerdrWorkspaceView {
             tab_mouse_states: RefCell::default(),
             pane_configuration,
             focus_handle: None,
+            window_id: ctx.window_id(),
+            view_id: ctx.view_id(),
         };
         view.update_shown_panes(ctx);
         view
@@ -304,7 +313,7 @@ impl HerdrWorkspaceView {
                 };
                 (
                     pane.rect,
-                    Self::render_pane_frame(&pane, is_selected, appearance, app),
+                    self.render_pane_frame(&pane, is_selected, appearance, app),
                 )
             })
             .collect();
@@ -313,6 +322,7 @@ impl HerdrWorkspaceView {
 
     /// A pane's live output, or its id while Herdr's pane has no contents to show yet.
     fn render_pane_frame(
+        &self,
         pane: &PresentedPane,
         is_selected: bool,
         appearance: &Appearance,
@@ -345,6 +355,12 @@ impl HerdrWorkspaceView {
                     font_size: appearance.monospace_font_size(),
                     line_height_ratio: appearance.ui_builder().line_height_ratio(),
                 },
+                PaneInputTarget {
+                    pane: pane.id.clone(),
+                    selected: is_selected,
+                    window_id: self.window_id,
+                    view_id: self.view_id,
+                },
             )
             .finish()]);
         }
@@ -374,6 +390,9 @@ impl HerdrWorkspaceView {
             }
             PaneOwnership::Contested(Contest::Evicted) => {
                 Some("Another client took over this pane; showing it at Herdr's size".to_owned())
+            }
+            PaneOwnership::TookControl => {
+                Some("Took control of this pane from another client".to_owned())
             }
             PaneOwnership::Exited => Some("Process exited".to_owned()),
             PaneOwnership::Unavailable(reason) => Some(format!("Pane stream ended: {reason}")),
@@ -503,6 +522,27 @@ impl TypedActionView for HerdrWorkspaceView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
+            HerdrWorkspaceViewAction::Paste(pane) => {
+                let text = ctx
+                    .clipboard()
+                    .read()
+                    .plain_text
+                    .replace("\r\n", "\r")
+                    .replace('\n', "\r");
+                let contents = HerdrPaneContentsRegistry::as_ref(ctx).contents(pane);
+                if let Some(contents) = contents.filter(|_| !text.is_empty()) {
+                    contents.read(ctx, |contents, _| {
+                        contents.stream().forward(PaneInput::Text(text));
+                    });
+                }
+            }
+            HerdrWorkspaceViewAction::SelectPane(pane) => {
+                self.selected_pane = Some(pane.clone());
+                self.report_viewed_panes(ctx);
+                self.update_shown_panes(ctx);
+                ctx.focus_self();
+                ctx.notify();
+            }
             HerdrWorkspaceViewAction::SelectTab(tab_id) => {
                 self.selected_tab = Some(tab_id.clone());
                 self.selected_pane = None;
