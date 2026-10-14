@@ -26,6 +26,9 @@ mod live_agents;
 mod live_agents;
 mod metadata;
 mod notifications;
+mod pane_machine;
+mod pane_size;
+mod pane_stream;
 mod presented;
 mod reconnect;
 mod session;
@@ -43,6 +46,10 @@ pub use live_agents::LiveAgents;
 pub use metadata::MetadataToken;
 pub use notifications::{
     AgentNotification, AgentNotifications, NotificationChange, NotificationKind,
+};
+pub use pane_stream::{
+    Contest, ControlChannel, GridSize, PaneFrame, PaneOwnership, PaneSize, PaneStream,
+    PaneStreamEvent, RELEASE_GRACE, RESIZE_INTERVAL,
 };
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,

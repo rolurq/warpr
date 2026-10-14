@@ -3,6 +3,8 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::terminal_stream::{StreamRuns, recorded_input};
+
 /// Environment variables the scripted executable reports having been started with.
 const RECORDED_ENV: [&str; 5] = [
     "HERDR_SOCKET_PATH",
@@ -52,6 +54,8 @@ enum Outcome {
     Hang,
     /// Keeps running, like a server, until the owning [`crate::FakeHerdr`] is dropped.
     UntilShutdown,
+    /// Streams `terminal.*` records for any invocation that starts with the command's arguments.
+    Stream(StreamRuns),
 }
 
 /// A `/bin/sh` script standing in for the `herdr` executable.
@@ -90,6 +94,29 @@ impl ScriptedBinary {
 
     pub(crate) fn script_until_shutdown(&mut self, args: &[&str]) {
         self.push(args, "", Outcome::UntilShutdown);
+    }
+
+    /// Scripts every `herdr terminal session <kind> <pane> ...` invocation.
+    pub(crate) fn script_stream(&mut self, pane: &str, runs: StreamRuns) {
+        let args = ["terminal", "session", runs.kind.subcommand(), pane];
+        self.push(&args, "", Outcome::Stream(runs));
+    }
+
+    /// Opens the gate `name` that scripted streams may be waiting on.
+    pub(crate) fn open_gate(&self, name: &str) {
+        let gates = self.dir().join("gates");
+        fs::create_dir_all(&gates).expect("create gates directory");
+        fs::write(gates.join(name), "").expect("open gate");
+    }
+
+    /// The `terminal.*` lines the control runs of `pane` received on stdin so far.
+    pub(crate) fn control_input(&self, pane: &str) -> Vec<serde_json::Value> {
+        let args = ["terminal", "session", "control", pane];
+        self.commands
+            .iter()
+            .position(|command| command.args == args)
+            .map(|index| recorded_input(self.dir(), index))
+            .unwrap_or_default()
     }
 
     /// Scripts `args`, replacing what an earlier script of the same arguments did.
@@ -151,7 +178,11 @@ impl ScriptedBinary {
         ));
 
         for (index, command) in self.commands.iter().enumerate() {
-            let mut condition = format!("[ \"$#\" -eq {} ]", command.args.len());
+            let comparison = match command.outcome {
+                Outcome::Stream(_) => "-ge",
+                Outcome::Exit { .. } | Outcome::Hang | Outcome::UntilShutdown => "-eq",
+            };
+            let mut condition = format!("[ \"$#\" {comparison} {} ]", command.args.len());
             for (position, arg) in command.args.iter().enumerate() {
                 condition.push_str(&format!(
                     " && [ \"${}\" = {} ]",
@@ -159,7 +190,7 @@ impl ScriptedBinary {
                     shell_quote(arg)
                 ));
             }
-            let action = match command.outcome {
+            let action = match &command.outcome {
                 Outcome::Exit { exit_code } => {
                     format!("cat \"$dir/stdout/{index}\"; exit {exit_code}")
                 }
@@ -169,8 +200,9 @@ impl ScriptedBinary {
                     "while [ -e \"$dir/{RUNNING_MARKER}\" ]; do sleep 0.05; done; \
                      cat \"$dir/stdout/{index}\"; exit 0"
                 ),
+                Outcome::Stream(runs) => runs.render(index),
             };
-            script.push_str(&format!("if {condition}; then {action}; fi\n"));
+            script.push_str(&format!("if {condition}; then\n{action}\nfi\n"));
         }
         script.push_str(&format!(
             "echo \"fake herdr: unscripted invocation: $*\" >&2\nexit {UNSCRIPTED_EXIT_CODE}\n"

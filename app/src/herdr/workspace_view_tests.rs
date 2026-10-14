@@ -2,7 +2,8 @@ use herdr_client::{
     ConnectionStatus, HerdrCli, HerdrTabId, SessionName, SessionTarget, WorkspaceId,
 };
 use herdr_fake::{
-    FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript,
+    FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, SplitDirection, StreamKind,
+    TabScript, TerminalStreamScript,
 };
 use warp_core::ui::appearance::Appearance;
 use warpui::platform::WindowStyle;
@@ -26,9 +27,17 @@ fn split_layout() -> PaneTree {
     )
 }
 
+/// A Herdr whose panes can all be controlled, and print nothing until they are.
 fn compatible_fake() -> FakeHerdr {
     let mut fake = FakeHerdr::new();
     fake.script_status(&HerdrStatus::compatible());
+    for number in 1..=8 {
+        fake.script_terminal_stream(
+            StreamKind::Control,
+            &format!("w1:p{number}"),
+            [TerminalStreamScript::new()],
+        );
+    }
     fake
 }
 
@@ -315,5 +324,34 @@ fn a_workspace_renamed_in_another_client_shows_its_new_title() {
             }),
             "the view kept its old title"
         );
+    });
+}
+
+#[test]
+fn a_shown_pane_is_controlled_at_the_cell_size_of_its_frame_and_hidden_panes_are_not() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = api_session(&fake);
+        let _view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        assert_eventually!(
+            600 => fake.control_input("w1:p1").len() == 1,
+            "the pane was never given a size"
+        );
+
+        let runs: Vec<_> = fake
+            .invocations()
+            .into_iter()
+            .filter(|run| run.args.get(2).map(String::as_str) == Some("control"))
+            .collect();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert_eq!(runs[0].args[3], "w1:p1");
+        let resize = &fake.control_input("w1:p1")[0];
+        assert_eq!(resize["type"], "terminal.resize");
+        assert_eq!(resize["cols"].to_string(), runs[0].args[5]);
+        assert_eq!(resize["rows"].to_string(), runs[0].args[7]);
+        assert!(resize["cell_width_px"].as_u64().is_some_and(|px| px > 0));
+        assert!(resize["cell_height_px"].as_u64().is_some_and(|px| px > 0));
     });
 }

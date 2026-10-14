@@ -19,6 +19,7 @@ mod launcher;
 mod script;
 mod server;
 mod status;
+mod terminal_stream;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,8 @@ pub use script::{AgentScript, AgentState, PaneTree, SessionScript, SplitDirectio
 pub use server::{FakeSession, SnapshotPause};
 pub use status::HerdrStatus;
 use tempfile::TempDir;
+use terminal_stream::StreamRuns;
+pub use terminal_stream::{FakeFrame, StreamKind, TerminalStreamScript};
 
 /// A scratch Herdr config directory plus a scripted `herdr` executable.
 pub struct FakeHerdr {
@@ -150,6 +153,30 @@ impl FakeHerdr {
             &format!("{}\n", status.client_json()),
             0,
         );
+    }
+
+    /// Makes `herdr terminal session control <pane> ...` (or `observe`, per `kind`) behave as the
+    /// scripts in `runs` say. The `n`th run of the command follows the `n`th script and the last
+    /// one repeats; arguments after the pane are recorded in [`Self::invocations`] but not matched.
+    pub fn script_terminal_stream(
+        &mut self,
+        kind: StreamKind,
+        pane: &str,
+        runs: impl IntoIterator<Item = TerminalStreamScript>,
+    ) {
+        let runs: Vec<_> = runs.into_iter().collect();
+        assert!(!runs.is_empty(), "a terminal stream needs at least one run");
+        self.binary.script_stream(pane, StreamRuns { kind, runs });
+    }
+
+    /// Lets scripted streams waiting on the gate `name` continue.
+    pub fn open_gate(&self, name: &str) {
+        self.binary.open_gate(name);
+    }
+
+    /// The JSON lines that `terminal session control` runs for `pane` received on stdin, in order.
+    pub fn control_input(&self, pane: &str) -> Vec<serde_json::Value> {
+        self.binary.control_input(pane)
     }
 
     /// Makes `herdr <args>` run forever without printing anything.
