@@ -1,7 +1,10 @@
-use herdr_client::{HerdrCli, Refusal, SessionName, SessionTarget};
-use herdr_fake::{FakeHerdr, HerdrStatus, SessionScript};
+use std::time::Duration;
+
+use herdr_client::{HerdrCli, ReconnectPolicy, Refusal, SessionName, SessionTarget};
+use herdr_fake::{FakeHerdr, FakeSession, HerdrStatus, SessionScript};
+use serde_json::json;
 use warp_core::features::FeatureFlag;
-use warpui::{App, ViewHandle};
+use warpui::{App, EntityId, ViewHandle};
 
 use super::*;
 use crate::test_util::assert_eventually;
@@ -22,6 +25,46 @@ fn connect_with(app: &mut App, cli: HerdrCli, fake: &FakeHerdr, session: &str) {
     app.update(|ctx| {
         ctx.add_singleton_model(|ctx| HerdrSessionModel::connect(cli, target, ctx));
     });
+}
+
+/// Retries quickly so reconnection is observable within a test's time.
+fn connect_to_with_quick_retries(app: &mut App, fake: &FakeHerdr, session: &str) {
+    let cli = HerdrCli::new(fake.binary_path());
+    let target = SessionTarget::new(&fake.config_dir(), SessionName::new(session).unwrap());
+    let policy = ReconnectPolicy {
+        initial_backoff: Duration::from_millis(5),
+        max_backoff: Duration::from_millis(20),
+        disconnected_after: 1000,
+    };
+    app.update(|ctx| {
+        ctx.add_singleton_model(|ctx| {
+            HerdrSessionModel::connect_with_policy(cli, target, policy, ctx)
+        });
+    });
+}
+
+fn workspaces(labels: &[&str]) -> SessionScript {
+    labels.iter().fold(SessionScript::new(), |script, label| {
+        script.workspace(label)
+    })
+}
+
+fn announce(session: &FakeSession, event: &str) {
+    session.emit_event(event, json!({ "type": event }));
+}
+
+fn tab_ids(app: &App, workspace: &ViewHandle<Workspace>) -> Vec<EntityId> {
+    workspace.read(app, |workspace, _| {
+        workspace
+            .tabs
+            .iter()
+            .map(|tab| tab.pane_group.id())
+            .collect()
+    })
+}
+
+fn connection(app: &App) -> ConnectionStatus {
+    HerdrSessionModel::handle(app).read(app, |model, _| model.presented().connection.clone())
 }
 
 fn refusal_of(app: &App) -> Option<Refusal> {
@@ -136,10 +179,8 @@ fn an_unreachable_session_leaves_the_windows_tabs_alone() {
         let fake = fake_with(HerdrStatus::server_not_running());
         connect_to(&mut app, &fake, "stopped");
         assert_eventually!(
-            200 => HerdrSessionModel::handle(&app).read(&app, |model, _| {
-                matches!(model.presented().connection, ConnectionStatus::Failed(_))
-            }),
-            "connection never failed"
+            200 => matches!(connection(&app), ConnectionStatus::Reconnecting(_)),
+            "connection never reported the failed attempt"
         );
 
         let workspace = mock_workspace(&mut app);
@@ -189,5 +230,237 @@ fn a_missing_herdr_executable_replaces_the_windows_tabs_with_the_reason() {
             refusal_of(&app),
             Some(Refusal::ExecutableMissing { .. })
         ));
+    });
+}
+
+#[test]
+fn a_workspace_created_in_herdr_gets_a_tab_at_its_position_without_moving_the_selection() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        // Selecting the first tab makes Warp's own new-tab placement differ from Herdr's order.
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(0, ctx));
+        let before = tab_ids(&app, &workspace);
+
+        session.set_script(workspaces(&["api", "web", "docs"]));
+        announce(&session, "workspace_created");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(tab_ids(&app, &workspace)[..2], before[..]);
+        assert_eq!(active_tab_title(&app, &workspace), "api");
+    });
+}
+
+#[test]
+fn a_workspace_closed_in_herdr_closes_only_its_tab() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web", "docs"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(1, ctx));
+        let before = tab_ids(&app, &workspace);
+
+        session.set_script(workspaces(&["api", "web"]));
+        announce(&session, "workspace_closed");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(tab_ids(&app, &workspace)[..], before[..2]);
+        assert_eq!(active_tab_title(&app, &workspace), "web");
+    });
+}
+
+#[test]
+fn a_workspace_closed_in_the_middle_keeps_the_tabs_of_the_others() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web", "docs"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let before = tab_ids(&app, &workspace);
+
+        session.set_script(
+            SessionScript::new()
+                .workspace("api")
+                .workspace("web")
+                .workspace("docs")
+                .without_workspace("web"),
+        );
+        announce(&session, "workspace_closed");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(tab_ids(&app, &workspace), [before[0], before[2]]);
+    });
+}
+
+#[test]
+fn closing_the_selected_workspace_selects_the_one_herdr_has_focused() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web", "docs"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(2, ctx));
+
+        session.set_script(workspaces(&["api", "web"]).focused("api"));
+        announce(&session, "workspace_closed");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(active_tab_title(&app, &workspace), "api");
+    });
+}
+
+#[test]
+fn a_workspace_renamed_in_herdr_retitles_its_tab_in_place() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let before = tab_ids(&app, &workspace);
+
+        session.set_script(workspaces(&["api", "web"]).renamed_workspace("web", "backend"));
+        announce(&session, "workspace_renamed");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "backend"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(tab_ids(&app, &workspace), before);
+    });
+}
+
+#[test]
+fn changes_whose_events_were_lost_are_presented_after_the_resync() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        session.set_script(workspaces(&["api", "web", "docs"]));
+        session.lose_events();
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+    });
+}
+
+#[test]
+fn a_lost_connection_is_shown_and_the_tabs_follow_herdr_once_it_returns() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to_with_quick_retries(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        session.go_offline();
+
+        assert_eventually!(
+            600 => matches!(connection(&app), ConnectionStatus::Reconnecting(_)),
+            "connection was {:?}", connection(&app)
+        );
+        assert_eq!(tab_titles(&app, &workspace), ["api", "web"]);
+
+        session.set_script(workspaces(&["web", "docs"]));
+        session.go_online();
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["web", "docs"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(connection(&app), ConnectionStatus::Connected);
+    });
+}
+
+#[test]
+fn a_server_restarted_as_an_incompatible_release_is_refused_until_it_is_compatible_again() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let mut fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to_with_quick_retries(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        session.go_offline();
+        fake.script_status(&HerdrStatus::compatible().server_protocol(21));
+        session.go_online();
+
+        assert_eventually!(
+            600 => refusal_of(&app).is_some(),
+            "connection was {:?}", connection(&app)
+        );
+        assert_eq!(tab_titles(&app, &workspace), ["Cannot connect to Herdr"]);
+
+        fake.script_status(&HerdrStatus::compatible());
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eq!(connection(&app), ConnectionStatus::Connected);
     });
 }

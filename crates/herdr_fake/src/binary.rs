@@ -92,14 +92,21 @@ impl ScriptedBinary {
         self.push(args, "", Outcome::UntilShutdown);
     }
 
+    /// Scripts `args`, replacing what an earlier script of the same arguments did.
     fn push(&mut self, args: &[&str], stdout: &str, outcome: Outcome) {
-        let index = self.commands.len();
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        let index = self
+            .commands
+            .iter()
+            .position(|command| command.args == args)
+            .unwrap_or(self.commands.len());
         fs::write(self.dir().join("stdout").join(index.to_string()), stdout)
             .expect("write scripted stdout");
-        self.commands.push(ScriptedCommand {
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-            outcome,
-        });
+        let command = ScriptedCommand { args, outcome };
+        match self.commands.get_mut(index) {
+            Some(existing) => *existing = command,
+            None => self.commands.push(command),
+        }
         self.write_script();
     }
 

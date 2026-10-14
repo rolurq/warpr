@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use herdr_client::{
-    ConnectionFailure, ConnectionStatus, HerdrCli, ListedSession, PresentedSession, SessionName,
-    SessionTarget, launch_session, list_sessions, open_session,
+    ConnectionFailure, ConnectionStatus, HerdrCli, ListedSession, PresentedSession,
+    ReconnectPolicy, SessionName, SessionTarget, launch_session, list_sessions, open_session,
 };
 use warpui::ModelContext;
 
@@ -28,6 +28,11 @@ impl SessionSelection {
             current: None,
             listed: Vec::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn select(&mut self, name: SessionName) {
+        self.current = Some(name);
     }
 
     fn target(&self, name: &SessionName) -> Result<SessionTarget, ConnectionFailure> {
@@ -71,13 +76,14 @@ impl HerdrSessionModel {
         ctx.spawn(
             async move {
                 let presented = launch_session(&cli, &target);
-                (target.name().clone(), presented)
+                (target, presented)
             },
-            |me, (name, presented), ctx| me.set_presented_for(&name, presented, ctx),
+            |me, (target, presented), ctx| me.set_presented_for(target, presented, ctx),
         );
         let mut model = Self {
             presented: PresentedSession::connecting(),
             sessions,
+            live_session: None,
         };
         model.refresh_sessions(ctx);
         model
@@ -125,6 +131,7 @@ impl HerdrSessionModel {
         }
 
         self.sessions.current = Some(name.clone());
+        self.live_session = None;
         let target = match self.sessions.target(name) {
             Ok(target) => target,
             Err(failure) => {
@@ -138,10 +145,10 @@ impl HerdrSessionModel {
         ctx.spawn(
             async move {
                 let presented = open_session(&cli, &target, state);
-                (target.name().clone(), presented)
+                (target, presented)
             },
-            |me, (name, presented), ctx| {
-                me.set_presented_for(&name, presented, ctx);
+            |me, (target, presented), ctx| {
+                me.set_presented_for(target, presented, ctx);
                 // A session that was started is running now.
                 me.refresh_sessions(ctx);
             },
@@ -149,15 +156,21 @@ impl HerdrSessionModel {
     }
 
     /// Applies `presented` unless the user has switched to another session while it was being
-    /// prepared, which makes it stale.
+    /// prepared, which makes it stale. A connected session is kept current from then on.
     fn set_presented_for(
         &mut self,
-        name: &SessionName,
+        target: SessionTarget,
         presented: PresentedSession,
         ctx: &mut ModelContext<Self>,
     ) {
-        if self.sessions.current.as_ref() == Some(name) {
-            self.set_presented(presented, ctx);
+        if self.sessions.current.as_ref() != Some(target.name()) {
+            return;
+        }
+        let is_connected = presented.connection == ConnectionStatus::Connected;
+        self.set_presented(presented, ctx);
+        if is_connected {
+            let cli = self.sessions.cli.clone();
+            self.go_live(cli, target, ReconnectPolicy::default(), ctx);
         }
     }
 }

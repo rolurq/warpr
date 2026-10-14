@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use herdr_client::{HerdrTabId, PresentedHerdrTab, PresentedPane, PresentedWorkspace};
+use herdr_client::{
+    ConnectionStatus, HerdrTabId, PresentedHerdrTab, PresentedPane, PresentedWorkspace,
+};
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
     MainAxisAlignment, MouseStateHandle, ParentElement as _, Text,
@@ -12,8 +14,8 @@ use warpui::{
     ViewContext,
 };
 
-use super::HerdrSessionModel;
 use super::pane_frames::PaneFrames;
+use super::{HerdrSessionEvent, HerdrSessionModel};
 use crate::app_state::HerdrWorkspaceContents;
 use crate::appearance::Appearance;
 use crate::pane_group::focus_state::PaneFocusHandle;
@@ -52,6 +54,15 @@ impl HerdrWorkspaceView {
     pub fn new(contents: HerdrWorkspaceContents, ctx: &mut ViewContext<Self>) -> Self {
         let title = contents.title().to_owned();
         let pane_configuration = ctx.add_model(|_ctx| PaneConfiguration::new(&title));
+        if ctx.has_singleton_model::<HerdrSessionModel>() {
+            ctx.subscribe_to_model(
+                &HerdrSessionModel::handle(ctx),
+                |me, _, event, ctx| match event {
+                    HerdrSessionEvent::Presented => me.follow_session(ctx),
+                    HerdrSessionEvent::SessionsListed => {}
+                },
+            );
+        }
         Self {
             contents,
             selected_tab: None,
@@ -67,6 +78,25 @@ impl HerdrWorkspaceView {
 
     pub fn snapshot(&self) -> HerdrWorkspaceContents {
         self.contents.clone()
+    }
+
+    /// Takes the workspace's label from the session's presented state, where Herdr's renames
+    /// land, and redraws.
+    fn follow_session(&mut self, ctx: &mut ViewContext<Self>) {
+        let label = self
+            .presented_workspace(ctx)
+            .map(|workspace| workspace.label.clone());
+        if let Some(label) = label
+            && let HerdrWorkspaceContents::Workspace(workspace) = &mut self.contents
+            && label != workspace.label
+        {
+            workspace.label = label.clone();
+            self.pane_configuration.update(ctx, |configuration, ctx| {
+                configuration.set_title(label.clone(), ctx);
+                configuration.set_custom_vertical_tabs_title(label, ctx);
+            });
+        }
+        ctx.notify();
     }
 
     /// This workspace as the Herdr session currently presents it.
@@ -212,17 +242,8 @@ impl HerdrWorkspaceView {
     }
 }
 
-impl Entity for HerdrWorkspaceView {
-    type Event = PaneEvent;
-}
-
-impl View for HerdrWorkspaceView {
-    fn ui_name() -> &'static str {
-        "HerdrWorkspaceView"
-    }
-
-    fn render(&self, app: &AppContext) -> Box<dyn Element> {
-        let appearance = Appearance::as_ref(app);
+impl HerdrWorkspaceView {
+    fn render_workspace(&self, app: &AppContext, appearance: &Appearance) -> Box<dyn Element> {
         let presented = self.presented_workspace(app);
         let Some((workspace, shown)) = presented.and_then(|workspace| {
             let shown = workspace.selected_tab(self.selected_tab.as_ref())?;
@@ -234,6 +255,60 @@ impl View for HerdrWorkspaceView {
         Flex::column()
             .with_child(self.render_tab_strip(workspace, shown, appearance))
             .with_child(Expanded::new(1., self.render_pane_frames(shown, appearance)).finish())
+            .finish()
+    }
+
+    /// What to tell the user while the session is not connected, so that the workspaces shown
+    /// are not mistaken for Herdr's current state.
+    fn connection_notice(&self, app: &AppContext) -> Option<String> {
+        if !app.has_singleton_model::<HerdrSessionModel>() {
+            return None;
+        }
+        match &HerdrSessionModel::as_ref(app).presented().connection {
+            ConnectionStatus::Reconnecting(failure) => Some(format!(
+                "Lost the connection to Herdr, reconnecting: {failure}"
+            )),
+            ConnectionStatus::Disconnected(failure) => Some(format!(
+                "Disconnected from Herdr, still trying to reconnect: {failure}"
+            )),
+            ConnectionStatus::Connecting
+            | ConnectionStatus::Connected
+            | ConnectionStatus::Failed(_)
+            | ConnectionStatus::Refused(_) => None,
+        }
+    }
+
+    fn render_connection_notice(notice: String, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let text = Text::new_inline(notice, appearance.ui_font_family(), DETAIL_FONT_SIZE)
+            .with_color(theme.sub_text_color(theme.surface_1()).into())
+            .finish();
+        Container::new(text)
+            .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+            .with_vertical_padding(TAB_VERTICAL_PADDING)
+            .with_background(theme.surface_1())
+            .finish()
+    }
+}
+
+impl Entity for HerdrWorkspaceView {
+    type Event = PaneEvent;
+}
+
+impl View for HerdrWorkspaceView {
+    fn ui_name() -> &'static str {
+        "HerdrWorkspaceView"
+    }
+
+    fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        let appearance = Appearance::as_ref(app);
+        let workspace = self.render_workspace(app, appearance);
+        let Some(notice) = self.connection_notice(app) else {
+            return workspace;
+        };
+        Flex::column()
+            .with_child(Self::render_connection_notice(notice, appearance))
+            .with_child(Expanded::new(1., workspace).finish())
             .finish()
     }
 }

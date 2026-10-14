@@ -3,7 +3,10 @@
 //! It stands in for the two surfaces a Herdr client talks to, so client and presentation code
 //! can be exercised without a real Herdr or a display:
 //!
-//! - [`FakeSession`]: a socket server answering the JSON socket API from a [`SessionScript`];
+//! - [`FakeSession`]: a socket server answering the JSON socket API from a [`SessionScript`]. A
+//!   test can change that script while the session runs, push events, lose them as Herdr does
+//!   when a subscriber falls behind, drop connections, and take the whole server offline and
+//!   back;
 //! - [`FakeHerdr::binary_path`]: a `herdr` executable that prints scripted output and records how
 //!   it was invoked.
 //!
@@ -24,7 +27,7 @@ pub use binary::Invocation;
 use binary::ScriptedBinary;
 use launcher::ServerLauncher;
 pub use script::{PaneTree, SessionScript, SplitDirection, TabScript};
-pub use server::FakeSession;
+pub use server::{FakeSession, SnapshotPause};
 pub use status::HerdrStatus;
 use tempfile::TempDir;
 
@@ -81,7 +84,8 @@ impl FakeHerdr {
         self.binary.path()
     }
 
-    /// Makes `herdr <args>` print `stdout` and exit with `exit_code`.
+    /// Makes `herdr <args>` print `stdout` and exit with `exit_code`. Scripting the same arguments
+    /// again replaces what they did before.
     pub fn script_command(&mut self, args: &[&str], stdout: &str, exit_code: i32) {
         self.binary.script(args, stdout, exit_code);
     }

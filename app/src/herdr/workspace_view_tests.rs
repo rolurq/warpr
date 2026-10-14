@@ -1,12 +1,12 @@
-use herdr_client::{ConnectionStatus, HerdrTabId, SessionName, SessionTarget, WorkspaceId};
+use herdr_client::{
+    ConnectionStatus, HerdrCli, HerdrTabId, SessionName, SessionTarget, WorkspaceId,
+};
 use herdr_fake::{
     FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript,
 };
 use warp_core::ui::appearance::Appearance;
 use warpui::platform::WindowStyle;
 use warpui::{App, ViewHandle};
-
-use herdr_client::HerdrCli;
 
 use super::*;
 use crate::app_state::HerdrWorkspaceSnapshot;
@@ -168,5 +168,90 @@ fn picking_a_herdr_tab_sends_nothing_to_herdr() {
             model.presented().workspaces[0].active_herdr_tab.clone()
         });
         assert_eq!(herdr_active, Some(HerdrTabId::from("w1:t1")));
+    });
+}
+
+#[test]
+fn herdr_tabs_and_panes_created_in_another_client_appear_without_a_refresh() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        session.set_script(
+            SessionScript::new().workspace_with_tabs(
+                "api",
+                [
+                    TabScript::new("server", PaneTree::pane()),
+                    TabScript::new("logs", split_layout()),
+                    TabScript::new("zoomed", split_layout())
+                        .focused_pane(2)
+                        .zoomed(),
+                    TabScript::new("build", PaneTree::pane()),
+                ],
+            ),
+        );
+        session.emit_event("tab_created", serde_json::json!({}));
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("server logs zoomed build\n"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+    });
+}
+
+#[test]
+fn a_layout_change_made_in_another_client_redraws_the_pane_frames() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        assert_eq!(rendered_text(&app, &view), "server logs zoomed\nw1:p1");
+
+        session.set_script(
+            SessionScript::new().workspace_with_tabs(
+                "api",
+                [
+                    TabScript::new("server", split_layout()),
+                    TabScript::new("logs", split_layout()),
+                    TabScript::new("zoomed", split_layout())
+                        .focused_pane(2)
+                        .zoomed(),
+                ],
+            ),
+        );
+        session.emit_event("layout_updated", serde_json::json!({}));
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view) == "server logs zoomed\nw1:p1 w1:p2 w1:p3",
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+    });
+}
+
+#[test]
+fn a_lost_connection_is_shown_above_the_workspace_until_it_returns() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        session.go_offline();
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("Lost the connection to Herdr, reconnecting"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        assert!(rendered_text(&app, &view).contains("server logs zoomed\nw1:p1"));
+
+        session.go_online();
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view) == "server logs zoomed\nw1:p1",
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
     });
 }
