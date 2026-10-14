@@ -12,6 +12,7 @@ mod cli;
 mod presented;
 mod session;
 mod socket;
+mod tabs;
 
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use presented::{
@@ -20,6 +21,7 @@ pub use presented::{
 use serde::Deserialize;
 use serde_json::json;
 pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarget, config_dir};
+pub use tabs::{CellRect, HerdrTabId, PaneId, PaneLayout, PresentedHerdrTab, PresentedPane};
 
 /// Connects to `target` and presents its current workspaces.
 ///

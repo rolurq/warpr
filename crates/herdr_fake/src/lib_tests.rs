@@ -181,3 +181,100 @@ fn invocations_record_args_and_herdr_environment() {
     assert_eq!(invocations[0].env("HERDR_SESSION"), Some("work"));
     assert_eq!(invocations[0].env("HERDR_PANE_ID"), None);
 }
+
+#[test]
+fn scripted_tabs_are_reported_with_herdr_ids_and_split_geometry() {
+    let fake = FakeHerdr::new();
+    let session = fake.start_session(
+        "s",
+        SessionScript::new().workspace_with_tabs(
+            "a",
+            [TabScript::new(
+                "t",
+                PaneTree::split(
+                    SplitDirection::Right,
+                    0.3,
+                    PaneTree::pane(),
+                    PaneTree::pane(),
+                ),
+            )
+            .focused_pane(1)
+            .zoomed()],
+        ),
+    );
+
+    let mut stream = UnixStream::connect(session.socket_path()).unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    send(
+        &mut stream,
+        json!({"id": "1", "method": "session.snapshot", "params": {}}),
+    );
+    let snapshot = read_json(&mut reader)["result"]["snapshot"].clone();
+
+    assert_eq!(snapshot["tabs"][0]["tab_id"], "w1:t1");
+    assert_eq!(snapshot["workspaces"][0]["active_tab_id"], "w1:t1");
+    assert_eq!(snapshot["focused_pane_id"], "w1:p2");
+    let layout = &snapshot["layouts"][0];
+    assert_eq!(layout["zoomed"], true);
+    assert_eq!(layout["focused_pane_id"], "w1:p2");
+    assert_eq!(
+        layout["panes"][1]["rect"],
+        json!({"x": 36, "y": 0, "width": 84, "height": 40})
+    );
+    assert_eq!(layout["splits"][0]["id"], "split_0_root");
+}
+
+#[test]
+fn served_methods_lists_requests_in_arrival_order() {
+    let fake = FakeHerdr::new();
+    let session = fake.start_session("s", SessionScript::new());
+
+    let mut stream = UnixStream::connect(session.socket_path()).unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    for method in ["ping", "session.snapshot"] {
+        send(
+            &mut stream,
+            json!({"id": "1", "method": method, "params": {}}),
+        );
+        read_json(&mut reader);
+    }
+
+    assert_eq!(session.served_methods(), ["ping", "session.snapshot"]);
+}
+
+#[test]
+fn workspace_ids_survive_removing_and_renaming_other_workspaces() {
+    let fake = FakeHerdr::new();
+    let script = SessionScript::new()
+        .workspace("a")
+        .workspace("b")
+        .workspace("c")
+        .without_workspace("a")
+        .renamed_workspace("c", "d");
+    let session = fake.start_session("s", script);
+
+    let mut stream = UnixStream::connect(session.socket_path()).unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    send(
+        &mut stream,
+        json!({"id": "1", "method": "session.snapshot", "params": {}}),
+    );
+    let snapshot = read_json(&mut reader)["result"]["snapshot"].clone();
+
+    let workspaces: Vec<_> = snapshot["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|workspace| {
+            (
+                workspace["workspace_id"].clone(),
+                workspace["label"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        workspaces,
+        [(json!("w2"), json!("b")), (json!("w3"), json!("d"))]
+    );
+    assert_eq!(snapshot["focused_workspace_id"], "w2");
+}
