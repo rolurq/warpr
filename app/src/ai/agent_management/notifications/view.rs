@@ -21,11 +21,12 @@ use crate::ai::agent_management::notifications::item_rendering::{
     handle_notification_artifact_buttons_event, render_notification_item_content,
 };
 use crate::ai::agent_management::notifications::{
-    NotificationId, NotificationItem, NotificationItems,
+    NotificationId, NotificationItem, NotificationItems, NotificationTarget,
 };
 use crate::ai::agent_management::{AgentManagementEvent, AgentNotificationsModel};
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
 use crate::appearance::Appearance;
+use crate::herdr::HerdrSessionModel;
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ActionButton, ButtonSize, NakedTheme};
 
@@ -169,17 +170,26 @@ impl NotificationMailboxView {
     }
 
     fn activate_notification(&mut self, id: NotificationId, ctx: &mut ViewContext<Self>) {
-        let terminal_view_id = AgentNotificationsModel::as_ref(ctx)
+        let target = AgentNotificationsModel::as_ref(ctx)
             .notifications()
             .get_by_id(id)
-            .map(|item| item.terminal_view_id);
+            .map(|item| item.target.clone());
 
         AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
             model.mark_item_read(id, ctx);
         });
 
-        if let Some(terminal_view_id) = terminal_view_id {
-            ctx.emit(NotificationMailboxViewEvent::NavigateToTerminal { terminal_view_id });
+        match target {
+            Some(NotificationTarget::TerminalView(terminal_view_id)) => {
+                ctx.emit(NotificationMailboxViewEvent::NavigateToTerminal { terminal_view_id });
+            }
+            Some(NotificationTarget::HerdrPane(pane)) => {
+                ctx.emit(NotificationMailboxViewEvent::Dismissed);
+                HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.jump_to_agent(&pane, ctx);
+                });
+            }
+            None => {}
         }
     }
 

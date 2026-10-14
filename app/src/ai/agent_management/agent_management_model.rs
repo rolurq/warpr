@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use herdr_client::PaneId;
 use warp_core::features::FeatureFlag;
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity, ViewHandle, WindowId};
 
@@ -88,6 +89,36 @@ impl AgentNotificationsModel {
             .notifications
             .mark_all_terminal_view_items_as_read(terminal_view_id)
         {
+            ctx.emit(AgentManagementEvent::NotificationUpdated);
+        }
+    }
+
+    /// Tells the user about a Herdr agent, replacing any earlier notification for its pane.
+    pub(crate) fn add_herdr_agent_notification(
+        &mut self,
+        item: NotificationItem,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if !FeatureFlag::HOANotifications.is_enabled() {
+            return;
+        }
+        let id = item.id;
+        self.notifications.push(item);
+        ctx.emit(AgentManagementEvent::NotificationAdded { id });
+    }
+
+    /// Withdraws the notification about the Herdr agent in `pane`, if there is one.
+    pub(crate) fn remove_herdr_agent_notification(
+        &mut self,
+        pane: PaneId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.remove_notification_by_source(NotificationOrigin::HerdrAgent(pane), ctx);
+    }
+
+    /// Withdraws every notification about a Herdr agent.
+    pub(crate) fn remove_herdr_agent_notifications(&mut self, ctx: &mut ModelContext<Self>) {
+        if self.notifications.remove_herdr_agents() {
             ctx.emit(AgentManagementEvent::NotificationUpdated);
         }
     }

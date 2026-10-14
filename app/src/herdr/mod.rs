@@ -5,6 +5,7 @@
 mod agent_panel;
 mod agents;
 mod live;
+mod notifications;
 mod pane_frames;
 mod session_picker;
 mod sessions;

@@ -1,4 +1,5 @@
 use enum_iterator::Sequence;
+use herdr_client::PaneId;
 use instant::Instant;
 use uuid::Uuid;
 use warpui::EntityId;
@@ -64,11 +65,22 @@ impl NotificationSourceAgent {
 /// Identifies the conversation or session a notification belongs to.
 /// Used for de-duplication (replacing stale notifications on update)
 /// and cleanup (removing notifications when the source closes).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NotificationOrigin {
     Conversation(AIConversationId),
     /// CLI sessions are keyed by terminal view because we only track one session per pane.
     CLISession(EntityId),
+    /// An agent Herdr recognizes, keyed by its pane.
+    HerdrAgent(PaneId),
+}
+
+/// Where a notification takes the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationTarget {
+    TerminalView(EntityId),
+    /// A pane of the presented Herdr session. Showing it is local to warpr: Herdr's focus does
+    /// not move.
+    HerdrPane(PaneId),
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +96,7 @@ pub struct NotificationItem {
     /// that they've since navigated to).
     pub is_read: bool,
     pub created_at: Instant,
-    pub terminal_view_id: EntityId,
+    pub target: NotificationTarget,
     pub artifacts: Vec<Artifact>,
     /// The git branch associated with this notification's conversation/session.
     /// When present, the notification renders in "rich" layout with a branch header row.
@@ -123,9 +135,35 @@ impl NotificationItem {
             agent,
             is_read,
             created_at: Instant::now(),
-            terminal_view_id,
+            target: NotificationTarget::TerminalView(terminal_view_id),
             artifacts,
             branch,
+        }
+    }
+
+    /// A notification about the Herdr agent in `pane`, which leads to that pane.
+    pub(crate) fn for_herdr_agent(
+        title: String,
+        message: String,
+        category: NotificationCategory,
+        agent: CLIAgent,
+        pane: PaneId,
+    ) -> Self {
+        Self {
+            id: NotificationId::new(),
+            origin: NotificationOrigin::HerdrAgent(pane.clone()),
+            title,
+            message,
+            category,
+            agent: NotificationSourceAgent::CLI {
+                agent,
+                is_ambient: false,
+            },
+            is_read: false,
+            created_at: Instant::now(),
+            target: NotificationTarget::HerdrPane(pane),
+            artifacts: Vec::new(),
+            branch: None,
         }
     }
 }
@@ -139,7 +177,7 @@ impl NotificationItems {
     /// Push a notification items into the mailbox list
     /// (deleting older notifications if we've exceeded the max list size).
     pub(crate) fn push(&mut self, item: NotificationItem) {
-        self.remove_by_origin(item.origin);
+        self.remove_by_origin(item.origin.clone());
         self.items.insert(0, item);
         self.items.truncate(100);
     }
@@ -147,6 +185,14 @@ impl NotificationItems {
     pub(crate) fn remove_by_origin(&mut self, key: NotificationOrigin) -> bool {
         let before = self.items.len();
         self.items.retain(|item| item.origin != key);
+        self.items.len() != before
+    }
+
+    /// Removes every notification about a Herdr agent. Returns true if any were removed.
+    pub(crate) fn remove_herdr_agents(&mut self) -> bool {
+        let before = self.items.len();
+        self.items
+            .retain(|item| !matches!(item.origin, NotificationOrigin::HerdrAgent(_)));
         self.items.len() != before
     }
 
@@ -185,7 +231,7 @@ impl NotificationItems {
     ) -> bool {
         let mut any_changed = false;
         for item in &mut self.items {
-            if item.terminal_view_id == terminal_view_id {
+            if item.target == NotificationTarget::TerminalView(terminal_view_id) {
                 any_changed |= item.mark_as_read();
             }
         }
@@ -208,9 +254,9 @@ impl NotificationItems {
     }
 
     pub(crate) fn has_unread_for_terminal_view(&self, terminal_view_id: EntityId) -> bool {
-        self.items
-            .iter()
-            .any(|item| item.terminal_view_id == terminal_view_id && !item.is_read)
+        self.items.iter().any(|item| {
+            item.target == NotificationTarget::TerminalView(terminal_view_id) && !item.is_read
+        })
     }
 }
 
