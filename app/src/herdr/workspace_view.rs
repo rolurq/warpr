@@ -156,12 +156,7 @@ impl HerdrWorkspaceView {
 
     /// Tells the pane registry which panes this view shows: those of the Herdr tab on screen.
     fn update_shown_panes(&mut self, ctx: &mut ViewContext<Self>) {
-        let shown = self
-            .presented_workspace(ctx)
-            .and_then(|workspace| workspace.selected_tab(self.selected_tab.as_ref()))
-            .and_then(|tab| tab.layout.as_ref())
-            .map(|layout| layout.frames().into_iter().map(|pane| pane.id).collect())
-            .unwrap_or_default();
+        let shown = self.shown_panes(ctx);
         self.show_panes(shown, ctx);
     }
 
