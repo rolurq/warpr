@@ -24,6 +24,14 @@ _Avoid_: tab (unqualified)
 One terminal surface owned by Herdr, positioned by Herdr's layout.
 _Avoid_: split, terminal, session
 
+**Pane owner**:
+The one client that currently sets a pane's size and sends its input. warpr is the owner of the panes it shows when no other client is.
+_Avoid_: controller, attached client, lock holder
+
+**Contested pane**:
+A pane whose owner is another client. warpr displays it without taking ownership until the user interacts with it.
+_Avoid_: locked pane, busy pane
+
 **Agent**:
 A coding agent that Herdr recognizes running in a pane.
 _Avoid_: Warp agent, assistant, bot

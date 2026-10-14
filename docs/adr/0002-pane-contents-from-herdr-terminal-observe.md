@@ -4,6 +4,8 @@ warpr renders a pane by running `herdr terminal session observe <pane> --cols N 
 
 If `herdr status` reports the private protocol as incompatible with the installed binary, warpr refuses to connect and says why, rather than degrading to the public API.
 
+ADR-0003 supersedes the observe-only default: observe is now the fallback for panes that another client owns. The frame format and the findings below still apply.
+
 ## Considered Options
 
 - Poll `pane.read --format ansi` over the public API: stable but not live, and weak for mouse, alt-screen and cursor fidelity.
