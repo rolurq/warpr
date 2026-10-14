@@ -29,7 +29,7 @@ The one client that currently sets a pane's size and sends its input. warpr is t
 _Avoid_: controller, attached client, lock holder
 
 **Contested pane**:
-A pane whose owner is another client. warpr displays it without taking ownership until the user interacts with it.
+A pane whose owner is another client. warpr displays it without taking ownership until input is forwarded to it.
 _Avoid_: locked pane, busy pane
 
 **Agent**:

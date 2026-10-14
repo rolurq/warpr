@@ -2,7 +2,7 @@
 
 warpr plays the role Herdr's own terminal UI plays: it supplies the area, and therefore the cell size, for the panes it displays. Herdr keeps the layout tree and its proportions; warpr applies them to its own frames and holds each visible pane's control session at the resulting size, so the program in the pane reflows to its frame. It is not an observe-only mirror, and typing, scrolling and mouse go through the same control session with no confirmation step.
 
-A pane that another client already owns is a contested pane. warpr shows it through the observe stream at Herdr's grid size, scaled to the frame, and marks it. Displaying a contested pane never takes control; typing or clicking in it takes control immediately, with a visible notice and no dialog.
+A pane that another client already owns is a contested pane. warpr shows it through the observe stream at Herdr's grid size, scaled to the frame, and marks it. Displaying or focusing a contested pane never takes control; the first input forwarded to it (a keypress, paste, scroll or mouse event delivered to its program) takes control immediately, with a visible notice and no dialog.
 
 ## Considered Options
 
