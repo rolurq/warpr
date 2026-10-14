@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use herdr_client::{
-    AgentJump, ConnectionStatus, HerdrTabId, PaneId, PresentedHerdrTab, PresentedPane,
-    PresentedWorkspace,
+    AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneOwnership, PresentedHerdrTab,
+    PresentedPane, PresentedWorkspace,
 };
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
-    MainAxisAlignment, MouseStateHandle, ParentElement as _, Text,
+    MainAxisAlignment, MouseStateHandle, ParentElement as _, Stack, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{
@@ -15,7 +15,9 @@ use warpui::{
     ViewContext,
 };
 
+use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
 use super::pane_frames::PaneFrames;
+use super::pane_grid::{PaneGridElement, PaneGridStyle};
 use super::{HerdrSessionEvent, HerdrSessionModel};
 use crate::app_state::HerdrWorkspaceContents;
 use crate::appearance::Appearance;
@@ -67,15 +69,24 @@ impl HerdrWorkspaceView {
                     HerdrSessionEvent::SessionsListed | HerdrSessionEvent::AgentsPresented => {}
                 },
             );
+            if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
+                ctx.add_singleton_model(HerdrPaneContentsRegistry::new);
+            }
+            ctx.subscribe_to_model(
+                &HerdrPaneContentsRegistry::handle(ctx),
+                |_, _, HerdrPaneContentsRegistryEvent::PaneChanged, ctx| ctx.notify(),
+            );
         }
-        Self {
+        let mut view = Self {
             contents,
             selected_tab: None,
             selected_pane: None,
             tab_mouse_states: RefCell::default(),
             pane_configuration,
             focus_handle: None,
-        }
+        };
+        view.update_shown_panes(ctx);
+        view
     }
 
     pub fn pane_configuration(&self) -> ModelHandle<PaneConfiguration> {
@@ -97,6 +108,7 @@ impl HerdrWorkspaceView {
         self.selected_tab = Some(jump.herdr_tab.clone());
         self.selected_pane = Some(jump.pane.clone());
         self.report_viewed_panes(ctx);
+        self.update_shown_panes(ctx);
         ctx.notify();
     }
 
@@ -138,7 +150,24 @@ impl HerdrWorkspaceView {
                 configuration.set_custom_vertical_tabs_title(label, ctx);
             });
         }
+        self.update_shown_panes(ctx);
         ctx.notify();
+    }
+
+    /// Tells the pane registry which panes this view shows: those of the Herdr tab on screen.
+    fn update_shown_panes(&mut self, ctx: &mut ViewContext<Self>) {
+        let shown = self.shown_panes(ctx);
+        self.show_panes(shown, ctx);
+    }
+
+    fn show_panes(&mut self, panes: Vec<PaneId>, ctx: &mut ViewContext<Self>) {
+        if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
+            return;
+        }
+        let view_id = ctx.view_id();
+        HerdrPaneContentsRegistry::handle(ctx).update(ctx, |registry, ctx| {
+            registry.set_shown(view_id, panes, ctx);
+        });
     }
 
     /// This workspace as the Herdr session currently presents it.
@@ -251,6 +280,7 @@ impl HerdrWorkspaceView {
         &self,
         tab: &PresentedHerdrTab,
         appearance: &Appearance,
+        app: &AppContext,
     ) -> Box<dyn Element> {
         let Some(layout) = &tab.layout else {
             return Align::new(self.render_workspace_label(appearance)).finish();
@@ -265,25 +295,85 @@ impl HerdrWorkspaceView {
                 };
                 (
                     pane.rect,
-                    Self::render_pane_frame(&pane, is_selected, appearance),
+                    Self::render_pane_frame(&pane, is_selected, appearance, app),
                 )
             })
             .collect();
         PaneFrames::new(layout.area, frames).finish()
     }
 
-    /// An empty placeholder: pane contents arrive with the live output of a later change.
+    /// A pane's live output, or its id while Herdr's pane has no contents to show yet.
     fn render_pane_frame(
         pane: &PresentedPane,
         is_selected: bool,
         appearance: &Appearance,
+        app: &AppContext,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let border = if is_selected {
-            theme.accent()
-        } else {
-            theme.outline()
+        let contents = app
+            .has_singleton_model::<HerdrPaneContentsRegistry>()
+            .then(|| HerdrPaneContentsRegistry::as_ref(app).contents(&pane.id))
+            .flatten();
+        let ownership = contents
+            .as_ref()
+            .and_then(|contents| contents.as_ref(app).ownership().cloned());
+        let border = match (&ownership, is_selected) {
+            (Some(PaneOwnership::Contested(_)), _) => theme.terminal_colors().normal.yellow.into(),
+            (_, true) => theme.accent(),
+            (_, false) => theme.outline(),
         };
+
+        let mut layers = Stack::new();
+        let has_screen = contents
+            .as_ref()
+            .is_some_and(|contents| contents.as_ref(app).terminal().is_some());
+        if let Some(contents) = contents {
+            layers.extend([PaneGridElement::new(
+                contents,
+                PaneGridStyle {
+                    theme: theme.clone(),
+                    font_family: appearance.monospace_font_family(),
+                    font_size: appearance.monospace_font_size(),
+                    line_height_ratio: appearance.ui_builder().line_height_ratio(),
+                },
+            )
+            .finish()]);
+        }
+        if !has_screen {
+            layers.extend([Self::render_pane_id(pane, appearance)]);
+        }
+        if let Some(notice) = ownership.as_ref().and_then(Self::pane_notice) {
+            let notice = Text::new_inline(notice, appearance.ui_font_family(), DETAIL_FONT_SIZE)
+                .with_color(theme.sub_text_color(theme.surface_1()).into())
+                .finish();
+            let badge = Container::new(notice)
+                .with_horizontal_padding(TAB_HORIZONTAL_PADDING / 2.)
+                .with_background(theme.surface_1())
+                .finish();
+            layers.extend([Align::new(badge).top_right().finish()]);
+        }
+        Container::new(layers.finish())
+            .with_border(Border::all(1.).with_border_fill(border))
+            .finish()
+    }
+
+    /// The marker a pane shows when warpr is not simply controlling it.
+    fn pane_notice(ownership: &PaneOwnership) -> Option<String> {
+        match ownership {
+            PaneOwnership::Contested(Contest::Refused) => {
+                Some("Another client controls this pane; showing it at Herdr's size".to_owned())
+            }
+            PaneOwnership::Contested(Contest::Evicted) => {
+                Some("Another client took over this pane; showing it at Herdr's size".to_owned())
+            }
+            PaneOwnership::Exited => Some("Process exited".to_owned()),
+            PaneOwnership::Unavailable(reason) => Some(format!("Pane stream ended: {reason}")),
+            PaneOwnership::Owned | PaneOwnership::Released => None,
+        }
+    }
+
+    fn render_pane_id(pane: &PresentedPane, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
         let id = Text::new_inline(
             pane.id.as_str().to_owned(),
             appearance.ui_font_family(),
@@ -291,9 +381,7 @@ impl HerdrWorkspaceView {
         )
         .with_color(theme.sub_text_color(theme.background()).into())
         .finish();
-        Container::new(Align::new(id).finish())
-            .with_border(Border::all(1.).with_border_fill(border))
-            .finish()
+        Align::new(id).finish()
     }
 }
 
@@ -342,7 +430,7 @@ impl HerdrWorkspaceView {
         }
         column
             .with_child(self.render_tab_strip(workspace, shown, appearance))
-            .with_child(Expanded::new(1., self.render_pane_frames(shown, appearance)).finish())
+            .with_child(Expanded::new(1., self.render_pane_frames(shown, appearance, app)).finish())
             .finish()
     }
 
@@ -410,6 +498,7 @@ impl TypedActionView for HerdrWorkspaceView {
                 self.selected_tab = Some(tab_id.clone());
                 self.selected_pane = None;
                 self.report_viewed_panes(ctx);
+                self.update_shown_panes(ctx);
                 ctx.notify();
             }
         }
@@ -429,6 +518,7 @@ impl BackingView for HerdrWorkspaceView {
     }
 
     fn close(&mut self, ctx: &mut ViewContext<Self>) {
+        self.show_panes(Vec::new(), ctx);
         ctx.emit(PaneEvent::Close);
     }
 

@@ -101,6 +101,13 @@ impl HerdrSessionModel {
         self.sessions.current.as_ref()
     }
 
+    /// What pane streams of the current session run with, or `None` while no session is chosen
+    /// or it cannot be located.
+    pub(super) fn stream_source(&self) -> Option<(HerdrCli, SessionTarget)> {
+        let target = self.sessions.target(self.sessions.current.as_ref()?).ok()?;
+        Some((self.sessions.cli.clone(), target))
+    }
+
     /// Reads Herdr's session listing in the background. A listing that fails leaves the previous
     /// one in place and is logged.
     pub(crate) fn refresh_sessions(&mut self, ctx: &mut ModelContext<Self>) {

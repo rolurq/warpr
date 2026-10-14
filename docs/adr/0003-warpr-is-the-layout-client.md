@@ -85,3 +85,11 @@ Programs (each in `w1:p1` under a recording pty wrapper that forwards `SIGWINCH`
 - Whether the transient `codex` footer scramble is `codex` or Herdr's grid.
 - Resize storms against `vim` and `less` (not run); only `omp`, `claude` and `codex` were exercised.
 - Whether Herdr's refusal or eviction behaves differently for a TUI client that is itself the owner (the TUI typed into an owned pane without claiming it, so it may not use the owner slot at all).
+
+## Implementation notes (live pane output)
+
+- **Where it lives.** `herdr_client::PaneStream` runs one pane's `control` or `observe` subprocess and applies the resize and ownership policy above; the policy is a pure state machine (`pane_machine`) driven with explicit times, so the throttle, snap and grace are tested without sleeping. `app/src/herdr/` feeds the decoded frames to Warp's ANSI `Processor` and paints the result.
+- **The screen is an alternate-screen grid, not a `TerminalModel`.** A frame repaints the whole visible screen, so `AltScreen` (a `GridHandler` with no scrollback) is the whole model. `terminal/remote_tty` was not reused: it builds a full terminal model with block list and shell bootstrap, and writes a zsh init script into the byte stream, none of which applies to a pane Herdr already runs a shell in.
+- **A contested pane is watched at the pane's layout rect in cells.** The API does not expose a pane's PTY size, and the rect is the PTY size plus Herdr's border, so the observe viewport pads rather than crops. It is drawn at the font's own cell size when that fits the frame and shrunk, font included, only when it does not; the rest of the frame stays blank. It carries a notice in the frame and a changed border.
+- **Control is retried only after a release.** A refused or evicted pane stays on `observe` while it is shown; once it has been hidden past the grace and is shown again, control is tried again without `--takeover`. Any other end of a stream is shown and not retried until the pane has been hidden and shown.
+- **A pane counts as visible when its Herdr tab is the one shown by a workspace view.** warpr has no signal for a whole workspace tab or window being hidden, so those panes are held until their view goes away.
