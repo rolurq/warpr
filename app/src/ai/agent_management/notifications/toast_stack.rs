@@ -20,10 +20,13 @@ use crate::ai::agent_management::notifications::item_rendering::{
     NotificationRenderContext, OnExpandClick, create_notification_artifact_buttons_view,
     handle_notification_artifact_buttons_event, render_notification_item_content,
 };
-use crate::ai::agent_management::notifications::{NotificationId, NotificationItem};
+use crate::ai::agent_management::notifications::{
+    NotificationId, NotificationItem, NotificationTarget,
+};
 use crate::ai::agent_management::{AgentManagementEvent, AgentNotificationsModel};
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
 use crate::appearance::Appearance;
+use crate::herdr::HerdrSessionModel;
 use crate::terminal::session_settings::SessionSettings;
 use crate::util::bindings::keybinding_name_to_keystroke;
 use crate::workspace::WorkspaceAction;
@@ -244,19 +247,27 @@ impl TypedActionView for AgentNotificationToastStack {
                 self.start_dismissal_timeout(*id, ctx);
             }
             AgentNotificationToastAction::Click(id) => {
-                let terminal_view_id = AgentNotificationsModel::as_ref(ctx)
+                let target = AgentNotificationsModel::as_ref(ctx)
                     .notifications()
                     .get_by_id(*id)
-                    .map(|item| item.terminal_view_id);
+                    .map(|item| item.target.clone());
 
                 AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
                     model.mark_item_read(*id, ctx);
                 });
 
-                if let Some(terminal_view_id) = terminal_view_id {
-                    ctx.dispatch_typed_action(&WorkspaceAction::FocusTerminalViewInWorkspace {
-                        terminal_view_id,
-                    });
+                match target {
+                    Some(NotificationTarget::TerminalView(terminal_view_id)) => {
+                        ctx.dispatch_typed_action(&WorkspaceAction::FocusTerminalViewInWorkspace {
+                            terminal_view_id,
+                        });
+                    }
+                    Some(NotificationTarget::HerdrPane(pane)) => {
+                        HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
+                            model.jump_to_agent(&pane, ctx);
+                        });
+                    }
+                    None => {}
                 }
 
                 self.dismiss_toast_by_id(id, ctx);

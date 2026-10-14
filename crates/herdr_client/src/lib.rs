@@ -25,6 +25,7 @@ mod live_agents;
 #[path = "live_agents_unsupported.rs"]
 mod live_agents;
 mod metadata;
+mod notifications;
 mod presented;
 mod reconnect;
 mod session;
@@ -40,6 +41,9 @@ pub use compat::Refusal;
 pub use live::LiveSession;
 pub use live_agents::LiveAgents;
 pub use metadata::MetadataToken;
+pub use notifications::{
+    AgentNotification, AgentNotifications, NotificationChange, NotificationKind,
+};
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,
 };

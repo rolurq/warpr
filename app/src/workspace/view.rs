@@ -176,11 +176,11 @@ use crate::ai::agent_conversations_model::{
     AgentConversationNavigationSubject, AgentConversationsModel,
 };
 use crate::ai::agent_management::AgentManagementEvent;
-use crate::ai::agent_management::notifications::NotificationFilter;
 use crate::ai::agent_management::notifications::toast_stack::AgentNotificationToastStack;
 use crate::ai::agent_management::notifications::view::{
     NotificationMailboxView, NotificationMailboxViewEvent,
 };
+use crate::ai::agent_management::notifications::{NotificationFilter, NotificationTarget};
 use crate::ai::agent_management::telemetry::AgentManagementTelemetryEvent;
 use crate::ai::agent_management::view::{AgentManagementView, AgentManagementViewEvent};
 #[cfg(not(target_family = "wasm"))]
@@ -25833,15 +25833,29 @@ impl TypedActionView for Workspace {
                         .notifications()
                         .items_filtered(NotificationFilter::Unread)
                         .next()
-                        .map(|item| (item.id, item.terminal_view_id));
-                    if let Some((id, terminal_view_id)) = newest {
+                        .map(|item| (item.id, item.target.clone()));
+                    if let Some((id, target)) = newest {
                         AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
                             model.mark_item_read(id, ctx);
                         });
-                        self.handle_action(
-                            &WorkspaceAction::FocusTerminalViewInWorkspace { terminal_view_id },
-                            ctx,
-                        );
+                        match target {
+                            NotificationTarget::TerminalView(terminal_view_id) => {
+                                self.handle_action(
+                                    &WorkspaceAction::FocusTerminalViewInWorkspace {
+                                        terminal_view_id,
+                                    },
+                                    ctx,
+                                );
+                            }
+                            NotificationTarget::HerdrPane(pane) => {
+                                crate::herdr::HerdrSessionModel::handle(ctx).update(
+                                    ctx,
+                                    |model, ctx| {
+                                        model.jump_to_agent(&pane, ctx);
+                                    },
+                                );
+                            }
+                        }
                     }
                 } else if let Some((window_id, tab_index, terminal_view_id)) = self
                     .agent_toast_stack

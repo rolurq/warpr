@@ -96,7 +96,30 @@ impl HerdrWorkspaceView {
         }
         self.selected_tab = Some(jump.herdr_tab.clone());
         self.selected_pane = Some(jump.pane.clone());
+        self.report_viewed_panes(ctx);
         ctx.notify();
+    }
+
+    /// The panes this view shows now.
+    fn shown_panes(&self, app: &AppContext) -> Vec<PaneId> {
+        let shown = self
+            .presented_workspace(app)
+            .and_then(|workspace| workspace.selected_tab(self.selected_tab.as_ref()))
+            .and_then(|tab| tab.layout.as_ref())
+            .into_iter()
+            .flat_map(|layout| layout.frames())
+            .map(|pane| pane.id);
+        shown.chain(self.selected_pane.clone()).collect()
+    }
+
+    /// Tells the session which panes the user is looking at, so that finished work in them is not
+    /// announced as unseen. Only warpr's own notion: Herdr is not told.
+    fn report_viewed_panes(&self, ctx: &mut ViewContext<Self>) {
+        if !ctx.has_singleton_model::<HerdrSessionModel>() {
+            return;
+        }
+        let panes = self.shown_panes(ctx);
+        HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| model.set_viewed_panes(panes, ctx));
     }
 
     /// Takes the workspace's label from the session's presented state, where Herdr's renames
@@ -386,6 +409,7 @@ impl TypedActionView for HerdrWorkspaceView {
             HerdrWorkspaceViewAction::SelectTab(tab_id) => {
                 self.selected_tab = Some(tab_id.clone());
                 self.selected_pane = None;
+                self.report_viewed_panes(ctx);
                 ctx.notify();
             }
         }
@@ -410,6 +434,7 @@ impl BackingView for HerdrWorkspaceView {
 
     fn focus_contents(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.focus_self();
+        self.report_viewed_panes(ctx);
     }
 
     fn render_header_content(

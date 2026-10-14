@@ -1,8 +1,8 @@
 //! Keeping the Herdr session's agents current next to the session itself.
 
 use herdr_client::{
-    AgentJump, HerdrCli, LiveAgents, PaneId, PresentedAgents, ReconnectPolicy, SessionName,
-    SessionTarget,
+    AgentJump, AgentNotifications, HerdrCli, LiveAgents, PaneId, PresentedAgents, ReconnectPolicy,
+    SessionName, SessionTarget,
 };
 use warpui::ModelContext;
 
@@ -12,6 +12,7 @@ use super::{HerdrSessionEvent, HerdrSessionModel};
 pub(super) struct AgentTracking {
     presented: PresentedAgents,
     live: Option<LiveAgents>,
+    pub(super) notifications: AgentNotifications,
 }
 
 impl Default for AgentTracking {
@@ -19,6 +20,7 @@ impl Default for AgentTracking {
         Self {
             presented: PresentedAgents::connecting(),
             live: None,
+            notifications: AgentNotifications::new(),
         }
     }
 }
@@ -53,6 +55,7 @@ impl HerdrSessionModel {
         policy: ReconnectPolicy,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.withdraw_agent_notifications(ctx);
         let name = target.name().clone();
         let (updates_tx, updates_rx) = async_channel::unbounded();
         self.agents.live = Some(LiveAgents::start(cli, target, policy, move |presented| {
@@ -69,6 +72,7 @@ impl HerdrSessionModel {
     /// Stops following the agents, which are unknown until [`Self::track_agents`] is called again.
     pub(super) fn stop_tracking_agents(&mut self, ctx: &mut ModelContext<Self>) {
         self.agents.live = None;
+        self.withdraw_agent_notifications(ctx);
         self.set_agents(PresentedAgents::connecting(), ctx);
     }
 
@@ -89,6 +93,7 @@ impl HerdrSessionModel {
         if presented == self.agents.presented {
             return;
         }
+        self.notify_about_agents(&presented, ctx);
         self.agents.presented = presented;
         ctx.emit(HerdrSessionEvent::AgentsPresented);
     }
