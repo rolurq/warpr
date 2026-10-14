@@ -6303,7 +6303,9 @@ version = "0.1.0"
 dependencies = [
  "command",
  "herdr_fake",
+ "instant",
  "libc",
+ "parking_lot",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -6314,6 +6316,7 @@ name = "herdr_fake"
 version = "0.1.0"
 dependencies = [
  "command",
+ "parking_lot",
  "serde_json",
  "tempfile",
 ]

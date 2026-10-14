@@ -2,12 +2,13 @@
 //!
 //! Herdr owns every workspace, tab and pane; this module only holds the state the UI presents.
 
+mod live;
 mod pane_frames;
 mod session_picker;
 mod sessions;
 mod workspace_view;
 
-use herdr_client::{ConnectionFailure, ConnectionStatus, HerdrCli, PresentedSession};
+use herdr_client::{ConnectionFailure, ConnectionStatus, HerdrCli, LiveSession, PresentedSession};
 pub use session_picker::HerdrSessionPicker;
 use sessions::SessionSelection;
 use warpui::{Entity, ModelContext, SingletonEntity};
@@ -19,6 +20,8 @@ const SESSION_ENV: &str = "WARPR_HERDR_SESSION";
 pub(crate) struct HerdrSessionModel {
     presented: PresentedSession,
     sessions: SessionSelection,
+    /// Keeps the presented session current for as long as it lives.
+    live_session: Option<LiveSession>,
 }
 
 pub(crate) enum HerdrSessionEvent {
@@ -36,24 +39,35 @@ impl HerdrSessionModel {
         Self::launch(HerdrCli::from_env(), herdr_client::config_dir(), &name, ctx)
     }
 
-    /// Starts connecting to `target` in the background, running `cli` to check that Herdr is
-    /// present and compatible first. Unlike [`Self::new`] it never starts a server, so the
-    /// session must already be running.
+    /// Starts presenting `target` in the background, running `cli` to check that Herdr is present
+    /// and compatible first. Unlike [`Self::new`] it never starts a server, so the session must
+    /// already be running.
     #[cfg(test)]
     pub(crate) fn connect(
         cli: HerdrCli,
         target: herdr_client::SessionTarget,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        let sessions = SessionSelection::new(cli.clone(), herdr_client::config_dir());
-        ctx.spawn(
-            async move { herdr_client::present_session(&cli, &target) },
-            |me, presented, ctx| me.set_presented(presented, ctx),
-        );
-        Self {
+        Self::connect_with_policy(cli, target, herdr_client::ReconnectPolicy::default(), ctx)
+    }
+
+    /// Like [`Self::connect`], retrying a lost connection as `policy` says.
+    #[cfg(test)]
+    pub(crate) fn connect_with_policy(
+        cli: HerdrCli,
+        target: herdr_client::SessionTarget,
+        policy: herdr_client::ReconnectPolicy,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
+        let mut sessions = SessionSelection::new(cli.clone(), herdr_client::config_dir());
+        sessions.select(target.name().clone());
+        let mut model = Self {
             presented: PresentedSession::connecting(),
             sessions,
-        }
+            live_session: None,
+        };
+        model.go_live(cli, target, policy, ctx);
+        model
     }
 
     fn failed(failure: ConnectionFailure, sessions: SessionSelection) -> Self {
@@ -61,6 +75,7 @@ impl HerdrSessionModel {
         Self {
             presented: PresentedSession::failed(failure),
             sessions,
+            live_session: None,
         }
     }
 
@@ -69,14 +84,22 @@ impl HerdrSessionModel {
     }
 
     fn set_presented(&mut self, presented: PresentedSession, ctx: &mut ModelContext<Self>) {
-        match &presented.connection {
-            ConnectionStatus::Failed(failure) => {
-                log::error!("Could not present the Herdr session: {failure}");
+        if presented.connection != self.presented.connection {
+            match &presented.connection {
+                ConnectionStatus::Failed(failure) => {
+                    log::error!("Could not present the Herdr session: {failure}");
+                }
+                ConnectionStatus::Refused(refusal) => {
+                    log::error!("Refusing to connect to Herdr: {refusal}");
+                }
+                ConnectionStatus::Reconnecting(failure) => {
+                    log::warn!("The Herdr session is unreachable, retrying: {failure}");
+                }
+                ConnectionStatus::Disconnected(failure) => {
+                    log::error!("Still cannot reach the Herdr session, retrying: {failure}");
+                }
+                ConnectionStatus::Connecting | ConnectionStatus::Connected => {}
             }
-            ConnectionStatus::Refused(refusal) => {
-                log::error!("Refusing to connect to Herdr: {refusal}");
-            }
-            ConnectionStatus::Connecting | ConnectionStatus::Connected => {}
         }
         self.presented = presented;
         ctx.emit(HerdrSessionEvent::Presented);

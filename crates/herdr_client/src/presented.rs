@@ -69,6 +69,12 @@ pub enum ConnectionFailure {
 pub enum ConnectionStatus {
     Connecting,
     Connected,
+    /// No connection is up. The last attempt failed with the carried failure and the next one
+    /// follows after a backoff.
+    Reconnecting(ConnectionFailure),
+    /// Still no connection after the reconnect policy's attempts, the last of which failed with
+    /// the carried failure. Retrying goes on, at its slowest pace.
+    Disconnected(ConnectionFailure),
     Failed(ConnectionFailure),
     /// The `herdr` executable is missing or unusable, or the server is incompatible with it; no
     /// workspaces are presented.
@@ -103,6 +109,11 @@ impl PresentedSession {
             workspaces: Vec::new(),
             focused_workspace: None,
         }
+    }
+
+    /// This state with the connection reported as `connection`, keeping what was last presented.
+    pub(crate) fn with_connection(self, connection: ConnectionStatus) -> Self {
+        Self { connection, ..self }
     }
 
     pub(crate) fn from_snapshot(snapshot: Snapshot) -> Self {

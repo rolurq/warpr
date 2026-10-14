@@ -2,7 +2,8 @@
 //!
 //! The crate turns what a session reports into a [`PresentedSession`], the state a front-end
 //! renders. It owns no UI and no async runtime: calls block, so callers run them off their UI
-//! thread.
+//! thread. [`LiveSession`] is the exception: it keeps a presented state current from background
+//! threads of its own.
 //!
 //! Every call addresses the socket of an explicit [`SessionTarget`]. Herdr's own
 //! `HERDR_SOCKET_PATH` points at whichever session the launching shell lives in, so it is never
@@ -10,7 +11,15 @@
 
 mod cli;
 mod compat;
+#[cfg(unix)]
+mod events;
+#[cfg(unix)]
+mod live;
+#[cfg(not(unix))]
+#[path = "live_unsupported.rs"]
+mod live;
 mod presented;
+mod reconnect;
 mod session;
 mod sessions;
 mod socket;
@@ -20,9 +29,11 @@ use std::time::Duration;
 
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
+pub use live::LiveSession;
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,
 };
+pub use reconnect::ReconnectPolicy;
 use serde::Deserialize;
 use serde_json::json;
 pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarget, config_dir};
@@ -56,7 +67,9 @@ struct SnapshotResult {
     snapshot: presented::Snapshot,
 }
 
-fn fetch_snapshot(target: &SessionTarget) -> Result<presented::Snapshot, ConnectionFailure> {
+pub(crate) fn fetch_snapshot(
+    target: &SessionTarget,
+) -> Result<presented::Snapshot, ConnectionFailure> {
     let result = socket::request(target.socket_path(), "session.snapshot", json!({}))?;
     let SnapshotResult { snapshot } = serde_json::from_value(result)
         .map_err(|error| ConnectionFailure::Protocol(error.to_string()))?;

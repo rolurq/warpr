@@ -343,3 +343,18 @@ fn running_the_scripted_server_command_brings_the_session_up() {
     );
     server.kill().unwrap();
 }
+
+#[test]
+fn scripting_a_command_again_replaces_what_it_did_before() {
+    let mut fake = FakeHerdr::new();
+    fake.script_command(&["status", "server"], "first\n", 0);
+    fake.script_command(&["status", "server"], "second\n", 3);
+
+    let output = Command::new(fake.binary_path())
+        .args(["status", "server"])
+        .output()
+        .unwrap();
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "second\n");
+    assert_eq!(output.status.code(), Some(3));
+}
