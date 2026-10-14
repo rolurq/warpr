@@ -3,7 +3,10 @@
 
 use std::path::Path;
 
-use herdr_client::{ConnectionStatus, HerdrCli, SessionName, SessionTarget, present_session};
+use herdr_client::{
+    ConnectionStatus, HerdrCli, SessionName, SessionState, SessionTarget, list_sessions,
+    open_session, present_session,
+};
 use herdr_fake::{FakeHerdr, SessionScript};
 
 fn labels(workspaces: &herdr_client::PresentedSession) -> Vec<&str> {
@@ -21,6 +24,7 @@ fn a_session_inherited_from_a_launching_herdr_pane_is_never_used() {
         fake.start_session("outer", SessionScript::new().workspace("outer-workspace"));
     let _chosen = fake.start_session("inner", SessionScript::new().workspace("inner-workspace"));
     fake.script_command(&["session", "list", "--json"], "[]\n", 0);
+    fake.script_server_start("cold", SessionScript::new().workspace("cold-workspace"));
     let chosen = SessionTarget::new(&fake.config_dir(), SessionName::new("inner").unwrap());
 
     // SAFETY: this is the only test in this binary, so nothing reads the environment concurrently.
@@ -51,4 +55,28 @@ fn a_session_inherited_from_a_launching_herdr_pane_is_never_used() {
     assert_eq!(invocations[0].env("HERDR_PANE_ID"), None);
     assert_eq!(invocations[0].env("HERDR_TAB_ID"), None);
     assert_eq!(invocations[0].env("HERDR_WORKSPACE_ID"), None);
+
+    // Listing and starting a server address the chosen session, not the inherited one, too.
+    let _ = list_sessions(&HerdrCli::new(fake.binary_path()));
+    let cold = SessionTarget::new(&fake.config_dir(), SessionName::new("cold").unwrap());
+    let started = open_session(
+        &HerdrCli::new(fake.binary_path()),
+        &cold,
+        SessionState::Stopped,
+    );
+    assert_eq!(labels(&started), ["cold-workspace"]);
+    let invocations = fake.invocations();
+    let listing = &invocations[1];
+    assert_eq!(listing.env("HERDR_SOCKET_PATH"), None);
+    assert_eq!(listing.env("HERDR_SESSION"), None);
+    assert_eq!(listing.env("HERDR_PANE_ID"), None);
+    let server = &invocations[2];
+    assert_eq!(server.args, ["--session", "cold", "server"]);
+    assert_eq!(
+        server.env("HERDR_SOCKET_PATH").map(Path::new),
+        Some(cold.socket_path())
+    );
+    assert_eq!(server.env("HERDR_SESSION"), Some("cold"));
+    assert_eq!(server.env("HERDR_PANE_ID"), None);
+    assert_eq!(launching_pane_session.requests_served(), 0);
 }

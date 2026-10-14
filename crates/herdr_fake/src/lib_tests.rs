@@ -278,3 +278,68 @@ fn workspace_ids_survive_removing_and_renaming_other_workspaces() {
     );
     assert_eq!(snapshot["focused_workspace_id"], "w2");
 }
+
+#[test]
+fn scripted_session_list_has_herdrs_shape_and_order() {
+    let mut fake = FakeHerdr::new();
+    fake.script_session_list(&[("default", true), ("work", false)]);
+
+    let output = Command::new(fake.binary_path())
+        .args(["session", "list", "--json"])
+        .output()
+        .unwrap();
+
+    let listing: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let sessions = listing["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0]["name"], "default");
+    assert_eq!(sessions[0]["default"], true);
+    assert_eq!(sessions[0]["running"], true);
+    assert_eq!(sessions[1]["name"], "work");
+    assert_eq!(sessions[1]["default"], false);
+    assert_eq!(sessions[1]["running"], false);
+    assert_eq!(
+        sessions[1]["socket_path"],
+        fake.config_dir()
+            .join("sessions/work/herdr.sock")
+            .to_str()
+            .unwrap()
+    );
+}
+
+#[test]
+fn running_the_scripted_server_command_brings_the_session_up() {
+    let mut fake = FakeHerdr::new();
+    fake.script_server_start("work", SessionScript::new().workspace("a"));
+    let socket_path = fake.config_dir().join("sessions/work/herdr.sock");
+    assert!(UnixStream::connect(&socket_path).is_err());
+
+    let mut server = Command::new(fake.binary_path())
+        .args(["--session", "work", "server"])
+        .spawn()
+        .unwrap();
+
+    let mut connected = None;
+    for _ in 0..200 {
+        if let Ok(stream) = UnixStream::connect(&socket_path) {
+            connected = Some(stream);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let mut stream = connected.expect("session never came up");
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    send(
+        &mut stream,
+        json!({"id": "1", "method": "session.snapshot", "params": {}}),
+    );
+    assert_eq!(
+        read_json(&mut reader)["result"]["snapshot"]["workspaces"][0]["label"],
+        "a"
+    );
+    assert!(
+        server.try_wait().unwrap().is_none(),
+        "a server keeps running"
+    );
+    server.kill().unwrap();
+}

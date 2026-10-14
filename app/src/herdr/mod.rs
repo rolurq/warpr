@@ -3,11 +3,13 @@
 //! Herdr owns every workspace, tab and pane; this module only holds the state the UI presents.
 
 mod pane_frames;
+mod session_picker;
+mod sessions;
 mod workspace_view;
 
-use herdr_client::{
-    ConnectionFailure, ConnectionStatus, PresentedSession, SessionTarget, present_session,
-};
+use herdr_client::{ConnectionFailure, ConnectionStatus, HerdrCli, PresentedSession};
+pub use session_picker::HerdrSessionPicker;
+use sessions::SessionSelection;
 use warpui::{Entity, ModelContext, SingletonEntity};
 pub use workspace_view::HerdrWorkspaceView;
 
@@ -16,38 +18,46 @@ const SESSION_ENV: &str = "WARPR_HERDR_SESSION";
 
 pub(crate) struct HerdrSessionModel {
     presented: PresentedSession,
+    sessions: SessionSelection,
 }
 
 pub(crate) enum HerdrSessionEvent {
     Presented,
+    /// Herdr's session listing was read again.
+    SessionsListed,
 }
 
 impl HerdrSessionModel {
-    /// Starts connecting to the session named by [`SESSION_ENV`] in the background.
+    /// Starts connecting to the session named by [`SESSION_ENV`] in the background, starting its
+    /// server first when Herdr reports it stopped.
     pub(crate) fn new(ctx: &mut ModelContext<Self>) -> Self {
         let name =
             std::env::var(SESSION_ENV).unwrap_or_else(|_| herdr_client::DEFAULT_SESSION.to_owned());
-        match SessionTarget::for_current_user(&name) {
-            Ok(target) => Self::connect(target, ctx),
-            Err(failure) => Self::failed(failure),
-        }
+        Self::launch(HerdrCli::from_env(), herdr_client::config_dir(), &name, ctx)
     }
 
-    /// Starts connecting to `target` in the background.
-    pub(crate) fn connect(target: SessionTarget, ctx: &mut ModelContext<Self>) -> Self {
+    /// Starts connecting to `target` in the background. Unlike [`Self::new`] it never starts a
+    /// server, so the session must already be running.
+    #[cfg(test)]
+    pub(crate) fn connect(
+        target: herdr_client::SessionTarget,
+        ctx: &mut ModelContext<Self>,
+    ) -> Self {
         ctx.spawn(
-            async move { present_session(&target) },
+            async move { herdr_client::present_session(&target) },
             |me, presented, ctx| me.set_presented(presented, ctx),
         );
         Self {
             presented: PresentedSession::connecting(),
+            sessions: SessionSelection::new(HerdrCli::from_env(), herdr_client::config_dir()),
         }
     }
 
-    fn failed(failure: ConnectionFailure) -> Self {
+    fn failed(failure: ConnectionFailure, sessions: SessionSelection) -> Self {
         log::error!("Could not present the Herdr session: {failure}");
         Self {
             presented: PresentedSession::failed(failure),
+            sessions,
         }
     }
 

@@ -24,6 +24,7 @@ impl Workspace {
             &HerdrSessionModel::handle(ctx),
             |me, _, event, ctx| match event {
                 HerdrSessionEvent::Presented => me.present_herdr_workspaces(ctx),
+                HerdrSessionEvent::SessionsListed => {}
             },
         );
     }

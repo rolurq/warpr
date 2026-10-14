@@ -1069,6 +1069,8 @@ pub struct Workspace {
     server_api: Arc<ServerApi>,
     auth_state: Arc<AuthState>,
     server_time: Option<Arc<ServerTime>>,
+    /// Present while this window mirrors a Herdr session.
+    herdr_session_picker: Option<ViewHandle<crate::herdr::HerdrSessionPicker>>,
     tab_bar_overflow_menu: ViewHandle<Menu<WorkspaceAction>>,
     show_tab_bar_overflow_menu: bool,
     tab_right_click_menu: ViewHandle<Menu<WorkspaceAction>>,
@@ -3470,6 +3472,9 @@ impl Workspace {
             server_api,
             auth_state: AuthStateProvider::as_ref(ctx).get().clone(),
             server_time,
+            herdr_session_picker: (FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+                && ctx.has_singleton_model::<crate::herdr::HerdrSessionModel>())
+            .then(|| ctx.add_typed_action_view(crate::herdr::HerdrSessionPicker::new)),
             tab_bar_overflow_menu,
             show_tab_bar_overflow_menu: false,
             tab_right_click_menu,
@@ -21667,6 +21672,14 @@ impl Workspace {
         if let Some(update_pill) = self.render_tab_overflow_menu(ctx, appearance) {
             target.add_child(
                 Container::new(update_pill)
+                    .with_margin_left(TAB_BAR_PADDING_LEFT)
+                    .finish(),
+            );
+        }
+
+        if let Some(picker) = &self.herdr_session_picker {
+            target.add_child(
+                Container::new(ChildView::new(picker).finish())
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
                     .finish(),
             );

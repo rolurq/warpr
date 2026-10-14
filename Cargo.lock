@@ -6303,6 +6303,7 @@ version = "0.1.0"
 dependencies = [
  "command",
  "herdr_fake",
+ "libc",
  "serde",
  "serde_json",
  "thiserror 2.0.17",

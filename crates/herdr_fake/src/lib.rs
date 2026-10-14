@@ -12,6 +12,7 @@
 #![cfg(unix)]
 
 mod binary;
+mod launcher;
 mod script;
 mod server;
 
@@ -20,12 +21,15 @@ use std::path::{Path, PathBuf};
 
 pub use binary::Invocation;
 use binary::ScriptedBinary;
+use launcher::ServerLauncher;
 pub use script::{PaneTree, SessionScript, SplitDirection, TabScript};
 pub use server::FakeSession;
 use tempfile::TempDir;
 
 /// A scratch Herdr config directory plus a scripted `herdr` executable.
 pub struct FakeHerdr {
+    // Declared first so the launcher's sessions stop before the directory they sit in goes away.
+    launcher: Option<ServerLauncher>,
     root: TempDir,
     binary: ScriptedBinary,
 }
@@ -38,7 +42,11 @@ impl FakeHerdr {
             .tempdir()
             .expect("create fake Herdr directory");
         let binary = ScriptedBinary::new(root.path().join("bin").join("herdr"));
-        Self { root, binary }
+        Self {
+            launcher: None,
+            root,
+            binary,
+        }
     }
 
     /// Herdr's config directory, laid out as the real one is: the default session's socket sits in
@@ -50,6 +58,10 @@ impl FakeHerdr {
     /// Starts a server for session `name` that answers from `script`, listening where a real
     /// Herdr session of that name would. It stops when dropped.
     pub fn start_session(&self, name: &str, script: SessionScript) -> FakeSession {
+        FakeSession::start(self.prepare_socket_path(name), script)
+    }
+
+    fn prepare_socket_path(&self, name: &str) -> PathBuf {
         let config_dir = self.config_dir();
         let socket_path = if name == "default" {
             config_dir.join("herdr.sock")
@@ -58,7 +70,7 @@ impl FakeHerdr {
         };
         fs::create_dir_all(socket_path.parent().expect("socket path has a parent"))
             .expect("create session directory");
-        FakeSession::start(socket_path, script)
+        socket_path
     }
 
     /// The scripted `herdr` executable. It exits with status 64 on an invocation that was not
@@ -70,6 +82,53 @@ impl FakeHerdr {
     /// Makes `herdr <args>` print `stdout` and exit with `exit_code`.
     pub fn script_command(&mut self, args: &[&str], stdout: &str, exit_code: i32) {
         self.binary.script(args, stdout, exit_code);
+    }
+
+    /// Makes `herdr session list --json` report `sessions` as `(name, running)`, in that order,
+    /// in the shape Herdr 0.9.3 prints. It reports only what is given here; it does not look at
+    /// which fake sessions are started.
+    pub fn script_session_list(&mut self, sessions: &[(&str, bool)]) {
+        let config_dir = self.config_dir();
+        let entries: Vec<_> = sessions
+            .iter()
+            .map(|(name, running)| {
+                let is_default = *name == "default";
+                let session_dir = if is_default {
+                    config_dir.clone()
+                } else {
+                    config_dir.join("sessions").join(name)
+                };
+                serde_json::json!({
+                    "default": is_default,
+                    "name": name,
+                    "running": running,
+                    "session_dir": session_dir,
+                    "socket_path": session_dir.join("herdr.sock"),
+                })
+            })
+            .collect();
+        let listing = serde_json::json!({ "sessions": entries });
+        self.binary
+            .script(&["session", "list", "--json"], &format!("{listing}\n"), 0);
+    }
+
+    /// Makes running the server command for session `name` (`herdr --session <name> server`, or
+    /// `herdr server` for the default session) behave like starting a real server: the scripted
+    /// executable keeps running until this fake is dropped, and the session starts answering from
+    /// `script` on its socket.
+    pub fn script_server_start(&mut self, name: &str, script: SessionScript) {
+        let server_args: Vec<String> = if name == "default" {
+            vec!["server".to_owned()]
+        } else {
+            ["--session", name, "server"].map(str::to_owned).to_vec()
+        };
+        let args: Vec<&str> = server_args.iter().map(String::as_str).collect();
+        self.binary.script_until_shutdown(&args);
+        let socket_path = self.prepare_socket_path(name);
+        let log = self.binary.invocation_log();
+        self.launcher
+            .get_or_insert_with(|| ServerLauncher::start(log))
+            .serve_when_started(server_args, socket_path, script);
     }
 
     /// Every invocation of the scripted executable so far, in order.
