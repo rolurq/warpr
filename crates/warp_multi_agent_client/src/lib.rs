@@ -14,6 +14,9 @@ pub enum Error {
     #[error("Failed to resolve ambient headers for multi-agent request")]
     AmbientHeaders(#[source] anyhow::Error),
 
+    #[error("Warp's hosted agent is disabled")]
+    HostedAgentDisabled,
+
     #[error("Failed to decode base64 multi-agent response event")]
     Base64Decode(#[source] base64::DecodeError),
 
@@ -50,6 +53,11 @@ pub async fn generate_multi_agent_output(
     request: &warp_multi_agent_api::Request,
     team_uid: Option<String>,
 ) -> Result<OutputStream, Error> {
+    // Last line of defence: no caller may open a connection to Warp's hosted agent while the
+    // kill switch is on, regardless of which UI path built the request.
+    if warp_core::features::FeatureFlag::DisableHostedAgent.is_enabled() {
+        return Err(Error::HostedAgentDisabled);
+    }
     let auth_token = client
         .get_or_refresh_access_token()
         .await

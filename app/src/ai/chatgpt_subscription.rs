@@ -6,6 +6,7 @@ use settings::Setting as _;
 use url::Url;
 use uuid::Uuid;
 use warp_core::channel::ChannelState;
+use warp_core::features::FeatureFlag;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::auth::AuthStateProvider;
@@ -81,7 +82,9 @@ impl ChatGPTSubscriptionModel {
     /// Re-fetches the connection status. Leaves any in-flight connect attempt
     /// untouched, since the user may still be in the browser.
     pub fn refresh(&mut self, ctx: &mut ModelContext<Self>) {
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             return;
         }
         let ai_client = self.ai_client.clone();
@@ -99,7 +102,9 @@ impl ChatGPTSubscriptionModel {
     /// Re-fetches the connection status and uses the result to settle the connect attempt
     /// started from this client.
     fn resolve_pending_link(&mut self, ctx: &mut ModelContext<Self>) {
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             return;
         }
         let ai_client = self.ai_client.clone();

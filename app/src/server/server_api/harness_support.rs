@@ -420,6 +420,7 @@ impl ServerApi {
         task_id: &AmbientAgentTaskId,
         path: &str,
     ) -> Result<http_client::Response> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await
@@ -457,6 +458,7 @@ impl ServerApi {
     where
         B: serde::Serialize,
     {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self
             .get_or_refresh_access_token()
             .await

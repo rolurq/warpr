@@ -22,6 +22,7 @@ use warp::tui_export::{
     TuiUserInfoManagerEvent, TuiUserInfoSnapshot,
 };
 use warp_core::channel::ChannelState;
+use warp_core::features::FeatureFlag;
 use warp_core::settings::Setting;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::SingletonEntity;
@@ -77,7 +78,7 @@ struct ZeroStateSectionVisibility {
 impl Default for ZeroStateSectionVisibility {
     fn default() -> Self {
         Self {
-            signed_in_user: true,
+            signed_in_user: !FeatureFlag::DisableWarpAccount.is_enabled(),
             changelog: true,
             project_info: true,
             mcp: true,
@@ -93,7 +94,8 @@ impl ZeroStateSectionVisibility {
         }
         let settings = TuiZeroStateSettings::as_ref(ctx);
         Self {
-            signed_in_user: *settings.show_signed_in_user.value(),
+            signed_in_user: *settings.show_signed_in_user.value()
+                && !FeatureFlag::DisableWarpAccount.is_enabled(),
             changelog: *settings.show_changelog.value(),
             project_info: *settings.show_project_info.value(),
             mcp: *settings.show_mcp.value(),

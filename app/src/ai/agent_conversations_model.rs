@@ -905,6 +905,9 @@ impl AgentConversationsModel {
         timestamp: DateTime<Utc>,
         ctx: &mut ModelContext<Self>,
     ) {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return;
+        }
         let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
 
         // Subtract 1 second to give buffer for clock differences with server
@@ -968,6 +971,9 @@ impl AgentConversationsModel {
     /// Fetches tasks and cloud conversation metadata async. Cloud conversation metadata is merged with
     /// metadata stored in local db in the BlocklistAIHistoryModel
     fn fetch_ambient_agent_tasks_and_cloud_convo_metadata(&mut self, ctx: &mut ModelContext<Self>) {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return;
+        }
         let auth_state = AuthStateProvider::as_ref(ctx).get();
         let Some(creator_uid) = auth_state.user_id().map(|uid| uid.as_string()) else {
             // If we don't have a user ID, don't pull tasks
@@ -1179,6 +1185,9 @@ impl AgentConversationsModel {
         &self,
         ctx: &ModelContext<Self>,
     ) -> Option<TeamContextResolver> {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return None;
+        }
         if !self.initial_load_state.can_poll() {
             return None;
         }
@@ -1861,6 +1870,9 @@ impl AgentConversationsModel {
 
     /// Consult fetch-state guards and spawn a fetch if allowed.
     fn async_fetch_task(&mut self, task_id: &AmbientAgentTaskId, ctx: &mut ModelContext<Self>) {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return;
+        }
         match self.task_fetch_state.get(task_id) {
             Some(TaskFetchState::InFlight) => return,
             Some(TaskFetchState::PermanentlyFailed { at, .. }) => {
@@ -2087,6 +2099,9 @@ impl AgentConversationsModel {
         request_team_scope: RequestTeamScope,
         ctx: &mut ModelContext<Self>,
     ) {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return;
+        }
         let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
         let task_filter = self.build_task_list_filter(filters, current_user_uid);
         let current_user_uid = current_user_uid.to_string();

@@ -170,6 +170,8 @@ impl ServerApi {
         task_id: &AmbientAgentTaskId,
         request: &HarnessUsageRequest,
     ) -> Result<HarnessUsagePublicationStatus, HarnessUsageError> {
+        warp_server_client::ensure_hosted_agent_enabled()
+            .map_err(HarnessUsageError::from_request_preparation_error)?;
         let body = encode_request(request)
             .map_err(|_| HarnessUsageError::new(HarnessUsageErrorKind::InvalidReport))?;
         let auth_token = self

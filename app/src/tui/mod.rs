@@ -4,7 +4,8 @@
 //! shared initialization is done, [`init`] registers the [`TuiLoginModel`] that
 //! the TUI observes, mounts the TUI immediately (so it renders right away), and
 //! leaves device authorization behind an explicit welcome-screen action. The
-//! authentication gate remains visible until the browser flow completes.
+//! authentication gate remains visible until the browser flow completes, unless
+//! `FeatureFlag::DisableWarpAccount` is on, in which case the gate is skipped.
 mod mcp;
 mod telemetry;
 mod user_info;
@@ -20,6 +21,7 @@ use telemetry::{
 };
 use url::Url;
 pub use user_info::{TuiUserInfoManager, TuiUserInfoManagerEvent, TuiUserInfoSnapshot};
+use warp_core::features::FeatureFlag;
 use warp_core::telemetry::TelemetryEvent as _;
 use warpui::{AppContext, Entity, SingletonEntity};
 
@@ -242,7 +244,8 @@ fn has_validated_identity(auth_state: &AuthState) -> bool {
 }
 
 fn initial_login_phase(auth_state: &AuthState) -> TuiLoginPhase {
-    if has_validated_identity(auth_state) {
+    // Without a Warp account there is nothing to sign in to, so the TUI never gates on login.
+    if FeatureFlag::DisableWarpAccount.is_enabled() || has_validated_identity(auth_state) {
         TuiLoginPhase::LoggedIn
     } else {
         TuiLoginPhase::SignedOutWelcome
@@ -388,6 +391,9 @@ fn start_tui_device_login_with_entrypoint(
 }
 /// Logs out the current TUI user and sends them to Warp web's logged-out flow.
 pub fn log_out_tui(ctx: &mut AppContext) {
+    if FeatureFlag::DisableWarpAccount.is_enabled() {
+        return;
+    }
     auth::log_out(ctx);
     TuiOnboardingMarkers::handle(ctx).update(ctx, |markers, ctx| {
         markers.reset_for_account_transition(ctx);

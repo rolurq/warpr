@@ -152,7 +152,11 @@ impl EnvironmentCommandRunner {
         let server_api = ServerApiProvider::as_ref(ctx).get();
 
         let operation = ListWarpDevImages::build(ListWarpDevImagesVariables {});
-        let fetch_images = async move { server_api.send_graphql_request(operation, None).await };
+        let fetch_images = async move {
+            server_api
+                .send_hosted_agent_graphql_request(operation, None)
+                .await
+        };
 
         ctx.spawn(fetch_images, move |_, result, ctx| match result {
             Ok(response) => match response.list_warp_dev_images {
@@ -374,7 +378,11 @@ impl EnvironmentCommandRunner {
 
         let server_api = ServerApiProvider::as_ref(ctx).get();
         let operation = ListWarpDevImages::build(ListWarpDevImagesVariables {});
-        let fetch_images = async move { server_api.send_graphql_request(operation, None).await };
+        let fetch_images = async move {
+            server_api
+                .send_hosted_agent_graphql_request(operation, None)
+                .await
+        };
 
         ctx.spawn(fetch_images, move |_, result, ctx| match result {
             Ok(response) => match response.list_warp_dev_images {

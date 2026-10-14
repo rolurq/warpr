@@ -1025,3 +1025,25 @@ fn ai_autodetection_setting_can_be_toggled_on_and_off() {
         });
     });
 }
+
+#[test]
+fn hosted_agent_kill_switch_disables_every_ai_capability() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        add_ai_enablement_dependencies_for_test(&mut app);
+
+        AISettings::handle(&app).read(&app, |settings, ctx| {
+            assert!(settings.is_any_ai_enabled(ctx));
+
+            let _disable_hosted_agent = FeatureFlag::DisableHostedAgent.override_enabled(true);
+            assert!(!settings.is_any_ai_enabled(ctx));
+            assert!(!settings.is_active_ai_enabled(ctx));
+            assert!(!settings.is_conversation_history_available(ctx));
+            assert!(!settings.is_memory_enabled(ctx));
+            assert_eq!(
+                settings.default_session_mode(ctx),
+                DefaultSessionMode::Terminal
+            );
+        });
+    });
+}

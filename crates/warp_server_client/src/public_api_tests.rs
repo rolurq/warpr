@@ -241,3 +241,23 @@ fn shared_status_error_actionability_ignores_retryable_client_failures() {
 
     assert!(!error.is_actionable());
 }
+
+#[test]
+fn public_api_get_sends_no_request_when_hosted_agent_disabled() {
+    let _flag = warp_core::features::FeatureFlag::DisableHostedAgent.override_enabled(true);
+    let request = {
+        let mut server = ChannelState::mock_server();
+        server
+            .mock("GET", "/api/v1/test/disabled")
+            .with_status(200)
+            .with_body(r#"{"value":"success"}"#)
+            .expect(0)
+            .create()
+    };
+    let (base_client, _) = base_client(false);
+
+    let result = block_on(base_client.get_public_api::<serde_json::Value>("test/disabled"));
+
+    assert!(result.is_err());
+    request.assert();
+}

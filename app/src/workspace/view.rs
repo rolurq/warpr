@@ -4934,6 +4934,9 @@ impl Workspace {
         zero_state_prompt_suggestion_type: Option<ZeroStatePromptSuggestionType>,
         ctx: &mut ViewContext<Self>,
     ) {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return;
+        }
         self.active_tab_pane_group().update(ctx, |pane_group, ctx| {
             pane_group.add_terminal_pane_in_agent_mode(
                 None,
@@ -4945,6 +4948,9 @@ impl Workspace {
 
     /// Add a new terminal tab and enter the agent view with a new conversation.
     fn add_terminal_tab_with_new_agent_view(&mut self, ctx: &mut ViewContext<Self>) {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return;
+        }
         let was_left_panel_open = self.active_tab_pane_group().as_ref(ctx).left_panel_open;
         self.add_new_session_tab_internal_with_default_session_mode_behavior(
             NewSessionSource::Tab,
@@ -8387,6 +8393,11 @@ impl Workspace {
             return false;
         }
 
+        // The Get Started tab drives project creation through Warp's hosted agent.
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return false;
+        }
+
         if self.auth_state.is_onboarded().unwrap_or_default() {
             return false;
         }
@@ -8422,8 +8433,16 @@ impl Workspace {
             return false;
         }
 
+        // First-run onboarding marks the Warp account as onboarded on the server; with accounts
+        // disabled there is no user to mark and nothing to introduce.
+        if FeatureFlag::DisableWarpAccount.is_enabled() {
+            return false;
+        }
+
         if !self.auth_state.is_onboarded().unwrap_or_default() {
-            if self.should_show_agent_onboarding(ctx) {
+            if self.should_show_agent_onboarding(ctx)
+                && !FeatureFlag::DisableHostedAgent.is_enabled()
+            {
                 // If the user is anonymous, we shouldn't trigger agent onboarding.
                 // It will not display anyway, and we don't want to mark the user as onboarded.
                 if self.auth_state.is_anonymous_or_logged_out() {
@@ -12916,7 +12935,10 @@ impl Workspace {
     }
 
     fn add_ambient_agent_tab(&mut self, ctx: &mut ViewContext<Self>) {
-        if !FeatureFlag::AgentView.is_enabled() || !FeatureFlag::CloudMode.is_enabled() {
+        if !FeatureFlag::AgentView.is_enabled()
+            || !FeatureFlag::CloudMode.is_enabled()
+            || FeatureFlag::DisableHostedAgent.is_enabled()
+        {
             return;
         }
 
@@ -24092,6 +24114,7 @@ impl Workspace {
             views.push(ToolPanelView::ProjectExplorer);
         }
         if FeatureFlag::AgentViewConversationListView.is_enabled()
+            && !FeatureFlag::DisableHostedAgent.is_enabled()
             && *AISettings::as_ref(ctx).show_conversation_history
         {
             views.push(ToolPanelView::ConversationListView);

@@ -5,6 +5,7 @@ use std::{error, fmt};
 
 use parking_lot::FairMutex;
 use warp::tui_export::{BlocklistAIInputModel, CLISubagentController, TerminalModel};
+use warp_core::features::FeatureFlag;
 use warpui_core::keymap::Context;
 use warpui_core::{
     AppContext, Entity, ModelContext, ModelHandle, ViewHandle, WeakModelHandle, WeakViewHandle,
@@ -31,6 +32,8 @@ const COMMANDS_HINT: &str = "/ for commands";
 const CONVERSATIONS_HINT: &str = "← for conversations";
 const HINT_SEPARATOR: &str = " • ";
 pub(crate) const SHELL_HINT: &str = "Run a shell command • ? for shortcuts • esc for agent mode";
+/// Shell-mode hint when there is no agent mode to return to.
+const SHELL_ONLY_HINT: &str = "Run a shell command • ? for shortcuts";
 enum TuiTerminalSessionStateSource {
     Session {
         terminal_model: Weak<FairMutex<TerminalModel>>,
@@ -212,7 +215,8 @@ impl TuiTerminalSessionStateModel {
                         terminal_model.is_alt_screen_active(),
                         tui_input_target(&terminal_model),
                         inline_process_owns_input(&terminal_model),
-                        active_block.is_eligible_to_tag_in_agent(),
+                        !FeatureFlag::DisableHostedAgent.is_enabled()
+                            && active_block.is_eligible_to_tag_in_agent(),
                         active_block.is_agent_tagged_in(),
                     )
                 };
@@ -504,6 +508,9 @@ impl TuiTerminalSessionState {
             return None;
         }
         Some(match agent_editor.mode {
+            TuiComposerMode::Shell if FeatureFlag::DisableHostedAgent.is_enabled() => {
+                SHELL_ONLY_HINT.to_owned()
+            }
             TuiComposerMode::Shell => SHELL_HINT.to_owned(),
             TuiComposerMode::Agent { .. } => {
                 agent_input_hint(state.transcript_is_empty, state.orchestration_available)
@@ -573,10 +580,14 @@ impl TuiTerminalSessionState {
                     description: "conversations",
                 },
             ]),
-            TuiComposerMode::Shell => shortcuts.push(TuiShortcut {
-                key: "Esc".to_owned(),
-                description: "agent mode",
-            }),
+            TuiComposerMode::Shell => {
+                if !FeatureFlag::DisableHostedAgent.is_enabled() {
+                    shortcuts.push(TuiShortcut {
+                        key: "Esc".to_owned(),
+                        description: "agent mode",
+                    });
+                }
+            }
         }
         if matches!(agent_editor.mode, TuiComposerMode::Agent { .. }) {
             shortcuts.push(TuiShortcut {
@@ -584,7 +595,9 @@ impl TuiTerminalSessionState {
                 description: "input history",
             });
         }
-        if let Some(key) = binding_hint(AUTO_APPROVE_TOGGLE_BINDING_NAME, context, ctx) {
+        if !FeatureFlag::DisableHostedAgent.is_enabled()
+            && let Some(key) = binding_hint(AUTO_APPROVE_TOGGLE_BINDING_NAME, context, ctx)
+        {
             shortcuts.push(TuiShortcut {
                 key,
                 description: "toggle auto-approve",

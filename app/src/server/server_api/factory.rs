@@ -61,6 +61,7 @@ impl FactoryClient for ServerApi {
         sort_by: Option<RunnerSortBy>,
         team_scope: Option<RequestTeamScope>,
     ) -> Result<Vec<Runner>> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let operation = GetRunners::build(GetRunnersVariables {
             request_context: get_request_context(),
             sort_by,
@@ -70,7 +71,10 @@ impl FactoryClient for ServerApi {
                 self.send_graphql_request_for_team(operation, team_scope)
                     .await?
             }
-            None => self.send_graphql_request(operation, None).await?,
+            None => {
+                self.send_hosted_agent_graphql_request(operation, None)
+                    .await?
+            }
         };
         match response.get_runners {
             GetRunnersResult::GetRunnersOutput(output) => Ok(output.runners),
@@ -84,6 +88,7 @@ impl FactoryClient for ServerApi {
         input: UpsertRunnerInput,
         team_scope: Option<RequestTeamScope>,
     ) -> Result<UpsertedRunner> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let operation = UpsertRunner::build(UpsertRunnerVariables {
             input,
             request_context: get_request_context(),
@@ -93,7 +98,10 @@ impl FactoryClient for ServerApi {
                 self.send_graphql_request_for_team(operation, team_scope)
                     .await?
             }
-            None => self.send_graphql_request(operation, None).await?,
+            None => {
+                self.send_hosted_agent_graphql_request(operation, None)
+                    .await?
+            }
         };
         match response.upsert_runner {
             UpsertRunnerResult::UpsertRunnerOutput(output) => Ok(UpsertedRunner {
@@ -108,13 +116,16 @@ impl FactoryClient for ServerApi {
     }
 
     async fn delete_runner(&self, uid: String) -> Result<String> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let operation = DeleteRunner::build(DeleteRunnerVariables {
             input: DeleteRunnerInput {
                 uid: cynic::Id::new(uid),
             },
             request_context: get_request_context(),
         });
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
         match response.delete_runner {
             DeleteRunnerResult::DeleteRunnerOutput(output) => {
                 Ok(output.deleted_uid.inner().to_string())

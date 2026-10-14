@@ -1943,6 +1943,7 @@ impl RootView {
                         // ForceLogin is true for Preview
                         AuthOnboardingState::Auth(workspace_args.into())
                     } else if FeatureFlag::AgentOnboarding.is_enabled()
+                        && !FeatureFlag::DisableHostedAgent.is_enabled()
                         && !has_completed_local_onboarding(ctx)
                         && !workspace_args.workspace_setting.is_content_deep_link()
                     {
@@ -3955,7 +3956,7 @@ impl RootView {
                     view.open_vertical_tabs_panel_if_enabled(ctx);
                 });
             }
-        } else if *AISettings::as_ref(ctx).is_any_ai_enabled {
+        } else if AISettings::as_ref(ctx).is_any_ai_enabled(ctx) {
             workspace.update(ctx, |view, ctx| {
                 view.start_agent_onboarding_tutorial(tutorial, ctx);
             });
@@ -4154,6 +4155,7 @@ impl AuthOnboardingState {
             && !is_anonymous
             && !has_completed_local_onboarding
             && FeatureFlag::AgentOnboarding.is_enabled()
+            && !FeatureFlag::DisableHostedAgent.is_enabled()
         {
             self.try_open_onboarding_slides(ctx);
         }
@@ -4178,6 +4180,14 @@ impl AuthOnboardingState {
     }
 
     fn try_open_onboarding_slides(&mut self, ctx: &mut ViewContext<RootView>) {
+        // The slides funnel users into a Warp account and Warp's hosted agent, so no entry point
+        // (including the debug shortcut) may open them once either is disabled.
+        if FeatureFlag::DisableWarpAccount.is_enabled()
+            || FeatureFlag::DisableHostedAgent.is_enabled()
+        {
+            return;
+        }
+
         let target = match self {
             AuthOnboardingState::Auth(args) | AuthOnboardingState::ConfirmIncomingAuth(args) => {
                 if args.workspace_setting.is_content_deep_link() {

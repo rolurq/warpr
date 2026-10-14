@@ -142,6 +142,7 @@ impl BlockClient for ServerApi {
         &self,
         request: GenerateBlockTitleRequest,
     ) -> Result<GenerateBlockTitleResponse, anyhow::Error> {
+        warp_server_client::ensure_hosted_agent_enabled()?;
         let auth_token = self.get_or_refresh_access_token().await?;
         let request_builder = self.base_client.http_client().post(format!(
             "{}/ai/generate_block_title",

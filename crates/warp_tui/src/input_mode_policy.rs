@@ -5,6 +5,7 @@ use warp::tui_export::{
     BlocklistAIInputModel, ConversationSelectionEvent, InputConfig, InputModePolicy, InputType,
     PolicyConfigUpdate,
 };
+use warp_core::features::FeatureFlag;
 use warpui_core::{AppContext, SingletonEntity};
 
 /// The TUI's agent config when autodetection is disabled or explicitly overridden.
@@ -49,16 +50,21 @@ pub(crate) fn is_shell_mode(input_mode: &BlocklistAIInputModel) -> bool {
 
 /// TUI input-mode policy: the input is agent-first, with autodetection driven
 /// by the shared AI setting. Conversation transitions do not rewrite the mode;
-/// explicit user actions may still lock the input to Agent or Shell.
+/// explicit user actions may still lock the input to Agent or Shell. With the
+/// hosted agent disabled there is no agent to talk to, so the input starts and
+/// stays locked to shell.
 pub(crate) struct TuiInputModePolicy;
 
 impl InputModePolicy for TuiInputModePolicy {
     fn initial_config(&self, app: &AppContext) -> InputConfig {
+        if FeatureFlag::DisableHostedAgent.is_enabled() {
+            return SHELL_LOCKED_CONFIG;
+        }
         agent_config_for_autodetection(AISettings::as_ref(app).is_ai_autodetection_enabled(app))
     }
 
     fn allows_locked_ai_input(&self, _app: &AppContext) -> bool {
-        true
+        !FeatureFlag::DisableHostedAgent.is_enabled()
     }
 
     fn is_autodetection_enabled(&self, app: &AppContext) -> bool {

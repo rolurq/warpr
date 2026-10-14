@@ -51,6 +51,7 @@ impl TelemetryCollector {
 
         // Send Active App Usage signals
         if FeatureFlag::RecordAppActiveEvents.is_enabled()
+            && !FeatureFlag::DisableUsageTelemetry.is_enabled()
             && (ChannelState::is_release_bundle() || FeatureFlag::WithSandboxTelemetry.is_enabled())
         {
             self.schedule_send_active_usage_event(ctx);

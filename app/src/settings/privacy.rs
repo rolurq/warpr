@@ -196,10 +196,13 @@ impl PrivacySettingsSnapshot {
     }
 
     pub fn should_disable_telemetry(&self) -> bool {
-        // If a user has opted in to the agent mode analytics experiment, telemetry must be enabled.
-        !self.is_telemetry_enabled
-            && !self.is_telemetry_force_enabled
-            && !FeatureFlag::AgentModeAnalytics.is_enabled()
+        // Checked before every telemetry sink (network send, disk persist), so no org policy or
+        // experiment below can re-enable usage data.
+        FeatureFlag::DisableUsageTelemetry.is_enabled()
+            // If a user has opted in to the agent mode analytics experiment, telemetry must be enabled.
+            || (!self.is_telemetry_enabled
+                && !self.is_telemetry_force_enabled
+                && !FeatureFlag::AgentModeAnalytics.is_enabled())
     }
 
     pub fn should_collect_ai_ugc_telemetry(&self) -> bool {

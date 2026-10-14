@@ -2122,6 +2122,23 @@ impl SettingsView {
         {
             return false;
         }
+        // These pages only configure or bill Warp's hosted agent, so the kill switch removes them
+        // from the nav and search outright rather than leaving disabled shells.
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            && matches!(
+                settings_page.view_handle,
+                SettingsPageViewHandle::BillingAndUsage(_)
+                    | SettingsPageViewHandle::WarpCloudAgentAPIKeys(_)
+                    | SettingsPageViewHandle::WarpAgent(_)
+                    | SettingsPageViewHandle::AgentProfiles(_)
+                    | SettingsPageViewHandle::Knowledge(_)
+                    | SettingsPageViewHandle::CloudEnvironments(_)
+                    | SettingsPageViewHandle::MCPServers(_)
+                    | SettingsPageViewHandle::CodeIndexing(_)
+            )
+        {
+            return false;
+        }
         if FeatureFlag::DisableWarpDrive.is_enabled()
             && settings_page.section == SettingsSection::WarpDrive
         {

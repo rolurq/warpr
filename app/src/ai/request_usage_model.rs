@@ -6,6 +6,7 @@ use chrono::{DateTime, Local, Utc};
 use futures::channel::oneshot::{self, Receiver};
 use instant::Instant;
 use serde::{Deserialize, Serialize};
+use warp_core::features::FeatureFlag;
 use warp_core::user_preferences::GetUserPreferences as _;
 use warp_errors::report_error;
 pub use warp_graphql::billing::BonusGrantType;
@@ -304,7 +305,9 @@ impl AIRequestUsageModel {
         ctx: &mut ModelContext<Self>,
     ) -> Receiver<Option<usize>> {
         let (sender, receiver) = oneshot::channel();
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             let _ = sender.send(None);
             return receiver;
         }
@@ -383,7 +386,9 @@ impl AIRequestUsageModel {
     }
 
     pub fn request_availability_refresh(&mut self, ctx: &mut ModelContext<Self>) {
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if FeatureFlag::DisableHostedAgent.is_enabled()
+            || !AuthStateProvider::as_ref(ctx).get().is_logged_in()
+        {
             return;
         }
         if self.server_availability.refresh_in_flight {

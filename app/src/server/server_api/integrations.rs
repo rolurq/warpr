@@ -154,7 +154,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = UserRepoAuthStatus::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.user_repo_auth_status {
             UserRepoAuthStatusResult::UserRepoAuthStatusOutput(output) => Ok(output),
@@ -193,7 +195,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = CreateSimpleIntegration::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
         match response.create_simple_integration {
             CreateSimpleIntegrationResult::CreateSimpleIntegrationOutput(output) => Ok(output),
             CreateSimpleIntegrationResult::UserFacingError(error) => {
@@ -215,7 +219,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = GetIntegrationsUsingEnvironment::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.get_integrations_using_environment {
             GetIntegrationsUsingEnvironmentResult::GetIntegrationsUsingEnvironmentOutput(
@@ -240,7 +246,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = SimpleIntegrations::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.simple_integrations {
             SimpleIntegrationsResult::SimpleIntegrationsOutput(output) => Ok(output),
@@ -262,7 +270,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = GetOAuthConnectTxStatus::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.get_oauth_connect_tx_status {
             GetOAuthConnectTxStatusResult::GetOAuthConnectTxStatusOutput(output) => {
@@ -283,7 +293,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = UserGithubInfo::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         let result = response.user_github_info;
 
@@ -325,7 +337,9 @@ impl IntegrationsClient for ServerApi {
         };
 
         let operation = SuggestCloudEnvironmentImage::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
+        let response = self
+            .send_hosted_agent_graphql_request(operation, None)
+            .await?;
 
         match response.suggest_cloud_environment_image {
             SuggestCloudEnvironmentImageResult::SuggestCloudEnvironmentImageAuthRequiredOutput(

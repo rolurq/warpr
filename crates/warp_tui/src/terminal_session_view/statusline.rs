@@ -9,6 +9,7 @@ use warp::tui_export::{
     ConversationUsageTotals, GitRepoModels, GitStatusMetadata, LLMPreferences, ResolvedTeamScope,
     UserWorkspaces,
 };
+use warp_core::features::FeatureFlag;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::SingletonEntity;
 use warpui_core::elements::tui::{
@@ -520,10 +521,11 @@ impl TuiTerminalSessionView {
                         .finish(),
                     )
                 }),
-                TuiStatuslineItem::Team => (!shell_mode)
-                    .then(|| self.render_active_team_statusline(&builder, ctx))
-                    .flatten()
-                    .map(FooterSegment::Team),
+                TuiStatuslineItem::Team => (!shell_mode
+                    && !FeatureFlag::DisableWarpAccount.is_enabled())
+                .then(|| self.render_active_team_statusline(&builder, ctx))
+                .flatten()
+                .map(FooterSegment::Team),
                 TuiStatuslineItem::GitHubPullRequest => (!shell_mode)
                     .then_some(self.github_repo.as_ref())
                     .flatten()

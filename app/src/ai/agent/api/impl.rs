@@ -188,6 +188,9 @@ async fn convert_multi_agent_client_error(
         warp_multi_agent_client::Error::ProtobufDecode(error) => {
             AIApiError::Other(anyhow::Error::from(error))
         }
+        error @ warp_multi_agent_client::Error::HostedAgentDisabled => {
+            AIApiError::Other(anyhow::Error::from(error))
+        }
         warp_multi_agent_client::Error::EventSource(error) => {
             AIApiError::from_stream_error("GenerateMultiAgentOutput", *error).await
         }

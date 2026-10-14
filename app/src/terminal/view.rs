@@ -11535,6 +11535,11 @@ impl TerminalView {
 
     /// Inserts telemetry policy banner into the blocklist.
     pub fn insert_telemetry_banner(&mut self, is_onboarded: bool, ctx: &mut ViewContext<Self>) {
+        // The banner asks about usage data collection, which `DisableUsageTelemetry` rules out.
+        if FeatureFlag::DisableUsageTelemetry.is_enabled() {
+            return;
+        }
+
         // Don't ever show telemetry banner for enterprise users.
         if UserWorkspaces::as_ref(ctx)
             .current_workspace()
