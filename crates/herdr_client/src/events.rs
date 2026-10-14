@@ -49,6 +49,13 @@ const LIFECYCLE_SUBSCRIPTIONS: [&str; 24] = [
     "layout.updated",
 ];
 
+pub(crate) fn lifecycle_subscriptions() -> Vec<Value> {
+    LIFECYCLE_SUBSCRIPTIONS
+        .iter()
+        .map(|event| json!({ "type": event }))
+        .collect()
+}
+
 /// Why a subscription stopped delivering events.
 #[derive(Debug)]
 pub(crate) enum StreamEnd {
@@ -103,15 +110,19 @@ impl EventStream {
     /// Subscribes to Herdr's lifecycle events and returns once Herdr has started the
     /// subscription, so a snapshot read after this returns cannot miss a later change.
     pub(crate) fn subscribe(socket_path: &Path) -> Result<(Self, StreamShutdown), StreamEnd> {
+        Self::subscribe_to(socket_path, lifecycle_subscriptions())
+    }
+
+    /// Like [`Self::subscribe`], to the given `events.subscribe` entries.
+    pub(crate) fn subscribe_to(
+        socket_path: &Path,
+        subscriptions: Vec<Value>,
+    ) -> Result<(Self, StreamShutdown), StreamEnd> {
         let io_failed = |error| StreamEnd::Failed(socket::io_failure(socket_path, error));
 
         let stream = socket::connect(socket_path).map_err(StreamEnd::Failed)?;
         let shutdown = stream.try_clone().map_err(io_failed)?;
 
-        let subscriptions: Vec<_> = LIFECYCLE_SUBSCRIPTIONS
-            .iter()
-            .map(|event| json!({ "type": event }))
-            .collect();
         let request = json!({
             "id": REQUEST_ID,
             "method": "events.subscribe",

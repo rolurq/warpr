@@ -54,25 +54,18 @@ impl LiveSession {
     /// Retries now rather than after the current backoff, and starts the count of failed attempts
     /// afresh.
     pub fn reconnect(&self) {
-        self.shared.control.lock().reconnect_requested = true;
-        self.shared.changed.notify_all();
+        self.shared.request_reconnect();
     }
 }
 
 impl Drop for LiveSession {
     fn drop(&mut self) {
-        let mut control = self.shared.control.lock();
-        control.stopped = true;
-        if let Some(stream) = control.stream_shutdown.take() {
-            stream.shutdown();
-        }
-        drop(control);
-        self.shared.changed.notify_all();
+        self.shared.stop();
     }
 }
 
 #[derive(Default)]
-struct Shared {
+pub(crate) struct Shared {
     control: Mutex<Control>,
     changed: Condvar,
 }
@@ -90,21 +83,46 @@ struct Control {
     stream_shutdown: Option<StreamShutdown>,
 }
 
-enum Wake {
+pub(crate) enum Wake {
     Stopped,
     Invalidated,
     StreamEnded(StreamEnd),
 }
 
-enum Pause {
+pub(crate) enum Pause {
     Stopped,
     ReconnectRequested,
     Elapsed,
 }
 
 impl Shared {
+    pub(crate) fn request_reconnect(&self) {
+        self.control.lock().reconnect_requested = true;
+        self.changed.notify_all();
+    }
+
+    /// Ends the session: wakes the worker, which returns, and closes the event stream.
+    pub(crate) fn stop(&self) {
+        let mut control = self.control.lock();
+        control.stopped = true;
+        if let Some(stream) = control.stream_shutdown.take() {
+            stream.shutdown();
+        }
+        drop(control);
+        self.changed.notify_all();
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.control.lock().stopped
+    }
+
+    /// A request to retry made while no wait was under way has nothing left to cut short.
+    pub(crate) fn clear_reconnect_request(&self) {
+        self.control.lock().reconnect_requested = false;
+    }
+
     /// Registers a new event stream and returns its generation, or `None` after a stop.
-    fn begin_stream(&self, shutdown: StreamShutdown) -> Option<u64> {
+    pub(crate) fn begin_stream(&self, shutdown: StreamShutdown) -> Option<u64> {
         let mut control = self.control.lock();
         if control.stopped {
             shutdown.shutdown();
@@ -117,7 +135,7 @@ impl Shared {
         Some(control.stream_generation)
     }
 
-    fn end_stream(&self) {
+    pub(crate) fn end_stream(&self) {
         if let Some(shutdown) = self.control.lock().stream_shutdown.take() {
             shutdown.shutdown();
         }
@@ -143,11 +161,11 @@ impl Shared {
 
     /// Forgets events seen so far. Called before a snapshot read so that an event arriving while
     /// the read is in flight is not forgotten with them.
-    fn clear_invalidation(&self) {
+    pub(crate) fn clear_invalidation(&self) {
         self.control.lock().invalidated = false;
     }
 
-    fn wait_for_signal(&self) -> Wake {
+    pub(crate) fn wait_for_signal(&self) -> Wake {
         let mut control = self.control.lock();
         loop {
             if control.stopped {
@@ -163,7 +181,7 @@ impl Shared {
         }
     }
 
-    fn pause(&self, timeout: Duration) -> Pause {
+    pub(crate) fn pause(&self, timeout: Duration) -> Pause {
         let deadline = Instant::now() + timeout;
         let mut control = self.control.lock();
         loop {
@@ -183,14 +201,14 @@ impl Shared {
 }
 
 /// How one connection ended.
-struct ConnectionEnd {
-    outcome: Outcome,
+pub(crate) struct ConnectionEnd {
+    pub(crate) outcome: Outcome,
     /// Whether a snapshot was read over it, which is what makes its end a loss rather than
     /// another failure to connect.
-    established: bool,
+    pub(crate) established: bool,
 }
 
-enum Outcome {
+pub(crate) enum Outcome {
     Stopped,
     Refused(Refusal),
     EventsLost,
@@ -312,7 +330,7 @@ impl Worker {
 }
 
 impl ConnectionEnd {
-    fn unestablished(outcome: Outcome) -> Self {
+    pub(crate) fn unestablished(outcome: Outcome) -> Self {
         Self {
             outcome,
             established: false,
@@ -320,7 +338,7 @@ impl ConnectionEnd {
     }
 }
 
-fn spawn_reader(shared: Arc<Shared>, generation: u64, mut events: EventStream) {
+pub(crate) fn spawn_reader(shared: Arc<Shared>, generation: u64, mut events: EventStream) {
     thread::Builder::new()
         .name("herdr-event-stream".to_owned())
         .spawn(move || {

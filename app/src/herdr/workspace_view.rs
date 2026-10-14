@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use herdr_client::{
-    ConnectionStatus, HerdrTabId, PresentedHerdrTab, PresentedPane, PresentedWorkspace,
+    AgentJump, ConnectionStatus, HerdrTabId, PaneId, PresentedHerdrTab, PresentedPane,
+    PresentedWorkspace,
 };
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
@@ -43,6 +44,9 @@ pub struct HerdrWorkspaceView {
     contents: HerdrWorkspaceContents,
     /// The Herdr tab the user picked here, if any; Herdr's active tab is shown until then.
     selected_tab: Option<HerdrTabId>,
+    /// The pane an agent jump took the user to, shown selected until the user picks another Herdr
+    /// tab. Like `selected_tab` it is view state that Herdr never hears of.
+    selected_pane: Option<PaneId>,
     /// Filled while rendering, because Herdr decides which tabs exist and `render` only has
     /// shared access to the view.
     tab_mouse_states: RefCell<HashMap<HerdrTabId, MouseStateHandle>>,
@@ -59,13 +63,15 @@ impl HerdrWorkspaceView {
                 &HerdrSessionModel::handle(ctx),
                 |me, _, event, ctx| match event {
                     HerdrSessionEvent::Presented => me.follow_session(ctx),
-                    HerdrSessionEvent::SessionsListed => {}
+                    HerdrSessionEvent::JumpedToAgent(jump) => me.follow_jump(jump, ctx),
+                    HerdrSessionEvent::SessionsListed | HerdrSessionEvent::AgentsPresented => {}
                 },
             );
         }
         Self {
             contents,
             selected_tab: None,
+            selected_pane: None,
             tab_mouse_states: RefCell::default(),
             pane_configuration,
             focus_handle: None,
@@ -78,6 +84,19 @@ impl HerdrWorkspaceView {
 
     pub fn snapshot(&self) -> HerdrWorkspaceContents {
         self.contents.clone()
+    }
+
+    /// Shows the Herdr tab and pane of `jump` when it is in this workspace.
+    fn follow_jump(&mut self, jump: &AgentJump, ctx: &mut ViewContext<Self>) {
+        let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
+            return;
+        };
+        if workspace.workspace_id != jump.workspace {
+            return;
+        }
+        self.selected_tab = Some(jump.herdr_tab.clone());
+        self.selected_pane = Some(jump.pane.clone());
+        ctx.notify();
     }
 
     /// Takes the workspace's label from the session's presented state, where Herdr's renames
@@ -216,15 +235,28 @@ impl HerdrWorkspaceView {
         let frames = layout
             .frames()
             .into_iter()
-            .map(|pane| (pane.rect, Self::render_pane_frame(&pane, appearance)))
+            .map(|pane| {
+                let is_selected = match &self.selected_pane {
+                    Some(selected) => *selected == pane.id,
+                    None => pane.focused,
+                };
+                (
+                    pane.rect,
+                    Self::render_pane_frame(&pane, is_selected, appearance),
+                )
+            })
             .collect();
         PaneFrames::new(layout.area, frames).finish()
     }
 
     /// An empty placeholder: pane contents arrive with the live output of a later change.
-    fn render_pane_frame(pane: &PresentedPane, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_pane_frame(
+        pane: &PresentedPane,
+        is_selected: bool,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let border = if pane.focused {
+        let border = if is_selected {
             theme.accent()
         } else {
             theme.outline()
@@ -353,6 +385,7 @@ impl TypedActionView for HerdrWorkspaceView {
         match action {
             HerdrWorkspaceViewAction::SelectTab(tab_id) => {
                 self.selected_tab = Some(tab_id.clone());
+                self.selected_pane = None;
                 ctx.notify();
             }
         }

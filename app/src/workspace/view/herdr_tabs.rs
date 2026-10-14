@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use herdr_client::{ConnectionStatus, PresentedSession, WorkspaceId};
+use herdr_client::{AgentJump, ConnectionStatus, PresentedSession, WorkspaceId};
 use warp_core::features::FeatureFlag;
-use warpui::{EntityId, SingletonEntity as _, ViewContext};
+use warpui::elements::{ChildView, Element};
+use warpui::{AppContext, EntityId, SingletonEntity as _, ViewContext};
 
 use super::Workspace;
 use crate::app_state::{
@@ -11,11 +12,48 @@ use crate::app_state::{
 };
 use crate::herdr::{HerdrSessionEvent, HerdrSessionModel};
 use crate::pane_group::PanesLayout;
+use crate::settings::AISettings;
 
 impl Workspace {
     fn presents_herdr_workspaces(ctx: &ViewContext<Self>) -> bool {
-        FeatureFlag::HerdrWorkspaceTabs.is_enabled()
-            && ctx.has_singleton_model::<HerdrSessionModel>()
+        crate::herdr::presents_herdr_workspaces(ctx)
+    }
+
+    /// Whether the agent panel can be opened: Herdr's agents when this window presents a Herdr
+    /// session, Warp's own agent management otherwise.
+    pub(super) fn is_agent_panel_available(&self, app: &AppContext) -> bool {
+        FeatureFlag::AgentManagementView.is_enabled()
+            && (self.herdr_agent_panel.is_some() || AISettings::as_ref(app).is_any_ai_enabled(app))
+    }
+
+    pub(super) fn agent_management_content(&self) -> Box<dyn Element> {
+        match &self.herdr_agent_panel {
+            Some(panel) => ChildView::new(panel).finish(),
+            None => ChildView::new(&self.agent_management_view).finish(),
+        }
+    }
+
+    pub(super) fn focus_agent_management_view(&self, ctx: &mut ViewContext<Self>) {
+        match &self.herdr_agent_panel {
+            Some(panel) => ctx.focus(panel),
+            None => ctx.focus(&self.agent_management_view),
+        }
+    }
+
+    /// Shows the workspace of `jump`, closing the agent panel. Which Herdr tab and pane to show
+    /// is up to that workspace's own view. Herdr's focus is left alone.
+    fn jump_to_herdr_agent(&mut self, jump: &AgentJump, ctx: &mut ViewContext<Self>) {
+        let tab_index = self
+            .herdr_workspace_tabs(ctx)
+            .into_iter()
+            .find(|(_, workspace_id)| *workspace_id == jump.workspace)
+            .and_then(|(pane_group_id, _)| self.tab_index_for_pane_group(pane_group_id));
+        let Some(index) = tab_index else {
+            return;
+        };
+        self.set_is_agent_management_view_open(false, ctx);
+        self.activate_tab(index, ctx);
+        ctx.notify();
     }
 
     pub(super) fn subscribe_to_herdr_session(ctx: &mut ViewContext<Self>) {
@@ -26,7 +64,8 @@ impl Workspace {
             &HerdrSessionModel::handle(ctx),
             |me, _, event, ctx| match event {
                 HerdrSessionEvent::Presented => me.present_herdr_workspaces(ctx),
-                HerdrSessionEvent::SessionsListed => {}
+                HerdrSessionEvent::JumpedToAgent(jump) => me.jump_to_herdr_agent(jump, ctx),
+                HerdrSessionEvent::SessionsListed | HerdrSessionEvent::AgentsPresented => {}
             },
         );
     }
