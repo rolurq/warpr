@@ -2,7 +2,7 @@ use herdr_client::{ConnectionStatus, HerdrTabId, SessionName, SessionTarget, Wor
 use herdr_fake::{FakeHerdr, FakeSession, PaneTree, SessionScript, SplitDirection, TabScript};
 use warp_core::ui::appearance::Appearance;
 use warpui::platform::WindowStyle;
-use warpui::{App, View as _, ViewHandle};
+use warpui::{App, ViewHandle};
 
 use super::*;
 use crate::test_util::assert_eventually;
