@@ -41,9 +41,17 @@ impl Invocation {
 
 struct ScriptedCommand {
     args: Vec<String>,
-    exit_code: i32,
+    outcome: Outcome,
+}
+
+enum Outcome {
+    Exit {
+        exit_code: i32,
+    },
+    /// Never answers, like a Herdr whose socket accepts connections and stays silent.
+    Hang,
     /// Keeps running, like a server, until the owning [`crate::FakeHerdr`] is dropped.
-    runs_until_shutdown: bool,
+    UntilShutdown,
 }
 
 /// A `/bin/sh` script standing in for the `herdr` executable.
@@ -73,24 +81,24 @@ impl ScriptedBinary {
     }
 
     pub(crate) fn script(&mut self, args: &[&str], stdout: &str, exit_code: i32) {
-        let index = self.commands.len();
-        fs::write(self.dir().join("stdout").join(index.to_string()), stdout)
-            .expect("write scripted stdout");
-        self.push(args, exit_code, false);
+        self.push(args, stdout, Outcome::Exit { exit_code });
+    }
+
+    pub(crate) fn script_hang(&mut self, args: &[&str]) {
+        self.push(args, "", Outcome::Hang);
     }
 
     pub(crate) fn script_until_shutdown(&mut self, args: &[&str]) {
-        let index = self.commands.len();
-        fs::write(self.dir().join("stdout").join(index.to_string()), "")
-            .expect("write scripted stdout");
-        self.push(args, 0, true);
+        self.push(args, "", Outcome::UntilShutdown);
     }
 
-    fn push(&mut self, args: &[&str], exit_code: i32, runs_until_shutdown: bool) {
+    fn push(&mut self, args: &[&str], stdout: &str, outcome: Outcome) {
+        let index = self.commands.len();
+        fs::write(self.dir().join("stdout").join(index.to_string()), stdout)
+            .expect("write scripted stdout");
         self.commands.push(ScriptedCommand {
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
-            exit_code,
-            runs_until_shutdown,
+            outcome,
         });
         self.write_script();
     }
@@ -144,15 +152,18 @@ impl ScriptedBinary {
                     shell_quote(arg)
                 ));
             }
-            let wait = if command.runs_until_shutdown {
-                format!("while [ -e \"$dir/{RUNNING_MARKER}\" ]; do sleep 0.05; done; ")
-            } else {
-                String::new()
+            let action = match command.outcome {
+                Outcome::Exit { exit_code } => {
+                    format!("cat \"$dir/stdout/{index}\"; exit {exit_code}")
+                }
+                // `exec` so that killing the script kills the sleep too.
+                Outcome::Hang => "exec sleep 600".to_owned(),
+                Outcome::UntilShutdown => format!(
+                    "while [ -e \"$dir/{RUNNING_MARKER}\" ]; do sleep 0.05; done; \
+                     cat \"$dir/stdout/{index}\"; exit 0"
+                ),
             };
-            script.push_str(&format!(
-                "if {condition}; then {wait}cat \"$dir/stdout/{index}\"; exit {}; fi\n",
-                command.exit_code
-            ));
+            script.push_str(&format!("if {condition}; then {action}; fi\n"));
         }
         script.push_str(&format!(
             "echo \"fake herdr: unscripted invocation: $*\" >&2\nexit {UNSCRIPTED_EXIT_CODE}\n"

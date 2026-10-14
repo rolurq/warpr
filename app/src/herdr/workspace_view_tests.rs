@@ -1,10 +1,15 @@
 use herdr_client::{ConnectionStatus, HerdrTabId, SessionName, SessionTarget, WorkspaceId};
-use herdr_fake::{FakeHerdr, FakeSession, PaneTree, SessionScript, SplitDirection, TabScript};
+use herdr_fake::{
+    FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript,
+};
 use warp_core::ui::appearance::Appearance;
 use warpui::platform::WindowStyle;
 use warpui::{App, ViewHandle};
 
+use herdr_client::HerdrCli;
+
 use super::*;
+use crate::app_state::HerdrWorkspaceSnapshot;
 use crate::test_util::assert_eventually;
 
 fn split_layout() -> PaneTree {
@@ -19,6 +24,12 @@ fn split_layout() -> PaneTree {
             PaneTree::pane(),
         ),
     )
+}
+
+fn compatible_fake() -> FakeHerdr {
+    let mut fake = FakeHerdr::new();
+    fake.script_status(&HerdrStatus::compatible());
+    fake
 }
 
 fn api_session(fake: &FakeHerdr) -> FakeSession {
@@ -42,14 +53,16 @@ fn open_workspace_view(app: &mut App, fake: &FakeHerdr) -> ViewHandle<HerdrWorks
     app.add_singleton_model(|_| Appearance::mock());
     let target = SessionTarget::new(&fake.config_dir(), SessionName::default_session());
     app.update(|ctx| {
-        ctx.add_singleton_model(|ctx| HerdrSessionModel::connect(target, ctx));
+        ctx.add_singleton_model(|ctx| {
+            HerdrSessionModel::connect(HerdrCli::new(fake.binary_path()), target, ctx)
+        });
     });
     let (_, view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
         HerdrWorkspaceView::new(
-            HerdrWorkspaceSnapshot {
+            HerdrWorkspaceContents::Workspace(HerdrWorkspaceSnapshot {
                 workspace_id: WorkspaceId::from("w1"),
                 label: "api".to_owned(),
-            },
+            }),
             ctx,
         )
     });
@@ -82,7 +95,7 @@ fn is_connected(app: &App) -> bool {
 #[test]
 fn the_view_shows_a_strip_of_the_workspaces_herdr_tabs_in_herdr_order() {
     App::test((), |mut app| async move {
-        let fake = FakeHerdr::new();
+        let fake = compatible_fake();
         let _session = api_session(&fake);
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
@@ -99,7 +112,7 @@ fn the_view_shows_a_strip_of_the_workspaces_herdr_tabs_in_herdr_order() {
 #[test]
 fn the_tab_herdr_has_focused_shows_its_pane_frames_until_another_is_picked() {
     App::test((), |mut app| async move {
-        let fake = FakeHerdr::new();
+        let fake = compatible_fake();
         let _session = api_session(&fake);
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
@@ -111,7 +124,7 @@ fn the_tab_herdr_has_focused_shows_its_pane_frames_until_another_is_picked() {
 #[test]
 fn picking_a_herdr_tab_shows_its_panes_in_herdrs_layout() {
     App::test((), |mut app| async move {
-        let fake = FakeHerdr::new();
+        let fake = compatible_fake();
         let _session = api_session(&fake);
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
@@ -128,7 +141,7 @@ fn picking_a_herdr_tab_shows_its_panes_in_herdrs_layout() {
 #[test]
 fn a_zoomed_herdr_tab_shows_only_its_zoomed_pane() {
     App::test((), |mut app| async move {
-        let fake = FakeHerdr::new();
+        let fake = compatible_fake();
         let _session = api_session(&fake);
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
@@ -142,7 +155,7 @@ fn a_zoomed_herdr_tab_shows_only_its_zoomed_pane() {
 #[test]
 fn picking_a_herdr_tab_sends_nothing_to_herdr() {
     App::test((), |mut app| async move {
-        let fake = FakeHerdr::new();
+        let fake = compatible_fake();
         let session = api_session(&fake);
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");

@@ -1,5 +1,5 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use command::blocking::Command;
@@ -31,8 +31,17 @@ impl HerdrCli {
         Self::new(std::env::var_os(HERDR_BINARY_ENV).unwrap_or_else(|| "herdr".into()))
     }
 
+    /// The executable this runs, as configured: a path, or a bare name resolved through `PATH`.
+    pub fn binary(&self) -> &Path {
+        &self.binary
+    }
+
     /// Runs `herdr <args>` for `target`, overriding any session this process inherited.
     pub fn run(&self, target: &SessionTarget, args: &[&str]) -> io::Result<Output> {
+        self.command(target, args).output()
+    }
+
+    pub(crate) fn command(&self, target: &SessionTarget, args: &[&str]) -> Command {
         let mut command = Command::new(&self.binary);
         command
             .args(args)
@@ -41,11 +50,6 @@ impl HerdrCli {
         for var in INHERITED_PANE_VARS {
             command.env_remove(var);
         }
-        command.output()
-    }
-
-    /// The executable that runs, for modules of this crate that start it in their own way.
-    pub(crate) fn binary(&self) -> &std::path::Path {
-        &self.binary
+        command
     }
 }

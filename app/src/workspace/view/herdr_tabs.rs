@@ -6,7 +6,9 @@ use warp_core::features::FeatureFlag;
 use warpui::{SingletonEntity as _, ViewContext};
 
 use super::Workspace;
-use crate::app_state::{HerdrWorkspaceSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot};
+use crate::app_state::{
+    HerdrWorkspaceContents, HerdrWorkspaceSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot,
+};
 use crate::herdr::{HerdrSessionEvent, HerdrSessionModel};
 use crate::pane_group::PanesLayout;
 
@@ -30,37 +32,50 @@ impl Workspace {
     }
 
     /// Replaces this window's tabs with one top-level tab per Herdr workspace and selects the
-    /// workspace Herdr has focused. Leaves the tabs alone while Herdr is not connected or has no
-    /// workspaces, so the window is never left without a tab.
+    /// workspace Herdr has focused, or, when warpr refuses to connect to Herdr, with a single tab
+    /// that says why. Leaves the tabs alone while Herdr is connecting, has no workspaces or could
+    /// not be reached, so the window is never left without a tab.
     pub(super) fn present_herdr_workspaces(&mut self, ctx: &mut ViewContext<Self>) {
         if !Self::presents_herdr_workspaces(ctx) {
             return;
         }
         let presented = HerdrSessionModel::as_ref(ctx).presented().clone();
-        if presented.connection != ConnectionStatus::Connected || presented.workspaces.is_empty() {
-            return;
-        }
+        let (tab_contents, focused_index) = match &presented.connection {
+            ConnectionStatus::Connected if !presented.workspaces.is_empty() => {
+                let contents: Vec<_> = presented
+                    .workspaces
+                    .iter()
+                    .map(|workspace| {
+                        HerdrWorkspaceContents::Workspace(HerdrWorkspaceSnapshot {
+                            workspace_id: workspace.id.clone(),
+                            label: workspace.label.clone(),
+                        })
+                    })
+                    .collect();
+                (contents, presented.focused_workspace_index())
+            }
+            ConnectionStatus::Refused(refusal) => (
+                vec![HerdrWorkspaceContents::Refused(refusal.clone())],
+                Some(0),
+            ),
+            ConnectionStatus::Connecting
+            | ConnectionStatus::Connected
+            | ConnectionStatus::Failed(_) => return,
+        };
 
         let replaced_pane_groups: Vec<_> =
             self.tabs.iter().map(|tab| tab.pane_group.id()).collect();
 
-        let mut workspace_pane_groups = Vec::with_capacity(presented.workspaces.len());
-        for workspace in &presented.workspaces {
+        let mut workspace_pane_groups = Vec::with_capacity(tab_contents.len());
+        for contents in tab_contents {
+            let title = contents.title().to_owned();
             let panes_layout =
                 PanesLayout::Snapshot(Box::new(PaneNodeSnapshot::Leaf(LeafSnapshot {
                     is_focused: true,
-                    custom_vertical_tabs_title: Some(workspace.label.clone()),
-                    contents: LeafContents::HerdrWorkspace(HerdrWorkspaceSnapshot {
-                        workspace_id: workspace.id.clone(),
-                        label: workspace.label.clone(),
-                    }),
+                    custom_vertical_tabs_title: Some(title.clone()),
+                    contents: LeafContents::HerdrWorkspace(contents),
                 })));
-            self.add_tab_with_pane_layout(
-                panes_layout,
-                Arc::new(HashMap::new()),
-                Some(workspace.label.clone()),
-                ctx,
-            );
+            self.add_tab_with_pane_layout(panes_layout, Arc::new(HashMap::new()), Some(title), ctx);
             workspace_pane_groups.push(self.active_tab_pane_group().id());
         }
 
@@ -70,9 +85,7 @@ impl Workspace {
             }
         }
 
-        let focused_pane_group = presented
-            .focused_workspace_index()
-            .and_then(|index| workspace_pane_groups.get(index));
+        let focused_pane_group = focused_index.and_then(|index| workspace_pane_groups.get(index));
         if let Some(index) = focused_pane_group.and_then(|id| self.tab_index_for_pane_group(*id)) {
             self.activate_tab(index, ctx);
         }

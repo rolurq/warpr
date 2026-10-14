@@ -1,7 +1,7 @@
-use herdr_fake::{FakeHerdr, Invocation, SessionScript};
+use herdr_fake::{FakeHerdr, HerdrStatus, Invocation, SessionScript};
 
 use super::*;
-use crate::ConnectionStatus;
+use crate::{ConnectionStatus, Refusal};
 
 fn target(fake: &FakeHerdr, name: &str) -> SessionTarget {
     SessionTarget::new(&fake.config_dir(), SessionName::new(name).unwrap())
@@ -9,6 +9,10 @@ fn target(fake: &FakeHerdr, name: &str) -> SessionTarget {
 
 fn cli(fake: &FakeHerdr) -> HerdrCli {
     HerdrCli::new(fake.binary_path())
+}
+
+fn script_compatible(fake: &mut FakeHerdr) {
+    fake.script_status(&HerdrStatus::compatible());
 }
 
 fn labels(session: &PresentedSession) -> Vec<&str> {
@@ -85,19 +89,21 @@ fn a_missing_herdr_executable_is_reported_as_an_unavailable_listing() {
 
 #[test]
 fn opening_a_running_session_connects_without_starting_a_server() {
-    let fake = FakeHerdr::new();
+    let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
     let _work = fake.start_session("work", SessionScript::new().workspace("in-work"));
 
     let presented = open_session(&cli(&fake), &target(&fake, "work"), SessionState::Running);
 
     assert_eq!(presented.connection, ConnectionStatus::Connected);
     assert_eq!(labels(&presented), ["in-work"]);
-    assert!(fake.invocations().is_empty());
+    assert!(server_starts(&fake).is_empty());
 }
 
 #[test]
 fn opening_a_stopped_session_starts_its_headless_server_then_connects() {
     let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
     fake.script_server_start("work", SessionScript::new().workspace("in-work"));
     let work = target(&fake, "work");
 
@@ -148,6 +154,7 @@ fn a_missing_herdr_executable_fails_the_start_of_a_stopped_session() {
 #[test]
 fn launching_starts_the_default_session_when_none_is_running() {
     let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
     fake.script_session_list(&[("default", false), ("work", true)]);
     fake.script_server_start("default", SessionScript::new().workspace("main"));
 
@@ -164,6 +171,7 @@ fn launching_starts_the_default_session_when_none_is_running() {
 #[test]
 fn launching_leaves_a_running_default_session_alone() {
     let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
     fake.script_session_list(&[("default", true)]);
     let _default = fake.start_session("default", SessionScript::new().workspace("main"));
 
@@ -176,6 +184,7 @@ fn launching_leaves_a_running_default_session_alone() {
 #[test]
 fn launching_a_named_stopped_session_starts_it() {
     let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
     fake.script_session_list(&[("default", true), ("work", false)]);
     fake.script_server_start("work", SessionScript::new().workspace("in-work"));
 
@@ -188,6 +197,7 @@ fn launching_a_named_stopped_session_starts_it() {
 #[test]
 fn launching_a_session_herdr_does_not_list_reports_it_instead_of_creating_it() {
     let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
     fake.script_session_list(&[("default", true)]);
 
     let presented = launch_session(&cli(&fake), &target(&fake, "typo"));
@@ -201,6 +211,20 @@ fn launching_a_session_herdr_does_not_list_reports_it_instead_of_creating_it() {
 
 #[test]
 fn launching_without_a_listing_reports_the_failure() {
+    let mut fake = FakeHerdr::new();
+    script_compatible(&mut fake);
+    fake.script_command(&["session", "list", "--json"], "", 3);
+
+    let presented = launch_session(&cli(&fake), &target(&fake, "default"));
+
+    assert!(matches!(
+        presented.connection,
+        ConnectionStatus::Failed(ConnectionFailure::SessionListUnavailable { .. })
+    ));
+}
+
+#[test]
+fn launching_without_a_herdr_executable_is_refused_rather_than_failed() {
     let fake = FakeHerdr::new();
 
     let presented = launch_session(
@@ -210,7 +234,7 @@ fn launching_without_a_listing_reports_the_failure() {
 
     assert!(matches!(
         presented.connection,
-        ConnectionStatus::Failed(ConnectionFailure::SessionListUnavailable { .. })
+        ConnectionStatus::Refused(Refusal::ExecutableMissing { .. })
     ));
 }
 

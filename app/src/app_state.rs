@@ -153,15 +153,32 @@ pub enum LeafContents {
     NetworkLog,
     /// A new first-time user experience which prioritizes choosing a coding repository.
     GetStarted,
-    /// Stands in for a Herdr workspace in its top-level tab. Herdr owns the workspace, so it is
-    /// not persisted.
-    HerdrWorkspace(HerdrWorkspaceSnapshot),
+    /// Stands in for a Herdr workspace in its top-level tab, or for the session itself when warpr
+    /// refuses to connect to it. Herdr owns both, so it is not persisted.
+    HerdrWorkspace(HerdrWorkspaceContents),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum HerdrWorkspaceContents {
+    Workspace(HerdrWorkspaceSnapshot),
+    /// Why there is no workspace to show.
+    Refused(herdr_client::Refusal),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HerdrWorkspaceSnapshot {
     pub workspace_id: herdr_client::WorkspaceId,
     pub label: String,
+}
+
+impl HerdrWorkspaceContents {
+    /// The title of the tab and pane that show these contents.
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Workspace(workspace) => &workspace.label,
+            Self::Refused(_) => "Cannot connect to Herdr",
+        }
+    }
 }
 
 #[cfg(feature = "local_fs")]

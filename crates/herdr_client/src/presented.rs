@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::compat::Refusal;
 use crate::tabs::{HerdrTabId, PresentedHerdrTab, TabInfo, TabLayout};
 
 /// Herdr's identifier for a workspace, stable for the life of the workspace.
@@ -69,6 +70,9 @@ pub enum ConnectionStatus {
     Connecting,
     Connected,
     Failed(ConnectionFailure),
+    /// The `herdr` executable is missing or unusable, or the server is incompatible with it; no
+    /// workspaces are presented.
+    Refused(Refusal),
 }
 
 /// The state of a Herdr session as a front-end presents it.
@@ -87,6 +91,10 @@ impl PresentedSession {
 
     pub fn failed(failure: ConnectionFailure) -> Self {
         Self::without_workspaces(ConnectionStatus::Failed(failure))
+    }
+
+    pub fn refused(refusal: Refusal) -> Self {
+        Self::without_workspaces(ConnectionStatus::Refused(refusal))
     }
 
     fn without_workspaces(connection: ConnectionStatus) -> Self {

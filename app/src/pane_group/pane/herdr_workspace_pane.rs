@@ -1,7 +1,7 @@
 use warpui::{AppContext, ModelHandle, View, ViewContext, ViewHandle};
 
 use super::PaneId;
-use crate::app_state::{HerdrWorkspaceSnapshot, LeafContents};
+use crate::app_state::{HerdrWorkspaceContents, LeafContents};
 use crate::herdr::HerdrWorkspaceView;
 use crate::pane_group::pane::{ShareableLink, ShareableLinkError};
 use crate::pane_group::{BackingView, PaneConfiguration, PaneContent, PaneGroup, PaneView};
@@ -12,7 +12,7 @@ pub struct HerdrWorkspacePane {
 }
 
 impl HerdrWorkspacePane {
-    pub fn new<V: View>(workspace: HerdrWorkspaceSnapshot, ctx: &mut ViewContext<V>) -> Self {
+    pub fn new<V: View>(workspace: HerdrWorkspaceContents, ctx: &mut ViewContext<V>) -> Self {
         let workspace_view =
             ctx.add_typed_action_view(|ctx| HerdrWorkspaceView::new(workspace, ctx));
         let pane_configuration = workspace_view.as_ref(ctx).pane_configuration();

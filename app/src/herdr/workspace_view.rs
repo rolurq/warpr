@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use herdr_client::{HerdrTabId, PresentedHerdrTab, PresentedPane, PresentedWorkspace};
 use warpui::elements::{
-    Align, Border, Container, CrossAxisAlignment, Expanded, Flex, Hoverable, MainAxisAlignment,
-    MouseStateHandle, ParentElement as _, Text,
+    Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
+    MainAxisAlignment, MouseStateHandle, ParentElement as _, Text,
 };
 use warpui::platform::Cursor;
 use warpui::{
@@ -14,7 +14,7 @@ use warpui::{
 
 use super::HerdrSessionModel;
 use super::pane_frames::PaneFrames;
-use crate::app_state::HerdrWorkspaceSnapshot;
+use crate::app_state::HerdrWorkspaceContents;
 use crate::appearance::Appearance;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view;
@@ -25,6 +25,8 @@ const DETAIL_FONT_SIZE: f32 = 12.;
 const TAB_FONT_SIZE: f32 = 13.;
 const TAB_HORIZONTAL_PADDING: f32 = 12.;
 const TAB_VERTICAL_PADDING: f32 = 6.;
+const REFUSAL_MESSAGE_FONT_SIZE: f32 = 14.;
+const REFUSAL_MESSAGE_MAX_WIDTH: f32 = 560.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum HerdrWorkspaceViewAction {
@@ -33,9 +35,10 @@ pub enum HerdrWorkspaceViewAction {
     SelectTab(HerdrTabId),
 }
 
-/// The contents of the pane that stands for a Herdr workspace in its top-level tab.
+/// The contents of the pane that stands for a Herdr workspace in its top-level tab, or for the
+/// session when warpr refuses to connect to it.
 pub struct HerdrWorkspaceView {
-    workspace: HerdrWorkspaceSnapshot,
+    contents: HerdrWorkspaceContents,
     /// The Herdr tab the user picked here, if any; Herdr's active tab is shown until then.
     selected_tab: Option<HerdrTabId>,
     /// Filled while rendering, because Herdr decides which tabs exist and `render` only has
@@ -46,10 +49,11 @@ pub struct HerdrWorkspaceView {
 }
 
 impl HerdrWorkspaceView {
-    pub fn new(workspace: HerdrWorkspaceSnapshot, ctx: &mut ViewContext<Self>) -> Self {
-        let pane_configuration = ctx.add_model(|_ctx| PaneConfiguration::new(&workspace.label));
+    pub fn new(contents: HerdrWorkspaceContents, ctx: &mut ViewContext<Self>) -> Self {
+        let title = contents.title().to_owned();
+        let pane_configuration = ctx.add_model(|_ctx| PaneConfiguration::new(&title));
         Self {
-            workspace,
+            contents,
             selected_tab: None,
             tab_mouse_states: RefCell::default(),
             pane_configuration,
@@ -61,39 +65,55 @@ impl HerdrWorkspaceView {
         self.pane_configuration.clone()
     }
 
-    pub fn snapshot(&self) -> HerdrWorkspaceSnapshot {
-        self.workspace.clone()
+    pub fn snapshot(&self) -> HerdrWorkspaceContents {
+        self.contents.clone()
     }
 
     /// This workspace as the Herdr session currently presents it.
     fn presented_workspace<'a>(&self, app: &'a AppContext) -> Option<&'a PresentedWorkspace> {
+        let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
+            return None;
+        };
         if !app.has_singleton_model::<HerdrSessionModel>() {
             return None;
         }
         HerdrSessionModel::as_ref(app)
             .presented()
-            .workspace(&self.workspace.workspace_id)
+            .workspace(&workspace.workspace_id)
     }
 
     fn render_workspace_label(&self, appearance: &Appearance) -> Box<dyn Element> {
         let theme = appearance.theme();
         let font_family = appearance.ui_font_family();
-        let label = Text::new_inline(self.workspace.label.clone(), font_family, LABEL_FONT_SIZE)
-            .with_color(theme.main_text_color(theme.background()).into())
-            .finish();
-        let detail = Text::new_inline(
-            format!("Herdr workspace {}", self.workspace.workspace_id.as_str()),
+        let title = Text::new_inline(
+            self.contents.title().to_owned(),
             font_family,
-            DETAIL_FONT_SIZE,
+            LABEL_FONT_SIZE,
         )
-        .with_color(theme.sub_text_color(theme.background()).into())
+        .with_color(theme.main_text_color(theme.background()).into())
         .finish();
+        let detail = match &self.contents {
+            HerdrWorkspaceContents::Workspace(workspace) => Text::new_inline(
+                format!("Herdr workspace {}", workspace.workspace_id.as_str()),
+                font_family,
+                DETAIL_FONT_SIZE,
+            )
+            .with_color(theme.sub_text_color(theme.background()).into())
+            .finish(),
+            HerdrWorkspaceContents::Refused(refusal) => ConstrainedBox::new(
+                Text::new(refusal.to_string(), font_family, REFUSAL_MESSAGE_FONT_SIZE)
+                    .with_color(theme.sub_text_color(theme.background()).into())
+                    .finish(),
+            )
+            .with_max_width(REFUSAL_MESSAGE_MAX_WIDTH)
+            .finish(),
+        };
 
         Align::new(
             Flex::column()
                 .with_main_axis_alignment(MainAxisAlignment::Center)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(label)
+                .with_child(title)
                 .with_child(detail)
                 .finish(),
         )
@@ -256,7 +276,7 @@ impl BackingView for HerdrWorkspaceView {
         _ctx: &view::HeaderRenderContext<'_>,
         _app: &AppContext,
     ) -> view::HeaderContent {
-        view::HeaderContent::simple(self.workspace.label.clone())
+        view::HeaderContent::simple(self.contents.title().to_owned())
     }
 
     fn set_focus_handle(&mut self, focus_handle: PaneFocusHandle, _ctx: &mut ViewContext<Self>) {
