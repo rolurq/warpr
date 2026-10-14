@@ -13,6 +13,7 @@ struct Shared {
     script: SessionScript,
     subscribers: Mutex<Vec<UnixStream>>,
     requests_served: AtomicUsize,
+    methods_served: Mutex<Vec<String>>,
     stopping: AtomicBool,
 }
 
@@ -31,6 +32,7 @@ impl FakeSession {
             script,
             subscribers: Mutex::new(Vec::new()),
             requests_served: AtomicUsize::new(0),
+            methods_served: Mutex::new(Vec::new()),
             stopping: AtomicBool::new(false),
         });
         let accept_thread = thread::spawn({
@@ -60,6 +62,15 @@ impl FakeSession {
     /// How many requests this session has answered, across all connections.
     pub fn requests_served(&self) -> usize {
         self.shared.requests_served.load(Ordering::SeqCst)
+    }
+
+    /// The method of every request this session has answered, in the order they arrived.
+    pub fn served_methods(&self) -> Vec<String> {
+        self.shared
+            .methods_served
+            .lock()
+            .expect("methods lock")
+            .clone()
     }
 
     /// Pushes an event to every connection that sent `events.subscribe`, framed as Herdr frames
@@ -102,10 +113,14 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
         let Ok(request) = serde_json::from_str::<Value>(&line) else {
             return;
         };
-        shared.requests_served.fetch_add(1, Ordering::SeqCst);
-
         let id = request["id"].clone();
         let method = request["method"].as_str().unwrap_or_default();
+        shared
+            .methods_served
+            .lock()
+            .expect("methods lock")
+            .push(method.to_owned());
+        shared.requests_served.fetch_add(1, Ordering::SeqCst);
         let response = match method {
             "ping" => ok(
                 &id,

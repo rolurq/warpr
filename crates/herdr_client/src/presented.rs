@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+
+use crate::tabs::{HerdrTabId, PresentedHerdrTab, TabInfo, TabLayout};
 
 /// Herdr's identifier for a workspace, stable for the life of the workspace.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
@@ -19,11 +22,27 @@ impl From<&str> for WorkspaceId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentedWorkspace {
-    #[serde(rename = "workspace_id")]
     pub id: WorkspaceId,
     pub label: String,
+    /// In the order Herdr lists them.
+    pub herdr_tabs: Vec<PresentedHerdrTab>,
+    /// The Herdr tab Herdr has focused in this workspace.
+    pub active_herdr_tab: Option<HerdrTabId>,
+}
+
+impl PresentedWorkspace {
+    /// The Herdr tab to show given the user's own pick, which is view state and never reaches
+    /// Herdr. Falls back to Herdr's active tab, then the first, when there is no pick or the
+    /// picked tab is gone.
+    pub fn selected_tab(&self, picked: Option<&HerdrTabId>) -> Option<&PresentedHerdrTab> {
+        let with_id = |id: &HerdrTabId| self.herdr_tabs.iter().find(|tab| &tab.id == id);
+        picked
+            .and_then(with_id)
+            .or_else(|| self.active_herdr_tab.as_ref().and_then(with_id))
+            .or_else(|| self.herdr_tabs.first())
+    }
 }
 
 /// Why a session could not be presented.
@@ -75,11 +94,16 @@ impl PresentedSession {
     }
 
     pub(crate) fn from_snapshot(snapshot: Snapshot) -> Self {
+        let focused_workspace = snapshot.focused_workspace_id.clone();
         Self {
             connection: ConnectionStatus::Connected,
-            workspaces: snapshot.workspaces,
-            focused_workspace: snapshot.focused_workspace_id,
+            workspaces: snapshot.presented_workspaces(),
+            focused_workspace,
         }
+    }
+
+    pub fn workspace(&self, id: &WorkspaceId) -> Option<&PresentedWorkspace> {
+        self.workspaces.iter().find(|workspace| &workspace.id == id)
     }
 
     /// Position of the focused workspace in [`Self::workspaces`].
@@ -96,5 +120,53 @@ impl PresentedSession {
 pub(crate) struct Snapshot {
     #[serde(default)]
     focused_workspace_id: Option<WorkspaceId>,
-    workspaces: Vec<PresentedWorkspace>,
+    workspaces: Vec<WorkspaceInfo>,
+    tabs: Vec<TabInfo>,
+    layouts: Vec<TabLayout>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceInfo {
+    workspace_id: WorkspaceId,
+    label: String,
+    #[serde(default)]
+    active_tab_id: Option<HerdrTabId>,
+}
+
+impl Snapshot {
+    /// Groups the flat tab and layout lists under their workspaces, keeping Herdr's order.
+    fn presented_workspaces(self) -> Vec<PresentedWorkspace> {
+        let Self {
+            workspaces,
+            tabs,
+            mut layouts,
+            ..
+        } = self;
+        let mut tabs_by_workspace: HashMap<WorkspaceId, Vec<PresentedHerdrTab>> = HashMap::new();
+        for tab in tabs {
+            let layout = layouts
+                .iter()
+                .position(|candidate| candidate.tab_id == tab.tab_id)
+                .map(|index| layouts.swap_remove(index).layout);
+            tabs_by_workspace
+                .entry(tab.workspace_id)
+                .or_default()
+                .push(PresentedHerdrTab {
+                    id: tab.tab_id,
+                    label: tab.label,
+                    layout,
+                });
+        }
+        workspaces
+            .into_iter()
+            .map(|workspace| PresentedWorkspace {
+                herdr_tabs: tabs_by_workspace
+                    .remove(&workspace.workspace_id)
+                    .unwrap_or_default(),
+                id: workspace.workspace_id,
+                label: workspace.label,
+                active_herdr_tab: workspace.active_tab_id,
+            })
+            .collect()
+    }
 }

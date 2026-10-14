@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 pub use binary::Invocation;
 use binary::ScriptedBinary;
-pub use script::SessionScript;
+pub use script::{PaneTree, SessionScript, SplitDirection, TabScript};
 pub use server::FakeSession;
 use tempfile::TempDir;
 

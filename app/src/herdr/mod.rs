@@ -2,6 +2,7 @@
 //!
 //! Herdr owns every workspace, tab and pane; this module only holds the state the UI presents.
 
+mod pane_frames;
 mod workspace_view;
 
 use herdr_client::{
