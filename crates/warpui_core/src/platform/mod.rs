@@ -256,6 +256,10 @@ pub trait Delegate: 'static {
         on_error: SendNotificationErrorCallback,
     );
 
+    /// Removes the notification sent with `identifier` from the notification centre, or stops it
+    /// from being shown if it has not been yet. Platforms that cannot do this leave it be.
+    fn withdraw_desktop_notification(&self, _identifier: &str) {}
+
     /// Sets the cursor pointer
     fn set_cursor_shape(&self, cursor: Cursor);
 

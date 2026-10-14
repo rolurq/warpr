@@ -44,6 +44,7 @@ void requestNotificationPermissions(void *on_completion_callback) {
 }
 
 void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString *data,
+                                      NSString *identifier,
                                       void (^error_handler)(NSUInteger error_type, id error_msg),
                                       BOOL playSound) {
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
@@ -74,7 +75,7 @@ void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString 
 
           // Create the request object.
           UNNotificationRequest *request =
-              [UNNotificationRequest requestWithIdentifier:@"CUSTOMIZED_NOTIFICATION"
+              [UNNotificationRequest requestWithIdentifier:identifier
                                                    content:content
                                                    trigger:trigger];
 
@@ -89,13 +90,20 @@ void sendNotificationWithErrorHandler(NSString *title, NSString *body, NSString 
     }];
 }
 
-void sendNotification(id title, id body, id data, void *on_error_callback, BOOL playSound) {
+void sendNotification(id title, id body, id data, id identifier, void *on_error_callback,
+                      BOOL playSound) {
     sendNotificationWithErrorHandler(
-        title, body, data,
+        title, body, data, identifier,
         ^(NSUInteger error_type, id error_msg) {
           dispatch_async(dispatch_get_main_queue(), ^{
             warp_on_notification_send_error(error_type, error_msg, on_error_callback);
           });
         },
         playSound);
+}
+
+void withdrawNotification(id identifier) {
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    [center removePendingNotificationRequestsWithIdentifiers:@[ identifier ]];
+    [center removeDeliveredNotificationsWithIdentifiers:@[ identifier ]];
 }

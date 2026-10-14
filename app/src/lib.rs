@@ -2906,6 +2906,10 @@ pub(crate) fn app_callbacks(
             if let Some(notification_data) = notification_response.data() {
                 let context: serde_json::Result<NotificationContext> =
                     serde_json::from_str(notification_data);
+                if let Ok(NotificationContext::HerdrAgent { pane }) = &context {
+                    herdr::show_notified_agent(pane, ctx);
+                    return;
+                }
                 if let Ok(NotificationContext::BlockOrigin {
                     window_id,
                     pane_group_id,

@@ -4,6 +4,7 @@
 
 mod agent_panel;
 mod agents;
+mod desktop;
 mod live;
 mod notifications;
 mod pane_contents;
@@ -16,6 +17,7 @@ mod workspace_view;
 
 pub use agent_panel::HerdrAgentPanelView;
 use agents::AgentTracking;
+pub(crate) use desktop::show_notified_agent;
 use herdr_client::{
     AgentJump, ConnectionFailure, ConnectionStatus, HerdrCli, LiveSession, PresentedSession,
 };

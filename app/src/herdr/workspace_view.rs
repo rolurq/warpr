@@ -124,14 +124,22 @@ impl HerdrWorkspaceView {
         shown.chain(self.selected_pane.clone()).collect()
     }
 
-    /// Tells the session which panes the user is looking at, so that finished work in them is not
-    /// announced as unseen. Only warpr's own notion: Herdr is not told.
+    /// Tells the session which panes of this workspace this window shows, so that finished work
+    /// in them is not announced as unseen while the window has the user's attention. Only warpr's
+    /// own notion: Herdr is not told.
     fn report_viewed_panes(&self, ctx: &mut ViewContext<Self>) {
+        let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
+            return;
+        };
         if !ctx.has_singleton_model::<HerdrSessionModel>() {
             return;
         }
+        let workspace_id = workspace.workspace_id.clone();
         let panes = self.shown_panes(ctx);
-        HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| model.set_viewed_panes(panes, ctx));
+        let window_id = ctx.window_id();
+        HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
+            model.show_panes(window_id, workspace_id, panes, ctx);
+        });
     }
 
     /// Takes the workspace's label from the session's presented state, where Herdr's renames
@@ -150,6 +158,7 @@ impl HerdrWorkspaceView {
                 configuration.set_custom_vertical_tabs_title(label, ctx);
             });
         }
+        self.report_viewed_panes(ctx);
         self.update_shown_panes(ctx);
         ctx.notify();
     }

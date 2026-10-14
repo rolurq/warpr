@@ -1,7 +1,7 @@
 //! Keeping the Herdr session's agents current next to the session itself.
 
 use herdr_client::{
-    AgentJump, AgentNotifications, HerdrCli, LiveAgents, PaneId, PresentedAgents, ReconnectPolicy,
+    AgentAttention, AgentJump, HerdrCli, LiveAgents, PaneId, PresentedAgents, ReconnectPolicy,
     SessionName, SessionTarget,
 };
 use warpui::ModelContext;
@@ -12,7 +12,10 @@ use super::{HerdrSessionEvent, HerdrSessionModel};
 pub(super) struct AgentTracking {
     presented: PresentedAgents,
     live: Option<LiveAgents>,
-    pub(super) notifications: AgentNotifications,
+    pub(super) attention: AgentAttention,
+    /// Whether the user was asked for permission to show desktop notifications in this run.
+    pub(super) asked_for_desktop_permission: bool,
+    following_window_focus: bool,
 }
 
 impl Default for AgentTracking {
@@ -20,7 +23,9 @@ impl Default for AgentTracking {
         Self {
             presented: PresentedAgents::connecting(),
             live: None,
-            notifications: AgentNotifications::new(),
+            attention: AgentAttention::new(),
+            asked_for_desktop_permission: false,
+            following_window_focus: false,
         }
     }
 }
@@ -55,6 +60,10 @@ impl HerdrSessionModel {
         policy: ReconnectPolicy,
         ctx: &mut ModelContext<Self>,
     ) {
+        if !self.agents.following_window_focus {
+            self.agents.following_window_focus = true;
+            self.follow_window_focus(ctx);
+        }
         self.withdraw_agent_notifications(ctx);
         let name = target.name().clone();
         let (updates_tx, updates_rx) = async_channel::unbounded();

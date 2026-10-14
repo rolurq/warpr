@@ -10,8 +10,10 @@
 //! consulted.
 
 mod agents;
+mod attention;
 mod cli;
 mod compat;
+mod desktop;
 #[cfg(unix)]
 mod events;
 #[cfg(unix)]
@@ -35,12 +37,15 @@ mod session;
 mod sessions;
 mod socket;
 mod tabs;
+mod viewing;
 
 use std::time::Duration;
 
 pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, PresentedAgents};
+pub use attention::{AgentAttention, AttentionChanges};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
+pub use desktop::{DesktopAction, DesktopNotifications};
 pub use live::LiveSession;
 pub use live_agents::LiveAgents;
 pub use metadata::MetadataToken;
@@ -60,6 +65,7 @@ use serde_json::json;
 pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarget, config_dir};
 pub use sessions::{ListedSession, SessionState, launch_session, list_sessions, open_session};
 pub use tabs::{CellRect, HerdrTabId, PaneId, PaneLayout, PresentedHerdrTab, PresentedPane};
+pub use viewing::{ViewedPanes, ViewerId};
 
 /// How long each `herdr status` run in the compatibility check may take; it matches the socket
 /// client's timeout.
