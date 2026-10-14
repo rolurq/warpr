@@ -56,6 +56,10 @@ pub enum ConnectionFailure {
     Rejected { code: String, message: String },
     #[error("could not locate the Herdr session {name:?}: {reason}")]
     SessionUnresolvable { name: String, reason: String },
+    #[error("could not list the Herdr sessions: {reason}")]
+    SessionListUnavailable { reason: String },
+    #[error("could not start the Herdr session {name:?}: {reason}")]
+    ServerStartFailed { name: String, reason: String },
     #[error("Herdr sessions are only reachable over unix sockets, which this platform lacks")]
     UnsupportedPlatform,
 }

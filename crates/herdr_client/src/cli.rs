@@ -43,4 +43,9 @@ impl HerdrCli {
         }
         command.output()
     }
+
+    /// The executable that runs, for modules of this crate that start it in their own way.
+    pub(crate) fn binary(&self) -> &std::path::Path {
+        &self.binary
+    }
 }

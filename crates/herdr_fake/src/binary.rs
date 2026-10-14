@@ -14,9 +14,17 @@ const RECORDED_ENV: [&str; 5] = [
 
 const UNSCRIPTED_EXIT_CODE: i32 = 64;
 
+/// Lives in the fake's directory, so long-running scripted commands notice the owning
+/// [`crate::FakeHerdr`] being dropped, which deletes the directory, and exit.
+const INVOCATION_LOG: &str = "invocations.log";
+
+const RUNNING_MARKER: &str = "running";
+
 /// One run of the scripted `herdr` executable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Invocation {
+    /// The process id of the run, which a long-running scripted command keeps for its lifetime.
+    pub pid: u32,
     pub args: Vec<String>,
     /// The Herdr-related variables that were set, as `(name, value)`.
     pub herdr_env: Vec<(String, String)>,
@@ -34,6 +42,8 @@ impl Invocation {
 struct ScriptedCommand {
     args: Vec<String>,
     exit_code: i32,
+    /// Keeps running, like a server, until the owning [`crate::FakeHerdr`] is dropped.
+    runs_until_shutdown: bool,
 }
 
 /// A `/bin/sh` script standing in for the `herdr` executable.
@@ -49,6 +59,7 @@ impl ScriptedBinary {
     pub(crate) fn new(path: PathBuf) -> Self {
         let dir = path.parent().expect("binary path has a parent").to_owned();
         fs::create_dir_all(dir.join("stdout")).expect("create fake herdr directory");
+        fs::write(dir.join(RUNNING_MARKER), "").expect("mark fake herdr as running");
         let binary = Self {
             path,
             commands: Vec::new(),
@@ -65,41 +76,31 @@ impl ScriptedBinary {
         let index = self.commands.len();
         fs::write(self.dir().join("stdout").join(index.to_string()), stdout)
             .expect("write scripted stdout");
+        self.push(args, exit_code, false);
+    }
+
+    pub(crate) fn script_until_shutdown(&mut self, args: &[&str]) {
+        let index = self.commands.len();
+        fs::write(self.dir().join("stdout").join(index.to_string()), "")
+            .expect("write scripted stdout");
+        self.push(args, 0, true);
+    }
+
+    fn push(&mut self, args: &[&str], exit_code: i32, runs_until_shutdown: bool) {
         self.commands.push(ScriptedCommand {
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             exit_code,
+            runs_until_shutdown,
         });
         self.write_script();
     }
 
     pub(crate) fn invocations(&self) -> Vec<Invocation> {
-        let log = fs::read_to_string(self.dir().join("invocations.log")).unwrap_or_default();
-        let mut invocations = Vec::new();
-        let mut current: Option<Invocation> = None;
-        for line in log.lines() {
-            match (line, current.as_mut()) {
-                ("begin", _) => {
-                    current = Some(Invocation {
-                        args: Vec::new(),
-                        herdr_env: Vec::new(),
-                    })
-                }
-                ("end", _) => invocations.extend(current.take()),
-                (_, Some(invocation)) => {
-                    if let Some(arg) = line.strip_prefix("arg:") {
-                        invocation.args.push(arg.to_owned());
-                    } else if let Some(var) = line.strip_prefix("env:")
-                        && let Some((name, value)) = var.split_once('=')
-                    {
-                        invocation
-                            .herdr_env
-                            .push((name.to_owned(), value.to_owned()));
-                    }
-                }
-                _ => {}
-            }
-        }
-        invocations
+        read_invocations(&self.dir().join(INVOCATION_LOG))
+    }
+
+    pub(crate) fn invocation_log(&self) -> PathBuf {
+        self.dir().join(INVOCATION_LOG)
     }
 
     fn dir(&self) -> &Path {
@@ -122,14 +123,17 @@ impl ScriptedBinary {
 
     fn render(&self, dir: &Path) -> String {
         let dir = shell_quote(&dir.to_string_lossy());
-        let mut script = format!("#!/bin/sh\ndir={dir}\n{{\nprintf 'begin\\n'\n");
+        let mut script =
+            format!("#!/bin/sh\ndir={dir}\n{{\nprintf 'begin\\n'\nprintf 'pid:%s\\n' \"$$\"\n");
         script.push_str("for arg in \"$@\"; do printf 'arg:%s\\n' \"$arg\"; done\n");
         for var in RECORDED_ENV {
             script.push_str(&format!(
                 "[ -n \"${{{var}+x}}\" ] && printf 'env:{var}=%s\\n' \"${var}\"\n"
             ));
         }
-        script.push_str("printf 'end\\n'\n} >> \"$dir/invocations.log\"\n");
+        script.push_str(&format!(
+            "printf 'end\\n'\n}} >> \"$dir/{INVOCATION_LOG}\"\n"
+        ));
 
         for (index, command) in self.commands.iter().enumerate() {
             let mut condition = format!("[ \"$#\" -eq {} ]", command.args.len());
@@ -140,8 +144,13 @@ impl ScriptedBinary {
                     shell_quote(arg)
                 ));
             }
+            let wait = if command.runs_until_shutdown {
+                format!("while [ -e \"$dir/{RUNNING_MARKER}\" ]; do sleep 0.05; done; ")
+            } else {
+                String::new()
+            };
             script.push_str(&format!(
-                "if {condition}; then cat \"$dir/stdout/{index}\"; exit {}; fi\n",
+                "if {condition}; then {wait}cat \"$dir/stdout/{index}\"; exit {}; fi\n",
                 command.exit_code
             ));
         }
@@ -150,6 +159,40 @@ impl ScriptedBinary {
         ));
         script
     }
+}
+
+/// Parses the log the scripted executable appends to on every run.
+pub(crate) fn read_invocations(log: &Path) -> Vec<Invocation> {
+    let log = fs::read_to_string(log).unwrap_or_default();
+    let mut invocations = Vec::new();
+    let mut current: Option<Invocation> = None;
+    for line in log.lines() {
+        match (line, current.as_mut()) {
+            ("begin", _) => {
+                current = Some(Invocation {
+                    pid: 0,
+                    args: Vec::new(),
+                    herdr_env: Vec::new(),
+                })
+            }
+            ("end", _) => invocations.extend(current.take()),
+            (_, Some(invocation)) => {
+                if let Some(pid) = line.strip_prefix("pid:") {
+                    invocation.pid = pid.parse().unwrap_or_default();
+                } else if let Some(arg) = line.strip_prefix("arg:") {
+                    invocation.args.push(arg.to_owned());
+                } else if let Some(var) = line.strip_prefix("env:")
+                    && let Some((name, value)) = var.split_once('=')
+                {
+                    invocation
+                        .herdr_env
+                        .push((name.to_owned(), value.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+    invocations
 }
 
 fn shell_quote(value: &str) -> String {
