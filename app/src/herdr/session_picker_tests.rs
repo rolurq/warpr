@@ -1,4 +1,4 @@
-use herdr_fake::{FakeHerdr, SessionScript};
+use herdr_fake::{FakeHerdr, HerdrStatus, SessionScript};
 use warpui::App;
 use warpui::platform::WindowStyle;
 
@@ -36,6 +36,7 @@ fn the_picker_marks_each_session_running_or_stopped() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", false)]);
         let _default = fake.start_session("default", SessionScript::new().workspace("main"));
         let picker = open_picker(&mut app, &fake);
@@ -66,6 +67,7 @@ fn choosing_a_session_in_the_picker_presents_it() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", true)]);
         let _default = fake.start_session("default", SessionScript::new().workspace("in-default"));
         let _work = fake.start_session("work", SessionScript::new().workspace("in-work"));

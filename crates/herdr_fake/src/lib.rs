@@ -15,6 +15,7 @@ mod binary;
 mod launcher;
 mod script;
 mod server;
+mod status;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use binary::ScriptedBinary;
 use launcher::ServerLauncher;
 pub use script::{PaneTree, SessionScript, SplitDirection, TabScript};
 pub use server::FakeSession;
+pub use status::HerdrStatus;
 use tempfile::TempDir;
 
 /// A scratch Herdr config directory plus a scripted `herdr` executable.
@@ -129,6 +131,26 @@ impl FakeHerdr {
         self.launcher
             .get_or_insert_with(|| ServerLauncher::start(log))
             .serve_when_started(server_args, socket_path, script);
+    }
+
+    /// Makes `herdr status server --json` and `herdr status client --json` print what `status`
+    /// describes, the way Herdr 0.9.3 prints them.
+    pub fn script_status(&mut self, status: &HerdrStatus) {
+        self.binary.script(
+            &["status", "server", "--json"],
+            &format!("{}\n", status.server_json()),
+            0,
+        );
+        self.binary.script(
+            &["status", "client", "--json"],
+            &format!("{}\n", status.client_json()),
+            0,
+        );
+    }
+
+    /// Makes `herdr <args>` run forever without printing anything.
+    pub fn script_hang(&mut self, args: &[&str]) {
+        self.binary.script_hang(args);
     }
 
     /// Every invocation of the scripted executable so far, in order.

@@ -36,20 +36,23 @@ impl HerdrSessionModel {
         Self::launch(HerdrCli::from_env(), herdr_client::config_dir(), &name, ctx)
     }
 
-    /// Starts connecting to `target` in the background. Unlike [`Self::new`] it never starts a
-    /// server, so the session must already be running.
+    /// Starts connecting to `target` in the background, running `cli` to check that Herdr is
+    /// present and compatible first. Unlike [`Self::new`] it never starts a server, so the
+    /// session must already be running.
     #[cfg(test)]
     pub(crate) fn connect(
+        cli: HerdrCli,
         target: herdr_client::SessionTarget,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
+        let sessions = SessionSelection::new(cli.clone(), herdr_client::config_dir());
         ctx.spawn(
-            async move { herdr_client::present_session(&target) },
+            async move { herdr_client::present_session(&cli, &target) },
             |me, presented, ctx| me.set_presented(presented, ctx),
         );
         Self {
             presented: PresentedSession::connecting(),
-            sessions: SessionSelection::new(HerdrCli::from_env(), herdr_client::config_dir()),
+            sessions,
         }
     }
 
@@ -66,8 +69,14 @@ impl HerdrSessionModel {
     }
 
     fn set_presented(&mut self, presented: PresentedSession, ctx: &mut ModelContext<Self>) {
-        if let ConnectionStatus::Failed(failure) = &presented.connection {
-            log::error!("Could not present the Herdr session: {failure}");
+        match &presented.connection {
+            ConnectionStatus::Failed(failure) => {
+                log::error!("Could not present the Herdr session: {failure}");
+            }
+            ConnectionStatus::Refused(refusal) => {
+                log::error!("Refusing to connect to Herdr: {refusal}");
+            }
+            ConnectionStatus::Connecting | ConnectionStatus::Connected => {}
         }
         self.presented = presented;
         ctx.emit(HerdrSessionEvent::Presented);

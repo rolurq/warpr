@@ -1,13 +1,27 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use herdr_fake::{FakeHerdr, SessionScript};
+use herdr_fake::{FakeHerdr, HerdrStatus, SessionScript};
 
 use super::*;
 use crate::session::config_dir_from;
 
 fn target(fake: &FakeHerdr, name: &str) -> SessionTarget {
     SessionTarget::new(&fake.config_dir(), SessionName::new(name).unwrap())
+}
+
+fn fake_with(status: HerdrStatus) -> FakeHerdr {
+    let mut fake = FakeHerdr::new();
+    fake.script_status(&status);
+    fake
+}
+
+fn compatible_fake() -> FakeHerdr {
+    fake_with(HerdrStatus::compatible())
+}
+
+fn present(fake: &FakeHerdr, session: &str) -> PresentedSession {
+    present_session(&HerdrCli::new(fake.binary_path()), &target(fake, session))
 }
 
 fn labels(session: &PresentedSession) -> Vec<&str> {
@@ -20,7 +34,7 @@ fn labels(session: &PresentedSession) -> Vec<&str> {
 
 #[test]
 fn presents_workspaces_with_herdr_labels_in_herdr_order() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new()
@@ -29,7 +43,7 @@ fn presents_workspaces_with_herdr_labels_in_herdr_order() {
             .workspace("docs"),
     );
 
-    let presented = present_session(&target(&fake, "default"));
+    let presented = present(&fake, "default");
 
     assert_eq!(presented.connection, ConnectionStatus::Connected);
     assert_eq!(labels(&presented), ["api", "web", "docs"]);
@@ -37,7 +51,7 @@ fn presents_workspaces_with_herdr_labels_in_herdr_order() {
 
 #[test]
 fn presents_the_workspace_herdr_has_focused() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new()
@@ -47,7 +61,7 @@ fn presents_the_workspace_herdr_has_focused() {
             .focused("web"),
     );
 
-    let presented = present_session(&target(&fake, "default"));
+    let presented = present(&fake, "default");
 
     assert_eq!(presented.focused_workspace_index(), Some(1));
     assert_eq!(
@@ -58,10 +72,10 @@ fn presents_the_workspace_herdr_has_focused() {
 
 #[test]
 fn a_session_without_workspaces_presents_none_and_no_focus() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session("default", SessionScript::new());
 
-    let presented = present_session(&target(&fake, "default"));
+    let presented = present(&fake, "default");
 
     assert_eq!(presented.connection, ConnectionStatus::Connected);
     assert!(presented.workspaces.is_empty());
@@ -70,11 +84,11 @@ fn a_session_without_workspaces_presents_none_and_no_focus() {
 
 #[test]
 fn only_the_chosen_sessions_socket_is_used() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let default = fake.start_session("default", SessionScript::new().workspace("in-default"));
     let _work = fake.start_session("work", SessionScript::new().workspace("in-work"));
 
-    let presented = present_session(&target(&fake, "work"));
+    let presented = present(&fake, "work");
 
     assert_eq!(labels(&presented), ["in-work"]);
     assert_eq!(default.requests_served(), 0);
@@ -82,9 +96,9 @@ fn only_the_chosen_sessions_socket_is_used() {
 
 #[test]
 fn an_unreachable_socket_is_presented_as_a_failed_connection() {
-    let fake = FakeHerdr::new();
+    let fake = fake_with(HerdrStatus::server_not_running());
 
-    let presented = present_session(&target(&fake, "stopped"));
+    let presented = present(&fake, "stopped");
 
     assert!(matches!(
         presented.connection,

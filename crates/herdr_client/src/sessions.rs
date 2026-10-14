@@ -7,8 +7,8 @@ use command::blocking::Command;
 use serde::Deserialize;
 
 use crate::{
-    ConnectionFailure, HerdrCli, PresentedSession, SessionName, SessionTarget, present_session,
-    socket,
+    ConnectionFailure, HerdrCli, PresentedSession, STATUS_TIMEOUT, SessionName, SessionTarget,
+    compat, present_session, socket,
 };
 
 /// Whether a session's server is up.
@@ -128,7 +128,7 @@ pub fn open_session(
     {
         return PresentedSession::failed(failure);
     }
-    present_session(target)
+    present_session(cli, target)
 }
 
 /// Connects to `target` for the first time on launch, asking Herdr whether its server is up.
@@ -136,6 +136,11 @@ pub fn open_session(
 /// The default session is started when it is down. Any other session must already exist in
 /// Herdr's listing: a mistyped name is reported rather than creating a session.
 pub fn launch_session(cli: &HerdrCli, target: &SessionTarget) -> PresentedSession {
+    // Without this, a missing or broken `herdr` would surface as a failed session listing
+    // instead of the refusal that says what to install or fix.
+    if let Err(refusal) = compat::check(cli, target, STATUS_TIMEOUT) {
+        return PresentedSession::refused(refusal);
+    }
     let sessions = match list_sessions(cli) {
         Ok(sessions) => sessions,
         Err(failure) => return PresentedSession::failed(failure),

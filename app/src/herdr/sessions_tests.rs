@@ -1,5 +1,5 @@
 use herdr_client::{ConnectionFailure, ConnectionStatus, ListedSession, SessionState};
-use herdr_fake::{FakeHerdr, SessionScript};
+use herdr_fake::{FakeHerdr, HerdrStatus, SessionScript};
 use warpui::{App, SingletonEntity as _};
 
 use super::*;
@@ -57,6 +57,7 @@ fn switch(app: &mut App, session: &str) {
 fn launching_lists_every_session_with_its_running_or_stopped_state() {
     App::test((), |mut app| async move {
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("api", false), ("web", true)]);
         let _default = fake.start_session("default", SessionScript::new().workspace("main"));
 
@@ -81,6 +82,7 @@ fn launching_lists_every_session_with_its_running_or_stopped_state() {
 fn launching_starts_the_default_session_when_none_is_running() {
     App::test((), |mut app| async move {
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", false)]);
         fake.script_server_start("default", SessionScript::new().workspace("main"));
 
@@ -95,6 +97,7 @@ fn launching_starts_the_default_session_when_none_is_running() {
 fn switching_to_a_running_session_presents_that_session() {
     App::test((), |mut app| async move {
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", true)]);
         let _default = fake.start_session("default", SessionScript::new().workspace("in-default"));
         let _work = fake.start_session("work", SessionScript::new().workspace("in-work"));
@@ -120,6 +123,7 @@ fn switching_to_a_running_session_presents_that_session() {
 fn switching_to_a_stopped_session_starts_it_and_then_presents_it() {
     App::test((), |mut app| async move {
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", false)]);
         fake.script_server_start("work", SessionScript::new().workspace("in-work"));
         let _default = fake.start_session("default", SessionScript::new().workspace("in-default"));
@@ -150,6 +154,7 @@ fn switching_to_a_stopped_session_starts_it_and_then_presents_it() {
 fn a_session_that_fails_to_start_is_presented_as_a_failed_connection() {
     App::test((), |mut app| async move {
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", false)]);
         fake.script_command(&["--session", "work", "server"], "", 1);
         let _default = fake.start_session("default", SessionScript::new().workspace("in-default"));
@@ -177,6 +182,7 @@ fn a_session_that_fails_to_start_is_presented_as_a_failed_connection() {
 fn a_session_herdr_does_not_list_cannot_be_switched_to() {
     App::test((), |mut app| async move {
         let mut fake = FakeHerdr::new();
+        fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true)]);
         let _default = fake.start_session("default", SessionScript::new().workspace("in-default"));
         launch(&mut app, &fake, "default");

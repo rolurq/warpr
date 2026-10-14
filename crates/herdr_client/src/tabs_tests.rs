@@ -1,13 +1,19 @@
-use herdr_fake::{FakeHerdr, PaneTree, SessionScript, SplitDirection, TabScript};
+use herdr_fake::{FakeHerdr, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript};
 
 use crate::{
-    CellRect, ConnectionStatus, HerdrTabId, PaneId, PresentedHerdrTab, PresentedSession,
+    CellRect, ConnectionStatus, HerdrCli, HerdrTabId, PaneId, PresentedHerdrTab, PresentedSession,
     SessionName, SessionTarget, present_session,
 };
 
+fn compatible_fake() -> FakeHerdr {
+    let mut fake = FakeHerdr::new();
+    fake.script_status(&HerdrStatus::compatible());
+    fake
+}
+
 fn present(fake: &FakeHerdr) -> PresentedSession {
     let target = SessionTarget::new(&fake.config_dir(), SessionName::default_session());
-    let presented = present_session(&target);
+    let presented = present_session(&HerdrCli::new(fake.binary_path()), &target);
     assert_eq!(presented.connection, ConnectionStatus::Connected);
     presented
 }
@@ -62,7 +68,7 @@ fn split_layout() -> PaneTree {
 
 #[test]
 fn each_workspace_presents_its_herdr_tabs_in_herdr_order_with_herdr_labels() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new()
@@ -84,7 +90,7 @@ fn each_workspace_presents_its_herdr_tabs_in_herdr_order_with_herdr_labels() {
 
 #[test]
 fn a_workspace_without_scripted_tabs_presents_herdrs_single_tab_with_one_pane() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session("default", SessionScript::new().workspace("api"));
 
     let presented = present(&fake);
@@ -98,7 +104,7 @@ fn a_workspace_without_scripted_tabs_presents_herdrs_single_tab_with_one_pane() 
 
 #[test]
 fn the_herdr_tab_herdr_has_focused_is_presented_as_active_in_every_workspace() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new()
@@ -125,7 +131,7 @@ fn the_herdr_tab_herdr_has_focused_is_presented_as_active_in_every_workspace() {
 
 #[test]
 fn a_workspaces_first_herdr_tab_is_active_unless_herdr_says_otherwise() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new().workspace_with_tabs("api", [tab("server"), tab("logs")]),
@@ -143,7 +149,7 @@ fn a_workspaces_first_herdr_tab_is_active_unless_herdr_says_otherwise() {
 
 #[test]
 fn pane_frames_carry_the_rects_herdr_computed_for_the_tab() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new().workspace_with_tabs(
@@ -187,7 +193,7 @@ fn pane_frames_carry_the_rects_herdr_computed_for_the_tab() {
 
 #[test]
 fn a_zoomed_tab_presents_only_its_focused_pane_filling_the_layout_area() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new().workspace_with_tabs(
@@ -212,7 +218,7 @@ fn a_zoomed_tab_presents_only_its_focused_pane_filling_the_layout_area() {
 
 #[test]
 fn zoom_is_presented_per_herdr_tab() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new().workspace_with_tabs(
@@ -236,7 +242,7 @@ fn zoom_is_presented_per_herdr_tab() {
 
 #[test]
 fn picking_a_herdr_tab_shows_it_without_asking_herdr_to_focus_it() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let session = fake.start_session(
         "default",
         SessionScript::new().workspace_with_tabs("api", [tab("server"), tab("logs")]),
@@ -262,7 +268,7 @@ fn picking_a_herdr_tab_shows_it_without_asking_herdr_to_focus_it() {
 
 #[test]
 fn a_pick_of_a_herdr_tab_that_no_longer_exists_falls_back_to_herdrs_active_tab() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new()
@@ -283,7 +289,7 @@ fn a_pick_of_a_herdr_tab_that_no_longer_exists_falls_back_to_herdrs_active_tab()
 
 #[test]
 fn a_pane_id_is_the_one_herdr_reports() {
-    let fake = FakeHerdr::new();
+    let fake = compatible_fake();
     let _session = fake.start_session(
         "default",
         SessionScript::new().workspace_with_tabs("api", [TabScript::new("t", split_layout())]),
