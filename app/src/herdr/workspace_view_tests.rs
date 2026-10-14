@@ -255,3 +255,65 @@ fn a_lost_connection_is_shown_above_the_workspace_until_it_returns() {
         );
     });
 }
+
+fn api_with_tokens(tokens: &[(&str, &str)]) -> SessionScript {
+    let script = SessionScript::new().workspace("api");
+    tokens.iter().fold(script, |script, (name, value)| {
+        script.workspace_token("api", name, value)
+    })
+}
+
+#[test]
+fn the_metadata_tokens_herdr_shows_appear_above_the_herdr_tabs_and_follow_their_changes() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = fake.start_session("default", api_with_tokens(&[("vcs", "main")]));
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("vcs: main\n1\n"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+
+        session.set_script(api_with_tokens(&[("vcs", "main*"), ("ci", "running")]));
+        session.emit_event("workspace_metadata_updated", serde_json::json!({}));
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("ci: running  vcs: main*\n1\n"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+
+        session.set_script(api_with_tokens(&[("vcs", "main*")]));
+        session.emit_event("workspace_metadata_updated", serde_json::json!({}));
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("vcs: main*\n1\n"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+
+        session.set_script(api_with_tokens(&[]));
+        session.emit_event("workspace_metadata_updated", serde_json::json!({}));
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("1\n"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+    });
+}
+
+#[test]
+fn a_workspace_renamed_in_another_client_shows_its_new_title() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = fake.start_session("default", SessionScript::new().workspace("api"));
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        session.set_script(SessionScript::new().workspace("api-v2"));
+        session.emit_event("workspace_renamed", serde_json::json!({}));
+
+        assert_eventually!(
+            600 => view.read(&app, |view, ctx| {
+                view.pane_configuration().as_ref(ctx).title() == "api-v2"
+            }),
+            "the view kept its old title"
+        );
+    });
+}

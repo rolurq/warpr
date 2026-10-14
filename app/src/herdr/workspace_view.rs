@@ -243,6 +243,35 @@ impl HerdrWorkspaceView {
 }
 
 impl HerdrWorkspaceView {
+    /// The workspace's metadata tokens as Herdr's sidebar shows them, or nothing while it has none.
+    fn render_metadata_tokens(
+        workspace: &PresentedWorkspace,
+        appearance: &Appearance,
+    ) -> Option<Box<dyn Element>> {
+        if workspace.tokens.is_empty() {
+            return None;
+        }
+        let theme = appearance.theme();
+        let text = workspace
+            .tokens
+            .iter()
+            .map(|token| format!("{}: {}", token.name, token.value))
+            .collect::<Vec<_>>()
+            .join("  ");
+        let text = Text::new_inline(text, appearance.ui_font_family(), DETAIL_FONT_SIZE)
+            .with_color(theme.sub_text_color(theme.surface_1()).into())
+            .finish();
+        Some(
+            Container::new(text)
+                .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+                .with_vertical_padding(TAB_VERTICAL_PADDING)
+                .with_background(theme.surface_1())
+                .finish(),
+        )
+    }
+}
+
+impl HerdrWorkspaceView {
     fn render_workspace(&self, app: &AppContext, appearance: &Appearance) -> Box<dyn Element> {
         let presented = self.presented_workspace(app);
         let Some((workspace, shown)) = presented.and_then(|workspace| {
@@ -252,7 +281,11 @@ impl HerdrWorkspaceView {
             return self.render_workspace_label(appearance);
         };
 
-        Flex::column()
+        let mut column = Flex::column();
+        if let Some(tokens) = Self::render_metadata_tokens(workspace, appearance) {
+            column.add_child(tokens);
+        }
+        column
             .with_child(self.render_tab_strip(workspace, shown, appearance))
             .with_child(Expanded::new(1., self.render_pane_frames(shown, appearance)).finish())
             .finish()

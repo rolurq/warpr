@@ -101,6 +101,7 @@ pub(crate) struct WorkspaceScript {
     pub(crate) label: String,
     pub(crate) tabs: Vec<TabScript>,
     pub(crate) active_tab_label: Option<String>,
+    pub(crate) tokens: Vec<(String, String)>,
 }
 
 impl WorkspaceScript {
@@ -151,7 +152,22 @@ impl SessionScript {
             label: label.to_owned(),
             tabs: tabs.into_iter().collect(),
             active_tab_label: None,
+            tokens: Vec::new(),
         });
+        self
+    }
+
+    /// Gives the workspace labelled `workspace_label` the token `name`, replacing one of the same
+    /// name. Herdr reports a token until it is cleared or expires, and then stops reporting it,
+    /// so a token is cleared by scripting the session again without it.
+    pub fn workspace_token(mut self, workspace_label: &str, name: &str, value: &str) -> Self {
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.label == workspace_label)
+            .unwrap_or_else(|| panic!("no workspace labelled {workspace_label:?}"));
+        workspace.tokens.retain(|(existing, _)| existing != name);
+        workspace.tokens.push((name.to_owned(), value.to_owned()));
         self
     }
 
@@ -293,7 +309,7 @@ impl SessionScript {
                 next_pane_number += pane_ids.len();
             }
 
-            workspaces.push(json!({
+            let mut info = json!({
                 "workspace_id": workspace_id,
                 "number": number,
                 "label": workspace.label,
@@ -302,7 +318,12 @@ impl SessionScript {
                 "tab_count": workspace.tabs.len(),
                 "active_tab_id": active_tab.map(tab_id_of),
                 "agent_status": "unknown",
-            }));
+            });
+            // Herdr leaves `tokens` out of a workspace that has none.
+            if !workspace.tokens.is_empty() {
+                info["tokens"] = workspace.tokens.iter().cloned().collect();
+            }
+            workspaces.push(info);
         }
 
         json!({

@@ -18,6 +18,7 @@ mod live;
 #[cfg(not(unix))]
 #[path = "live_unsupported.rs"]
 mod live;
+mod metadata;
 mod presented;
 mod reconnect;
 mod session;
@@ -30,6 +31,7 @@ use std::time::Duration;
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
 pub use live::LiveSession;
+pub use metadata::MetadataToken;
 pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,
 };

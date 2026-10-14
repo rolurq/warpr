@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
 use crate::compat::Refusal;
+use crate::metadata::{MetadataToken, presented_tokens};
 use crate::tabs::{HerdrTabId, PresentedHerdrTab, TabInfo, TabLayout};
 
 /// Herdr's identifier for a workspace, stable for the life of the workspace.
@@ -31,6 +32,8 @@ pub struct PresentedWorkspace {
     pub herdr_tabs: Vec<PresentedHerdrTab>,
     /// The Herdr tab Herdr has focused in this workspace.
     pub active_herdr_tab: Option<HerdrTabId>,
+    /// Sorted by name.
+    pub tokens: Vec<MetadataToken>,
 }
 
 impl PresentedWorkspace {
@@ -154,6 +157,8 @@ struct WorkspaceInfo {
     label: String,
     #[serde(default)]
     active_tab_id: Option<HerdrTabId>,
+    #[serde(default)]
+    tokens: BTreeMap<String, String>,
 }
 
 impl Snapshot {
@@ -186,6 +191,7 @@ impl Snapshot {
                 herdr_tabs: tabs_by_workspace
                     .remove(&workspace.workspace_id)
                     .unwrap_or_default(),
+                tokens: presented_tokens(workspace.tokens),
                 id: workspace.workspace_id,
                 label: workspace.label,
                 active_herdr_tab: workspace.active_tab_id,
