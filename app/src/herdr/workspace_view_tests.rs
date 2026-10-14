@@ -1,5 +1,5 @@
 use herdr_client::{
-    ConnectionStatus, HerdrCli, HerdrTabId, SessionName, SessionTarget, WorkspaceId,
+    ConnectionStatus, HerdrCli, HerdrTabId, PaneId, SessionName, SessionTarget, WorkspaceId,
 };
 use herdr_fake::{
     FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, SplitDirection, StreamKind,
@@ -177,6 +177,33 @@ fn picking_a_herdr_tab_sends_nothing_to_herdr() {
             model.presented().workspaces[0].active_herdr_tab.clone()
         });
         assert_eq!(herdr_active, Some(HerdrTabId::from("w1:t1")));
+    });
+}
+
+#[test]
+fn picking_a_pane_moves_only_this_views_selection() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        let served_before = session.served_methods();
+        let runs_before = fake.invocations().len();
+
+        app.update(|ctx| {
+            view.update(ctx, |view, ctx| {
+                view.handle_action(
+                    &HerdrWorkspaceViewAction::SelectPane(PaneId::from("w1:p3")),
+                    ctx,
+                );
+            });
+        });
+
+        assert_eq!(session.served_methods(), served_before);
+        assert_eq!(fake.invocations().len(), runs_before);
+        let selected = view.read(&app, |view, _| view.selected_pane.clone());
+        assert_eq!(selected, Some(PaneId::from("w1:p3")));
     });
 }
 

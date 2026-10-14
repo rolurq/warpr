@@ -173,25 +173,28 @@ impl StreamRuns {
                     script.push_str(&format!("printf '%s\\n' {}\n", shell_quote(line)));
                 }
                 Step::Gate(name) => script.push_str(&format!(
-                    "while [ ! -e \"$dir/gates/\"{} ]; do sleep 0.02; done\n",
+                    "while [ -d \"$dir\" ] && [ ! -e \"$dir/gates/\"{} ]; do sleep 0.02; done\n",
                     shell_quote(name)
                 )),
                 Step::InputLines(count) => script.push_str(&format!(
-                    "while [ \"$(wc -l < \"$input\" | tr -d ' ')\" -lt {count} ]; do sleep 0.02; done\n"
+                    "while [ -d \"$dir\" ] && [ \"$(wc -l < \"$input\" | tr -d ' ')\" -lt {count} ]; do sleep 0.02; done\n"
                 )),
                 Step::Exit(code) => script.push_str(&format!("exit {code}\n")),
             }
         }
         match self.kind {
             StreamKind::Control => {
-                script.push_str("while [ ! -e \"$eof\" ]; do sleep 0.02; done\n");
+                script
+                    .push_str("while [ -d \"$dir\" ] && [ ! -e \"$eof\" ]; do sleep 0.02; done\n");
                 let closed = json!({ "type": "terminal.closed", "reason": "detached" });
                 script.push_str(&format!(
                     "printf '%s\\n' {}\nexit 0\n",
                     shell_quote(&closed.to_string())
                 ));
             }
-            StreamKind::Observe => script.push_str("while :; do sleep 0.05; done\n"),
+            StreamKind::Observe => {
+                script.push_str("while [ -d \"$dir\" ]; do sleep 0.05; done\n");
+            }
         }
         script
     }

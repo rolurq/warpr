@@ -417,6 +417,190 @@ fn the_control_channel_writes_to_the_session_that_holds_the_pane() {
     });
 }
 
+/// A pane another client owns: control is refused, then observed, then a takeover is granted.
+fn contested_pane(fake: &mut FakeHerdr) {
+    fake.script_terminal_stream(
+        StreamKind::Control,
+        PANE,
+        [
+            control().closed(REFUSED),
+            control().frame(FakeFrame::full(1, 80, 24, "mine")),
+        ],
+    );
+    fake.script_terminal_stream(
+        StreamKind::Observe,
+        PANE,
+        [control().frame(FakeFrame::full(1, 60, 20, "theirs"))],
+    );
+}
+
+#[test]
+fn the_first_input_forwarded_to_a_contested_pane_takes_it_with_takeover_and_arrives() {
+    let mut fake = FakeHerdr::new();
+    contested_pane(&mut fake);
+    let watched = Watched::new(&fake, RELEASE_GRACE);
+    watched.show(size(80, 24), grid(60, 20));
+    watched.wait_for_events(2);
+    assert_eq!(runs_of(&fake, "control").len(), 1);
+
+    watched.stream.forward(PaneInput::Text("ls\r".to_owned()));
+
+    let events = eventually("the takeover to be reported", || {
+        let events = watched.events();
+        events
+            .contains(&PaneStreamEvent::Ownership(PaneOwnership::TookControl))
+            .then_some(events)
+    });
+    assert_eq!(frame(events.last().unwrap()).bytes, b"mine");
+    let runs = runs_of(&fake, "control");
+    assert_eq!(runs.len(), 2);
+    assert_eq!(
+        runs[1].args,
+        [
+            "terminal",
+            "session",
+            "control",
+            PANE,
+            "--cols",
+            "80",
+            "--rows",
+            "24",
+            "--takeover"
+        ]
+    );
+    eventually("the input to arrive", || {
+        (fake.control_input(PANE).len() == 3).then_some(())
+    });
+    assert_eq!(
+        fake.control_input(PANE),
+        [
+            resize_line(size(80, 24)),
+            resize_line(size(80, 24)),
+            json!({ "type": "terminal.input", "text": "ls\r" })
+        ]
+    );
+}
+
+#[test]
+fn showing_resizing_and_regridding_a_contested_pane_never_takes_it() {
+    let mut fake = FakeHerdr::new();
+    contested_pane(&mut fake);
+    let watched = Watched::new(&fake, RELEASE_GRACE);
+    watched.show(size(80, 24), grid(60, 20));
+    watched.wait_for_events(2);
+
+    watched.stream.set_size(size(120, 40));
+    watched.stream.set_herdr_grid(grid(50, 18));
+    eventually("the observe stream to be replaced", || {
+        (runs_of(&fake, "observe").len() == 2).then_some(())
+    });
+
+    assert_eq!(runs_of(&fake, "control").len(), 1);
+    assert!(
+        fake.invocations()
+            .iter()
+            .all(|run| !run.args.iter().any(|arg| arg == "--takeover"))
+    );
+}
+
+#[test]
+fn scroll_and_mouse_reach_the_control_session_as_terminal_commands() {
+    let mut fake = FakeHerdr::new();
+    fake.script_terminal_stream(
+        StreamKind::Control,
+        PANE,
+        [control().frame(FakeFrame::full(1, 80, 24, "x"))],
+    );
+    let watched = Watched::new(&fake, RELEASE_GRACE);
+    watched.show(size(80, 24), grid(78, 22));
+    watched.wait_for_events(2);
+
+    watched.stream.forward(PaneInput::Scroll {
+        direction: ScrollDirection::Up,
+        lines: 3,
+        column: 4,
+        row: 5,
+    });
+    watched.stream.forward(PaneInput::Mouse {
+        action: MouseAction::Down,
+        column: 6,
+        row: 7,
+    });
+
+    eventually("both commands", || {
+        (fake.control_input(PANE).len() == 3).then_some(())
+    });
+    assert_eq!(
+        fake.control_input(PANE)[1..],
+        [
+            json!({
+                "type": "terminal.scroll",
+                "direction": "up",
+                "lines": 3,
+                "source": "wheel",
+                "column": 4,
+                "row": 5
+            }),
+            json!({
+                "type": "terminal.mouse",
+                "action": "down",
+                "button": "left",
+                "column": 6,
+                "row": 7
+            }),
+        ]
+    );
+    assert_eq!(runs_of(&fake, "control").len(), 1);
+}
+
+#[test]
+fn named_keys_go_through_herdrs_mode_aware_send_keys_and_also_take_a_contested_pane() {
+    let mut fake = FakeHerdr::new();
+    contested_pane(&mut fake);
+    let watched = Watched::new(&fake, RELEASE_GRACE);
+    watched.show(size(80, 24), grid(60, 20));
+    watched.wait_for_events(2);
+
+    watched.stream.forward(PaneInput::Key("up".to_owned()));
+    let sent = eventually("send-keys to run", || {
+        let runs: Vec<_> = fake
+            .invocations()
+            .into_iter()
+            .filter(|run| run.args.get(1).map(String::as_str) == Some("send-keys"))
+            .collect();
+        (!runs.is_empty()).then_some(runs)
+    });
+    assert_eq!(sent[0].args, ["pane", "send-keys", PANE, "up"]);
+    assert_eq!(sent[0].env("HERDR_SESSION"), Some("default"));
+    eventually("the takeover run to be logged", || {
+        (runs_of(&fake, "control").len() == 2).then_some(())
+    });
+    assert!(
+        fake.control_input(PANE)
+            .iter()
+            .all(|line| line["type"] == "terminal.resize")
+    );
+}
+
+#[test]
+fn input_to_a_pane_warpr_is_not_holding_is_dropped() {
+    let mut fake = FakeHerdr::new();
+    fake.script_terminal_stream(
+        StreamKind::Control,
+        PANE,
+        [control()
+            .frame(FakeFrame::full(1, 80, 24, "x"))
+            .closed(EVICTED)],
+    );
+    let watched = Watched::new(&fake, RELEASE_GRACE);
+
+    watched.stream.forward(PaneInput::Text("hidden".to_owned()));
+    watched.stream.forward(PaneInput::Key("enter".to_owned()));
+    thread::sleep(Duration::from_millis(150));
+
+    assert!(fake.invocations().is_empty());
+}
+
 #[test]
 fn a_herdr_that_cannot_be_run_leaves_the_pane_unavailable() {
     let fake = FakeHerdr::new();

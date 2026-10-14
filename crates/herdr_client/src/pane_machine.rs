@@ -10,6 +10,9 @@ use crate::pane_size::{GridSize, PaneSize, Throttle};
 pub enum PaneOwnership {
     /// warpr holds the pane's control session, so the pane has the size warpr chose.
     Owned,
+    /// Like [`Self::Owned`], after input forwarded to a contested pane took it from another
+    /// client.
+    TookControl,
     /// Another client owns the pane; warpr watches it at Herdr's own grid size.
     Contested(Contest),
     /// The pane's process exited.
@@ -57,6 +60,8 @@ pub(crate) enum Input {
     Visible(bool),
     Size(PaneSize),
     Grid(GridSize),
+    /// Input is being forwarded to the pane, which a contested pane answers by taking control.
+    Forward,
     ControlFrame,
     ControlClosed(Closure),
     ObserveClosed(Closure),
@@ -66,6 +71,8 @@ pub(crate) enum Input {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     SpawnControl(PaneSize),
+    /// Starts a control session that evicts the pane's current owner.
+    TakeOverControl(PaneSize),
     SendResize(PaneSize),
     /// Gives up control by asking Herdr to release the pane and closing the session.
     ReleaseControl,
@@ -105,6 +112,8 @@ pub(crate) struct Machine {
     grid: Option<GridSize>,
     link: Link,
     owned: bool,
+    /// Whether the running control session was started by taking the pane from another client.
+    took_over: bool,
     resize: Throttle<PaneSize>,
     observe_grid: Throttle<GridSize>,
 }
@@ -119,6 +128,7 @@ impl Machine {
             grid: None,
             link: Link::Idle,
             owned: false,
+            took_over: false,
             resize: Throttle::new(timing.resize_interval),
             observe_grid: Throttle::new(timing.resize_interval),
         }
@@ -146,9 +156,14 @@ impl Machine {
             Input::ControlFrame => {
                 if self.link == Link::Control && !self.owned {
                     self.owned = true;
-                    actions.push(Action::Publish(PaneOwnership::Owned));
+                    actions.push(Action::Publish(if self.took_over {
+                        PaneOwnership::TookControl
+                    } else {
+                        PaneOwnership::Owned
+                    }));
                 }
             }
+            Input::Forward => self.take_over(now, &mut actions),
             Input::ControlClosed(closure) => {
                 if self.link == Link::Control {
                     self.control_ended(now, closure, &mut actions);
@@ -219,6 +234,21 @@ impl Machine {
         }
     }
 
+    /// Takes the pane from its owner. Nothing happens unless warpr is watching the pane and knows
+    /// the size to hold it at.
+    fn take_over(&mut self, now: Instant, actions: &mut Vec<Action>) {
+        let (Link::Observe(_), Some(size)) = (self.link, self.size) else {
+            return;
+        };
+        self.link = Link::Control;
+        self.took_over = true;
+        self.owned = false;
+        self.resize = Throttle::new(self.timing.resize_interval);
+        actions.push(Action::StopObserve);
+        actions.push(Action::TakeOverControl(size));
+        actions.extend(self.resize.offer(now, size).map(Action::SendResize));
+    }
+
     fn contest(&mut self, now: Instant, contest: Contest, actions: &mut Vec<Action>) {
         // Control only ever ends this way on a pane that has a size, and a grid is only missing
         // when the caller never gave one, in which case the control size is the best there is.
@@ -228,6 +258,7 @@ impl Machine {
             .expect("control was started with a size");
         self.link = Link::Observe(grid);
         self.owned = false;
+        self.took_over = false;
         self.observe_grid = Throttle::new(self.timing.resize_interval);
         self.observe_grid.offer(now, grid);
         actions.push(Action::Publish(PaneOwnership::Contested(contest)));
@@ -237,12 +268,14 @@ impl Machine {
     fn exited(&mut self, actions: &mut Vec<Action>) {
         self.link = Link::Over;
         self.owned = false;
+        self.took_over = false;
         actions.push(Action::Publish(PaneOwnership::Exited));
     }
 
     fn failed(&mut self, reason: String, actions: &mut Vec<Action>) {
         self.link = Link::Failed;
         self.owned = false;
+        self.took_over = false;
         actions.push(Action::Publish(PaneOwnership::Unavailable(reason)));
     }
 
@@ -290,6 +323,7 @@ impl Machine {
     fn release(&mut self, actions: &mut Vec<Action>) {
         self.link = Link::Idle;
         self.owned = false;
+        self.took_over = false;
         self.hidden_since = None;
         actions.push(Action::Publish(PaneOwnership::Released));
     }

@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,6 +17,9 @@ pub(crate) struct HerdrPaneContents {
     stream: Arc<PaneStream>,
     terminal: Option<PaneTerminal>,
     ownership: Option<PaneOwnership>,
+    /// Whether a left-button press was forwarded to the pane and its release has not been, so
+    /// that the drag and release that follow a press that only moved focus are not forwarded.
+    mouse_forwarded: Cell<bool>,
 }
 
 pub(crate) enum HerdrPaneContentsEvent {
@@ -39,6 +43,7 @@ impl HerdrPaneContents {
             stream: Arc::new(stream),
             terminal: None,
             ownership: None,
+            mouse_forwarded: Cell::new(false),
         }
     }
 
@@ -64,6 +69,10 @@ impl HerdrPaneContents {
 
     pub(crate) fn stream(&self) -> Arc<PaneStream> {
         Arc::clone(&self.stream)
+    }
+
+    pub(crate) fn mouse_forwarded(&self) -> &Cell<bool> {
+        &self.mouse_forwarded
     }
 }
 
