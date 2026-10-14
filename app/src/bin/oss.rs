@@ -24,10 +24,6 @@ fn main() -> Result<()> {
     if cfg!(debug_assertions) {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
-    state = state.with_additional_features(&[
-        warp_core::features::FeatureFlag::DisableWarpAccount,
-        warp_core::features::FeatureFlag::DisableWarpDrive,
-    ]);
     ChannelState::set(state);
 
     warp::run()

@@ -544,6 +544,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
     // warpr never uses Warp's hosted services; removing these lines (or the flag checks they
     // drive) is how the upstream behaviour is restored.
     flags.extend([
+        FeatureFlag::DisableWarpAccount,
+        FeatureFlag::DisableWarpDrive,
         FeatureFlag::DisableHostedAgent,
         FeatureFlag::DisableUsageTelemetry,
         FeatureFlag::DisableWarpUpdates,
