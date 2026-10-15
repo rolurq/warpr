@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 use crate::WorkspaceId;
@@ -52,6 +54,10 @@ pub struct PresentedPane {
     pub rect: CellRect,
     /// Whether the pane is the one Herdr has focused in its Herdr tab.
     pub focused: bool,
+    /// The working directory Herdr reports for the pane; `None` when it reports none. The
+    /// layout carries no `cwd`: it is filled in from the snapshot's pane list.
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
 }
 
 /// How Herdr lays out the panes of one Herdr tab. Herdr owns the geometry; nothing here is

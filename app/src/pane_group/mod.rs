@@ -2,7 +2,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::SyncSender;
@@ -7967,6 +7967,18 @@ impl PaneGroup {
         self.panes_of::<FilePane>()
             .map(|p| p.file_view(ctx))
             .collect()
+    }
+
+    /// The directory context of the Herdr workspace this pane group shows: the working directory
+    /// of its selected pane, as [`crate::herdr::HerdrWorkspaceView::focused_pane_directory`]
+    /// defines it. `None` when the pane group shows no Herdr workspace or Herdr reports no
+    /// directory.
+    pub fn herdr_workspace_directory<'a>(&self, ctx: &'a AppContext) -> Option<&'a Path> {
+        self.panes_of::<HerdrWorkspacePane>().find_map(|pane| {
+            pane.workspace_view(ctx)
+                .as_ref(ctx)
+                .focused_pane_directory(ctx)
+        })
     }
 
     /// Get all terminal CWDs for this pane group.

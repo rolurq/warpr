@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use herdr_client::{
     ConnectionStatus, HerdrCli, HerdrTabId, PaneId, SessionName, SessionTarget, WorkspaceId,
 };
@@ -439,5 +441,131 @@ fn a_refused_tab_creation_shows_the_error_and_leaves_the_strip_and_selection_alo
             text.ends_with("server logs zoomed +\nw1:p2 w1:p3 w1:p4"),
             "{text:?}"
         );
+    });
+}
+
+/// Workspace `api` (`w1`) with a different directory in each pane and one pane without any, and
+/// workspace `web` (`w2`) with a single pane.
+fn session_with_directories(fake: &FakeHerdr) -> FakeSession {
+    fake.start_session("default", scripted_directories("/srv/logs/a"))
+}
+
+fn scripted_directories(first_logs_pane_cwd: &str) -> SessionScript {
+    SessionScript::new()
+        .workspace_with_tabs(
+            "api",
+            [
+                TabScript::new("server", PaneTree::pane()).cwd(0, "/srv/api"),
+                TabScript::new("logs", split_layout())
+                    .cwd(0, first_logs_pane_cwd)
+                    .cwd(1, "/srv/logs/b")
+                    .without_cwd(2),
+                TabScript::new("zoomed", split_layout())
+                    .cwd(0, "/srv/zoomed/a")
+                    .cwd(1, "/srv/zoomed/b")
+                    .cwd(2, "/srv/zoomed/c")
+                    .focused_pane(2)
+                    .zoomed(),
+            ],
+        )
+        .workspace_with_tabs(
+            "web",
+            [TabScript::new("site", PaneTree::pane()).cwd(0, "/srv/web")],
+        )
+}
+
+fn directory(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> Option<PathBuf> {
+    view.read(app, |view, ctx| {
+        view.focused_pane_directory(ctx).map(Path::to_path_buf)
+    })
+}
+
+fn select_pane(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>, pane: &str) {
+    app.update(|ctx| {
+        view.update(ctx, |view, ctx| {
+            view.handle_action(
+                &HerdrWorkspaceViewAction::SelectPane(PaneId::from(pane)),
+                ctx,
+            );
+        });
+    });
+}
+
+#[test]
+fn the_directory_follows_the_selected_pane_and_the_shown_herdr_tab() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        assert_eq!(directory(&app, &view), Some(PathBuf::from("/srv/api")));
+
+        select(&mut app, &view, "w1:t2");
+        assert_eq!(directory(&app, &view), Some(PathBuf::from("/srv/logs/a")));
+
+        select_pane(&mut app, &view, "w1:p3");
+        assert_eq!(directory(&app, &view), Some(PathBuf::from("/srv/logs/b")));
+
+        select(&mut app, &view, "w1:t3");
+        assert_eq!(directory(&app, &view), Some(PathBuf::from("/srv/zoomed/c")));
+    });
+}
+
+#[test]
+fn a_selected_pane_without_a_cwd_has_no_directory() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        select_pane(&mut app, &view, "w1:p4");
+
+        assert_eq!(directory(&app, &view), None);
+    });
+}
+
+#[test]
+fn a_cwd_change_reported_by_herdr_changes_the_directory() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = session_with_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        assert_eq!(directory(&app, &view), Some(PathBuf::from("/srv/logs/a")));
+
+        session.set_script(scripted_directories("/srv/logs/a/src"));
+        session.emit_event("pane_updated", serde_json::json!({}));
+
+        assert_eventually!(
+            600 => directory(&app, &view) == Some(PathBuf::from("/srv/logs/a/src")),
+            "the directory stayed {:?}", directory(&app, &view)
+        );
+    });
+}
+
+#[test]
+fn each_workspace_view_has_the_directory_of_its_own_workspace() {
+    App::test((), |mut app| async move {
+        let mut fake = compatible_fake();
+        fake.script_terminal_stream(StreamKind::Control, "w2:p1", [TerminalStreamScript::new()]);
+        let _session = session_with_directories(&fake);
+        let api = open_workspace_view(&mut app, &fake);
+        let (_, web) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            HerdrWorkspaceView::new(
+                HerdrWorkspaceContents::Workspace(HerdrWorkspaceSnapshot {
+                    workspace_id: WorkspaceId::from("w2"),
+                    label: "web".to_owned(),
+                }),
+                ctx,
+            )
+        });
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        assert_eq!(directory(&app, &api), Some(PathBuf::from("/srv/api")));
+        assert_eq!(directory(&app, &web), Some(PathBuf::from("/srv/web")));
     });
 }

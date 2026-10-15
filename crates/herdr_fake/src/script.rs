@@ -111,6 +111,9 @@ pub struct TabScript {
     pub(crate) zoomed: bool,
     /// By pane index in the tree's order.
     pub(crate) agents: Vec<(usize, AgentScript)>,
+    /// By pane index in the tree's order; `None` is a pane Herdr reports no `cwd` for. Panes
+    /// without an entry report `/`.
+    pub(crate) cwds: Vec<(usize, Option<String>)>,
 }
 
 impl TabScript {
@@ -121,6 +124,7 @@ impl TabScript {
             focused_pane: 0,
             zoomed: false,
             agents: Vec::new(),
+            cwds: Vec::new(),
         }
     }
 
@@ -134,6 +138,34 @@ impl TabScript {
         self.agents.retain(|(existing, _)| *existing != index);
         self.agents.push((index, agent));
         self
+    }
+
+    /// Sets the working directory Herdr reports for the pane at `index` in the tree's order.
+    pub fn cwd(self, index: usize, cwd: &str) -> Self {
+        self.with_cwd(index, Some(cwd.to_owned()))
+    }
+
+    /// Makes Herdr report no working directory for the pane at `index` in the tree's order.
+    pub fn without_cwd(self, index: usize) -> Self {
+        self.with_cwd(index, None)
+    }
+
+    fn with_cwd(mut self, index: usize, cwd: Option<String>) -> Self {
+        assert!(
+            index < self.tree.pane_count(),
+            "tab {:?} has no pane at index {index}",
+            self.label
+        );
+        self.cwds.retain(|(existing, _)| *existing != index);
+        self.cwds.push((index, cwd));
+        self
+    }
+
+    fn cwd_at(&self, index: usize) -> Option<&str> {
+        match self.cwds.iter().find(|(existing, _)| *existing == index) {
+            Some((_, cwd)) => cwd.as_deref(),
+            None => Some("/"),
+        }
     }
 
     fn agent_at(&self, index: usize) -> Option<&AgentScript> {
@@ -452,13 +484,12 @@ impl SessionScript {
                 }));
                 for (pane_index, pane_id) in pane_ids.iter().enumerate() {
                     let terminal_number = next_pane_number + pane_index;
-                    let pane = json!({
+                    let mut pane = json!({
                         "pane_id": pane_id,
                         "terminal_id": terminal_id(workspace.id, terminal_number),
                         "workspace_id": workspace_id,
                         "tab_id": tab_id,
                         "focused": pane_id == tab_focused_pane,
-                        "cwd": "/",
                         "foreground_cwd": "/",
                         "agent_status": tab
                             .agent_at(pane_index)
@@ -471,6 +502,9 @@ impl SessionScript {
                         },
                         "revision": 0,
                     });
+                    if let Some(cwd) = tab.cwd_at(pane_index) {
+                        pane["cwd"] = json!(cwd);
+                    }
                     if let Some(agent) = tab.agent_at(pane_index) {
                         agents.push(agent_info(&pane, agent));
                     }

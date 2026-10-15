@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::compat::Refusal;
 use crate::metadata::{MetadataToken, presented_tokens};
-use crate::tabs::{HerdrTabId, PresentedHerdrTab, TabInfo, TabLayout};
+use crate::tabs::{HerdrTabId, PaneId, PresentedHerdrTab, TabInfo, TabLayout};
 use crate::worktree::PresentedWorktree;
 
 /// Herdr's identifier for a workspace, stable for the life of the workspace.
@@ -152,6 +152,16 @@ pub(crate) struct Snapshot {
     workspaces: Vec<WorkspaceInfo>,
     tabs: Vec<TabInfo>,
     layouts: Vec<TabLayout>,
+    #[serde(default)]
+    panes: Vec<PaneInfo>,
+}
+
+/// The part of a `session.snapshot` pane this client presents beyond its layout frame.
+#[derive(Deserialize)]
+struct PaneInfo {
+    pane_id: PaneId,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -173,8 +183,19 @@ impl Snapshot {
             workspaces,
             tabs,
             mut layouts,
+            panes,
             ..
         } = self;
+        let mut cwds: HashMap<PaneId, PathBuf> = panes
+            .into_iter()
+            .filter_map(|pane| Some((pane.pane_id, pane.cwd?)))
+            .collect();
+        for pane in layouts
+            .iter_mut()
+            .flat_map(|layout| &mut layout.layout.panes)
+        {
+            pane.cwd = cwds.remove(&pane.id);
+        }
         let mut tabs_by_workspace: HashMap<WorkspaceId, Vec<PresentedHerdrTab>> = HashMap::new();
         for tab in tabs {
             let layout = layouts

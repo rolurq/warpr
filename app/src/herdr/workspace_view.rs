@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 
 use herdr_client::{
     AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput, PaneOwnership,
@@ -195,6 +196,37 @@ impl HerdrWorkspaceView {
         });
     }
 
+    /// The working directory of the pane the user has selected in the Herdr tab this view shows,
+    /// as Herdr reports it: that pane's `cwd`, or `None` when Herdr reports none, no Herdr tab
+    /// is shown, or the selected pane is not on screen. Before the user selects a pane it is the
+    /// pane Herdr has focused in that Herdr tab.
+    ///
+    /// This is the directory context of a Herdr workspace, which has no Warp session to ask.
+    /// It is derived on each call from the presented session and this view's selection, so it
+    /// is always current; the view is notified whenever either changes. Reading it never talks
+    /// to Herdr, and `foreground_cwd` is deliberately not consulted.
+    pub fn focused_pane_directory<'a>(&self, app: &'a AppContext) -> Option<&'a Path> {
+        let layout = self
+            .presented_workspace(app)?
+            .selected_tab(self.selected_tab.as_ref())?
+            .layout
+            .as_ref()?;
+        layout
+            .panes
+            .iter()
+            .filter(|pane| !layout.zoomed || pane.id == layout.focused_pane)
+            .find(|pane| self.is_selected(pane))?
+            .cwd
+            .as_deref()
+    }
+
+    fn is_selected(&self, pane: &PresentedPane) -> bool {
+        match &self.selected_pane {
+            Some(selected) => *selected == pane.id,
+            None => pane.focused,
+        }
+    }
+
     /// This workspace as the Herdr session currently presents it.
     fn presented_workspace<'a>(&self, app: &'a AppContext) -> Option<&'a PresentedWorkspace> {
         let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
@@ -319,10 +351,7 @@ impl HerdrWorkspaceView {
             .frames()
             .into_iter()
             .map(|pane| {
-                let is_selected = match &self.selected_pane {
-                    Some(selected) => *selected == pane.id,
-                    None => pane.focused,
-                };
+                let is_selected = self.is_selected(&pane);
                 (
                     pane.rect,
                     self.render_pane_frame(&pane, is_selected, appearance, app),
