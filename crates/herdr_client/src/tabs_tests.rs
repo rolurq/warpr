@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use herdr_fake::{FakeHerdr, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript};
 
 use crate::{
@@ -303,4 +305,80 @@ fn a_pane_id_is_the_one_herdr_reports() {
         .expect("layout");
     assert_eq!(layout.focused_pane, PaneId::from("w1:p1"));
     assert_eq!(layout.area, rect(0, 0, 120, 40));
+}
+
+fn pane_cwds(presented: &PresentedSession) -> Vec<(String, Option<PathBuf>)> {
+    let layout = presented.workspaces[0].herdr_tabs[0]
+        .layout
+        .as_ref()
+        .expect("layout");
+    layout
+        .frames()
+        .into_iter()
+        .map(|pane| (pane.id.as_str().to_owned(), pane.cwd))
+        .collect()
+}
+
+#[test]
+fn a_pane_presents_the_cwd_herdr_reports_and_a_changed_cwd_appears_after_a_refresh() {
+    let fake = compatible_fake();
+    let session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout())
+                .cwd(0, "/srv/api")
+                .cwd(1, "/srv/web")],
+        ),
+    );
+
+    let before = present(&fake);
+    session.set_script(
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout())
+                .cwd(0, "/srv/api/src")
+                .cwd(1, "/srv/web")],
+        ),
+    );
+    let after = present(&fake);
+
+    assert_eq!(
+        pane_cwds(&before)[..2],
+        [
+            ("w1:p1".to_owned(), Some(PathBuf::from("/srv/api"))),
+            ("w1:p2".to_owned(), Some(PathBuf::from("/srv/web"))),
+        ]
+    );
+    assert_eq!(
+        pane_cwds(&after)[..2],
+        [
+            ("w1:p1".to_owned(), Some(PathBuf::from("/srv/api/src"))),
+            ("w1:p2".to_owned(), Some(PathBuf::from("/srv/web"))),
+        ]
+    );
+}
+
+#[test]
+fn a_pane_whose_cwd_herdr_does_not_report_presents_none() {
+    let fake = compatible_fake();
+    let _session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout())
+                .cwd(0, "/srv/api")
+                .without_cwd(1)],
+        ),
+    );
+
+    let presented = present(&fake);
+
+    assert_eq!(
+        pane_cwds(&presented)[..2],
+        [
+            ("w1:p1".to_owned(), Some(PathBuf::from("/srv/api"))),
+            ("w1:p2".to_owned(), None),
+        ]
+    );
 }

@@ -25,6 +25,10 @@ impl HerdrWorkspacePane {
             pane_configuration,
         }
     }
+
+    pub fn workspace_view(&self, ctx: &AppContext) -> ViewHandle<HerdrWorkspaceView> {
+        self.view.as_ref(ctx).child(ctx)
+    }
 }
 
 impl PaneContent for HerdrWorkspacePane {
