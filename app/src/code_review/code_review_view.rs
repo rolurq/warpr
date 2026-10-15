@@ -2867,6 +2867,11 @@ impl CodeReviewView {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_showing_loading_state(&self) -> bool {
+        matches!(self.state(), CodeReviewViewState::None)
+    }
+
     /// Get mutable state of the current repo. Returns None if no repo.
     fn state_mut(&mut self) -> Option<&mut CodeReviewViewState> {
         Some(&mut self.active_repo.as_mut()?.state)

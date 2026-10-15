@@ -611,3 +611,57 @@ fn the_sidebar_is_told_when_the_selection_or_a_snapshot_changes_the_directory() 
         assert_eventually!(600 => changes.get() == 4, "changes {}", changes.get());
     });
 }
+
+/// Counts the times the view tells its pane group that the directory it presents changed.
+fn count_directory_changes(
+    app: &mut App,
+    view: &ViewHandle<HerdrWorkspaceView>,
+) -> Rc<Cell<usize>> {
+    let changes = Rc::new(Cell::new(0));
+    app.update(|ctx| {
+        let changes = changes.clone();
+        ctx.subscribe_to_view(view, move |_, event, _| {
+            if matches!(event, PaneEvent::RepoChanged) {
+                changes.set(changes.get() + 1);
+            }
+        });
+    });
+    changes
+}
+
+#[test]
+fn the_view_reports_a_new_directory_when_the_selection_moves_to_another_one() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        let changes = count_directory_changes(&mut app, &view);
+
+        select(&mut app, &view, "w1:t2");
+        assert_eq!(changes.get(), 1, "another Herdr tab, another directory");
+
+        select_pane(&mut app, &view, "w1:p3");
+        assert_eq!(changes.get(), 2, "another pane, another directory");
+
+        select_pane(&mut app, &view, "w1:p3");
+        assert_eq!(changes.get(), 2, "the same pane again is no change");
+    });
+}
+
+#[test]
+fn the_view_reports_a_directory_change_that_a_later_herdr_snapshot_brings() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = session_with_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        let changes = count_directory_changes(&mut app, &view);
+
+        session.set_script(scripted_directories("/srv/logs/a/src"));
+        session.emit_event("pane_updated", serde_json::json!({}));
+
+        assert_eventually!(600 => changes.get() == 1, "{} changes reported", changes.get());
+    });
+}

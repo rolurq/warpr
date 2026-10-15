@@ -772,3 +772,207 @@ fn the_user_cannot_create_groups_in_a_herdr_window() {
         );
     });
 }
+
+#[cfg(feature = "local_fs")]
+mod tools_panel_scope {
+    use std::path::{Path, PathBuf};
+
+    use command::blocking::Command;
+    use herdr_fake::{PaneTree, TabScript};
+
+    use super::*;
+    use crate::code::buffer_location::LocalOrRemotePath;
+
+    fn directory_named(parent: &Path, name: &str) -> PathBuf {
+        let path = parent.join(name);
+        std::fs::create_dir_all(&path).expect("create directory");
+        dunce::canonicalize(path).expect("canonical directory")
+    }
+
+    fn git_init(directory: &Path) {
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .arg(directory)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git init failed");
+    }
+
+    fn two_workspaces(api_cwd: &Path, web_cwd: &Path) -> SessionScript {
+        SessionScript::new()
+            .workspace_with_tabs(
+                "api",
+                [TabScript::new("server", PaneTree::pane()).cwd(0, api_cwd.to_str().unwrap())],
+            )
+            .workspace_with_tabs(
+                "web",
+                [TabScript::new("site", PaneTree::pane()).cwd(0, web_cwd.to_str().unwrap())],
+            )
+    }
+
+    /// What the tools panel is scoped to in the shown tab.
+    fn scope(app: &App, workspace: &ViewHandle<Workspace>) -> Vec<LocalOrRemotePath> {
+        workspace.read(app, |workspace, ctx| {
+            let pane_group_id = workspace.active_tab_pane_group().id();
+            workspace
+                .working_directories_model
+                .as_ref(ctx)
+                .most_recent_directories_for_pane_group(pane_group_id)
+                .map(|directories| directories.map(|directory| directory.path).collect())
+                .unwrap_or_default()
+        })
+    }
+
+    fn local(path: &Path) -> Vec<LocalOrRemotePath> {
+        vec![LocalOrRemotePath::Local(path.to_path_buf())]
+    }
+
+    #[test]
+    fn the_tools_panel_follows_the_focused_pane_across_workspaces_and_snapshots() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let api = directory_named(temp_dir.path(), "api");
+            let api_src = directory_named(temp_dir.path(), "api-src");
+            let web = directory_named(temp_dir.path(), "web");
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces(&api, &web));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+            assert_eventually!(
+                600 => scope(&app, &workspace) == local(&api),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.set_active_tab_index(1, ctx)
+            });
+            assert_eq!(scope(&app, &workspace), local(&web));
+
+            session.set_script(two_workspaces(&api, &api_src));
+            announce(&session, "pane_updated");
+            assert_eventually!(
+                600 => scope(&app, &workspace) == local(&api_src),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+        });
+    }
+
+    #[test]
+    fn a_directory_inside_a_git_repository_scopes_the_tools_panel_to_that_repository() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let repo = directory_named(temp_dir.path(), "repo");
+            git_init(&repo);
+            let nested = directory_named(&repo, "src");
+            let web = directory_named(temp_dir.path(), "web");
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces(&nested, &web));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+
+            assert_eventually!(
+                1000 => scope(&app, &workspace) == local(&repo),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+
+            let review = workspace.read(&app, |workspace, ctx| {
+                workspace.review_repo_and_session(workspace.active_tab_pane_group(), ctx)
+            });
+            assert_eq!(review, Some((Some(LocalOrRemotePath::Local(repo)), None)));
+        });
+    }
+
+    #[test]
+    fn the_diff_panel_opened_on_a_herdr_workspace_in_a_git_repository_loads_its_diff() {
+        use crate::code_review::diff_state::DiffState;
+
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            app.add_singleton_model(|_| crate::code_review::GlobalCodeReviewModel);
+            app.add_singleton_model(crate::code::global_buffer_model::GlobalBufferModel::new);
+            app.add_singleton_model(|_| crate::terminal::local_shell::LocalShellState::NotLoaded);
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let repo = directory_named(temp_dir.path(), "repo");
+            git_init(&repo);
+            std::fs::write(repo.join("a.txt"), "changed\n").expect("write file");
+            let web = directory_named(temp_dir.path(), "web");
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces(&repo, &web));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+            assert_eventually!(
+                1000 => scope(&app, &workspace) == local(&repo),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+
+            workspace.update(&mut app, |workspace, ctx| {
+                let pane_group = workspace.active_tab_pane_group().clone();
+                workspace.toggle_right_panel(&pane_group, ctx);
+            });
+
+            let model = workspace
+                .update(&mut app, |workspace, ctx| {
+                    workspace
+                        .working_directories_model
+                        .update(ctx, |model, ctx| {
+                            model.get_or_create_diff_state_model(
+                                LocalOrRemotePath::Local(repo.clone()),
+                                None,
+                                ctx,
+                            )
+                        })
+                })
+                .expect("a diff state model for the repository");
+            let diff_state = |app: &App| model.read(app, |model, ctx| model.get(ctx));
+            assert_eventually!(
+                3000 => matches!(diff_state(&app), DiffState::Loaded),
+                "the diff state was {:?}", diff_state(&app)
+            );
+
+            let view_is_loading = |app: &App| {
+                workspace.read(app, |workspace, ctx| {
+                    let pane_group_id = workspace.active_tab_pane_group().id();
+                    workspace
+                        .working_directories_model
+                        .as_ref(ctx)
+                        .get_code_review_view(
+                            pane_group_id,
+                            &LocalOrRemotePath::Local(repo.clone()),
+                        )
+                        .map(|view| view.as_ref(ctx).is_showing_loading_state())
+                })
+            };
+            assert_eventually!(
+                1000 => view_is_loading(&app) == Some(false),
+                "the review view's loading state was {:?}", view_is_loading(&app)
+            );
+        });
+    }
+
+    #[test]
+    fn a_herdr_workspace_has_a_tools_panel_to_open() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", workspaces(&["api"]));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+            assert_eventually!(
+                200 => tab_titles(&app, &workspace) == ["api"],
+                "tabs were {:?}", tab_titles(&app, &workspace)
+            );
+
+            assert!(workspace.read(&app, |workspace, ctx| {
+                Workspace::should_enable_file_tree_and_global_search_for_pane_group(
+                    workspace.active_tab_pane_group().as_ref(ctx),
+                )
+            }));
+        });
+    }
+}

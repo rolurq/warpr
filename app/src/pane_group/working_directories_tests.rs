@@ -61,6 +61,7 @@ fn refresh_working_directories_collapses_subroots_to_nearest_repo_root() {
                     ],
                     vec![],
                     Some(terminal_1),
+                    None,
                     ctx,
                 );
 
@@ -110,6 +111,7 @@ fn refresh_working_directories_preserves_non_repo_paths_and_dedupes() {
                     ],
                     vec![],
                     Some(terminal_1),
+                    None,
                     ctx,
                 );
 
@@ -411,6 +413,7 @@ fn shared_diff_state_model_survives_when_other_pane_group_still_references_repo(
                 vec![(terminal_a, LocalOrRemotePath::Local(repo_path.clone()))],
                 vec![],
                 Some(terminal_a),
+                None,
                 ctx,
             );
             model.refresh_working_directories_for_pane_group(
@@ -418,6 +421,7 @@ fn shared_diff_state_model_survives_when_other_pane_group_still_references_repo(
                 vec![(terminal_b, LocalOrRemotePath::Local(repo_path.clone()))],
                 vec![],
                 Some(terminal_b),
+                None,
                 ctx,
             );
         });
@@ -436,6 +440,7 @@ fn shared_diff_state_model_survives_when_other_pane_group_still_references_repo(
                 pane_group_a,
                 vec![],
                 vec![],
+                None,
                 None,
                 ctx,
             );
@@ -476,6 +481,7 @@ fn diff_state_model_is_dropped_when_no_pane_group_references_repo() {
                 vec![(terminal, LocalOrRemotePath::Local(repo_path.clone()))],
                 vec![],
                 Some(terminal),
+                None,
                 ctx,
             );
         });
@@ -489,7 +495,14 @@ fn diff_state_model_is_dropped_when_no_pane_group_references_repo() {
 
         // Only pane group leaves the repo → model is orphaned and dropped.
         working_directories_handle.update(&mut app, |model, ctx| {
-            model.refresh_working_directories_for_pane_group(pane_group, vec![], vec![], None, ctx);
+            model.refresh_working_directories_for_pane_group(
+                pane_group,
+                vec![],
+                vec![],
+                None,
+                None,
+                ctx,
+            );
         });
 
         let after_id = working_directories_handle.update(&mut app, |model, ctx| {
@@ -527,6 +540,7 @@ fn remove_pane_group_does_not_drop_diff_state_model_shared_with_other_pane_group
                 vec![(terminal_a, LocalOrRemotePath::Local(repo_path.clone()))],
                 vec![],
                 Some(terminal_a),
+                None,
                 ctx,
             );
             model.refresh_working_directories_for_pane_group(
@@ -534,6 +548,7 @@ fn remove_pane_group_does_not_drop_diff_state_model_shared_with_other_pane_group
                 vec![(terminal_b, LocalOrRemotePath::Local(repo_path.clone()))],
                 vec![],
                 Some(terminal_b),
+                None,
                 ctx,
             );
         });
@@ -586,6 +601,108 @@ fn clear_selected_review_repo_removes_only_the_targeted_pane_group_entry() {
             assert_eq!(
                 model.get_selected_review_repo(pane_group_b).cloned(),
                 Some(local(&repo_b)),
+            );
+        });
+    });
+}
+
+#[test]
+fn herdr_directory_scopes_the_pane_group_without_any_terminal() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|_| DetectedRepositories::default());
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let dir_1 = temp_dir.path().join("dir-1");
+        let dir_2 = temp_dir.path().join("dir-2");
+        fs::create_dir_all(&dir_1).expect("create dir-1");
+        fs::create_dir_all(&dir_2).expect("create dir-2");
+        let canonical_1 = dunce::canonicalize(&dir_1).expect("canonical dir-1");
+        let canonical_2 = dunce::canonicalize(&dir_2).expect("canonical dir-2");
+
+        let pane_group_id = EntityId::new();
+        let working_directories_handle = app.add_model(|_| WorkingDirectoriesModel::new());
+        let scoped_to = |app: &mut warpui::App, dir: Option<PathBuf>| {
+            working_directories_handle.update(app, |model, ctx| {
+                model.refresh_working_directories_for_pane_group(
+                    pane_group_id,
+                    vec![],
+                    vec![],
+                    None,
+                    dir,
+                    ctx,
+                );
+                model
+                    .most_recent_directories_for_pane_group(pane_group_id)
+                    .map(|dirs| dirs.collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+        };
+
+        let directories = scoped_to(&mut app, Some(dir_1));
+        assert_eq!(
+            directories
+                .iter()
+                .map(|dir| dir.path.clone())
+                .collect::<Vec<_>>(),
+            vec![local(&canonical_1)]
+        );
+        assert!(
+            directories.iter().all(|dir| dir.terminal_id.is_none()),
+            "a Herdr directory has no Warp terminal behind it"
+        );
+
+        let directories = scoped_to(&mut app, Some(dir_2));
+        assert_eq!(
+            directories
+                .iter()
+                .map(|dir| dir.path.clone())
+                .collect::<Vec<_>>(),
+            vec![local(&canonical_2)],
+            "a later directory replaces the earlier one"
+        );
+
+        assert!(
+            scoped_to(&mut app, None).is_empty(),
+            "no directory leaves the pane group unscoped"
+        );
+    });
+}
+
+#[test]
+fn herdr_directory_inside_a_repo_scopes_to_the_repo_and_focuses_it() {
+    App::test((), |mut app| async move {
+        let detected_repos = app.add_singleton_model(|_| DetectedRepositories::default());
+        let (_temp_dir, repo_path, canonical_repo, working_directories_handle) =
+            setup_repo(&mut app, &detected_repos);
+        let nested = repo_path.join("src");
+        fs::create_dir_all(&nested).expect("create nested dir");
+
+        let pane_group_id = EntityId::new();
+        working_directories_handle.update(&mut app, |model, ctx| {
+            model.refresh_working_directories_for_pane_group(
+                pane_group_id,
+                vec![],
+                vec![],
+                None,
+                Some(nested),
+                ctx,
+            );
+
+            let roots: Vec<_> = model
+                .most_recent_directories_for_pane_group(pane_group_id)
+                .expect("pane group exists")
+                .map(|dir| dir.path)
+                .collect();
+            assert_eq!(roots, vec![local(&canonical_repo)]);
+
+            let repositories: Vec<_> = model
+                .most_recent_repositories_for_pane_group(pane_group_id)
+                .expect("pane group has repositories")
+                .collect();
+            assert_eq!(repositories, vec![local(&canonical_repo)]);
+            assert_eq!(
+                model.focused_repo.get(&pane_group_id).cloned().flatten(),
+                Some(local(&canonical_repo))
             );
         });
     });

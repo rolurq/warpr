@@ -9776,14 +9776,7 @@ impl Workspace {
                 Some((context.repo_path.clone(), context.diff_state_model.clone()))
             } else {
                 let active_pane_group = self.active_tab_pane_group().clone();
-                // Read repo_path and preferred session from the pane group (immutable context).
-                let read_result = active_pane_group.read(ctx, |pane_group, ctx| {
-                    pane_group.active_session_view(ctx).map(|terminal_view| {
-                        let repo_path = terminal_view.as_ref(ctx).current_repo_path().cloned();
-                        let preferred_session = terminal_view.as_ref(ctx).active_block_session_id();
-                        (repo_path, preferred_session)
-                    })
-                });
+                let read_result = self.review_repo_and_session(&active_pane_group, ctx);
                 // Resolve DiffStateModel outside the read closure (needs mutable context).
                 read_result.and_then(|(repo_path, preferred_session)| {
                     let diff_state_model = repo_path.as_ref().and_then(|rp| {
@@ -9930,6 +9923,28 @@ impl Workspace {
         ctx.notify();
     }
 
+    /// The repository a code review of `pane_group` shows and the session to run it in: the active
+    /// terminal's, or the focused Herdr pane's directory repository, which has no session.
+    fn review_repo_and_session(
+        &self,
+        pane_group: &ViewHandle<PaneGroup>,
+        ctx: &AppContext,
+    ) -> Option<(Option<LocalOrRemotePath>, Option<SessionId>)> {
+        let pane_group_ref = pane_group.as_ref(ctx);
+        if let Some(terminal_view) = pane_group_ref.active_session_view(ctx) {
+            let repo_path = terminal_view.as_ref(ctx).current_repo_path().cloned();
+            let preferred_session = terminal_view.as_ref(ctx).active_block_session_id();
+            return Some((repo_path, preferred_session));
+        }
+        pane_group_ref.herdr_workspace_directory(ctx)?;
+        let repo_path = self
+            .working_directories_model
+            .as_ref(ctx)
+            .focused_repo_for_pane_group(pane_group.id())
+            .cloned();
+        Some((repo_path, None))
+    }
+
     fn toggle_right_panel(
         &mut self,
         pane_group_handle: &ViewHandle<PaneGroup>,
@@ -9939,13 +9954,7 @@ impl Workspace {
             pane_group_handle.read(ctx, |pane_group, _| !pane_group.right_panel_open);
 
         // Read repo_path and preferred session from pane group (immutable context).
-        let read_result = pane_group_handle.read(ctx, |pane_group, ctx| {
-            pane_group.active_session_view(ctx).map(|terminal_view| {
-                let repo_path = terminal_view.as_ref(ctx).current_repo_path().cloned();
-                let preferred_session = terminal_view.as_ref(ctx).active_block_session_id();
-                (repo_path, preferred_session)
-            })
-        });
+        let read_result = self.review_repo_and_session(pane_group_handle, ctx);
         // Resolve DiffStateModel outside the read closure (needs mutable context).
         let context = read_result.and_then(
             |(repo_path, preferred_session): (Option<LocalOrRemotePath>, Option<SessionId>)| {
@@ -15608,6 +15617,10 @@ impl Workspace {
             .as_ref(ctx)
             .active_session_view(ctx)
             .map(|terminal_view| terminal_view.id());
+        let herdr_directory = pane_group
+            .as_ref(ctx)
+            .herdr_workspace_directory(ctx)
+            .map(Path::to_path_buf);
 
         self.working_directories_model.update(ctx, |model, ctx| {
             model.refresh_working_directories_for_pane_group(
@@ -15615,6 +15628,7 @@ impl Workspace {
                 terminal_cwds,
                 local_paths,
                 focused_terminal_id,
+                herdr_directory,
                 ctx,
             );
         });
@@ -20979,6 +20993,7 @@ impl Workspace {
             .filter(|id| !pane_group.is_pane_hidden_for_close(*id))
             .any(|id| {
                 id.is_terminal_pane()
+                    || id.is_herdr_workspace_pane()
                     || id.is_file_pane()
                     || id.is_code_pane()
                     || id.is_code_diff_pane()

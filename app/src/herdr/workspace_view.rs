@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use herdr_client::{
     AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput, PaneOwnership,
     PresentedHerdrTab, PresentedPane, PresentedWorkspace,
 };
+use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
     MainAxisAlignment, MouseStateHandle, ParentElement as _, Stack, Text,
@@ -26,6 +27,7 @@ use crate::appearance::Appearance;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view;
 use crate::pane_group::{BackingView, PaneConfiguration, PaneEvent};
+use crate::util::repo_detection::{RepoDetectionSessionType, detect_possible_git_repo};
 
 const LABEL_FONT_SIZE: f32 = 20.;
 const DETAIL_FONT_SIZE: f32 = 12.;
@@ -78,6 +80,8 @@ pub struct HerdrWorkspaceView {
     focus_handle: Option<PaneFocusHandle>,
     window_id: WindowId,
     view_id: EntityId,
+    /// The directory last reported to the pane group.
+    reported_directory: Option<PathBuf>,
 }
 
 impl HerdrWorkspaceView {
@@ -120,6 +124,7 @@ impl HerdrWorkspaceView {
             focus_handle: None,
             window_id: ctx.window_id(),
             view_id: ctx.view_id(),
+            reported_directory: None,
         };
         view.update_shown_panes(ctx);
         view.sync_sidebar_details(ctx);
@@ -202,10 +207,38 @@ impl HerdrWorkspaceView {
         ctx.notify();
     }
 
-    /// Tells the pane registry which panes this view shows: those of the Herdr tab on screen.
+    /// Tells the pane registry which panes this view shows, those of the Herdr tab on screen,
+    /// and reports a changed directory.
     fn update_shown_panes(&mut self, ctx: &mut ViewContext<Self>) {
         let shown = self.shown_panes(ctx);
         self.show_panes(shown, ctx);
+        self.report_directory_change(ctx);
+    }
+
+    /// Emits [`PaneEvent::RepoChanged`] when [`Self::focused_pane_directory`] differs from the
+    /// last one reported, and again once the git repository containing it has been detected.
+    fn report_directory_change(&mut self, ctx: &mut ViewContext<Self>) {
+        let directory = self.focused_pane_directory(ctx).map(Path::to_path_buf);
+        if directory == self.reported_directory {
+            return;
+        }
+        self.reported_directory = directory.clone();
+        ctx.emit(PaneEvent::RepoChanged);
+        if let Some(directory) = directory
+            && ctx.has_singleton_model::<DetectedRepositories>()
+        {
+            let detection = detect_possible_git_repo(
+                RepoDetectionSessionType::Local,
+                &directory.to_string_lossy(),
+                RepoDetectionSource::TerminalNavigation,
+                ctx,
+            );
+            ctx.spawn(detection, |_, repository, ctx| {
+                if repository.is_some() {
+                    ctx.emit(PaneEvent::RepoChanged);
+                }
+            });
+        }
     }
 
     fn show_panes(&mut self, panes: Vec<PaneId>, ctx: &mut ViewContext<Self>) {

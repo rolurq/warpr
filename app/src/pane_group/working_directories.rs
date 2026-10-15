@@ -470,7 +470,8 @@ impl WorkingDirectoriesModel {
         self.remove_inactive_code_reviews(pane_group_id);
     }
 
-    /// Remove any code review view state that is not active in any of the terminal views that belong to this pane group.
+    /// Remove any code review view state that is neither active in a terminal view of this pane
+    /// group nor the focused repository, which is how a Herdr directory (no terminal) is kept.
     fn remove_inactive_code_reviews(&mut self, pane_group_id: EntityId) {
         let Some(code_review_views) = self.code_review_views.get_mut(&pane_group_id) else {
             return;
@@ -479,8 +480,13 @@ impl WorkingDirectoriesModel {
         let Some(terminal_mapping) = self.directory_to_terminal.get(&pane_group_id) else {
             return;
         };
+        let focused_repo = self
+            .focused_repo
+            .get(&pane_group_id)
+            .and_then(Option::as_ref);
 
-        code_review_views.retain(|path, _| terminal_mapping.contains_key(path));
+        code_review_views
+            .retain(|path, _| terminal_mapping.contains_key(path) || focused_repo == Some(path));
     }
 
     /// Get an existing CodeReviewView for a specific repository in a pane group.
@@ -501,6 +507,14 @@ impl WorkingDirectoriesModel {
     /// user navigates back to the pane group's session.
     pub fn get_selected_review_repo(&self, pane_group_id: EntityId) -> Option<&LocalOrRemotePath> {
         self.selected_review_repo.get(&pane_group_id)
+    }
+
+    /// The repository the pane group's focused terminal or Herdr directory is in, if any.
+    pub fn focused_repo_for_pane_group(
+        &self,
+        pane_group_id: EntityId,
+    ) -> Option<&LocalOrRemotePath> {
+        self.focused_repo.get(&pane_group_id)?.as_ref()
     }
 
     /// Persist the repository the user manually selected for the code review panel
@@ -595,7 +609,7 @@ impl WorkingDirectoriesModel {
     }
 
     /// Refreshes the working directories for a pane group from terminal CWDs
-    /// (both local and remote) and code editor paths.
+    /// (both local and remote), code editor paths and the directory of a Herdr workspace.
     ///
     /// If `focused_terminal_id` is provided, the repo_to_terminal map will prioritize
     pub fn refresh_working_directories_for_pane_group(
@@ -604,9 +618,10 @@ impl WorkingDirectoriesModel {
         terminal_cwds: Vec<(EntityId, LocalOrRemotePath)>,
         editor_paths: Vec<(EntityId, LocalOrRemotePath)>,
         focused_terminal_id: Option<EntityId>,
+        herdr_directory: Option<PathBuf>,
         ctx: &mut ModelContext<Self>,
     ) {
-        if terminal_cwds.is_empty() && editor_paths.is_empty() {
+        if terminal_cwds.is_empty() && editor_paths.is_empty() && herdr_directory.is_none() {
             self.handle_empty_pane_group(pane_group_id, ctx);
             return;
         }
@@ -638,6 +653,8 @@ impl WorkingDirectoriesModel {
         };
 
         let root_for_raw_path = |raw_path: &str| normalize_cwd(raw_path).map(root_for_path);
+        let herdr_root =
+            herdr_directory.and_then(|directory| root_for_raw_path(&directory.to_string_lossy()));
 
         // Split terminal CWDs into local and remote buckets.
         let mut local_terminal_cwds: Vec<(EntityId, String)> = Vec::new();
@@ -657,6 +674,7 @@ impl WorkingDirectoriesModel {
         let mut file_path_ancestors: HashSet<PathBuf> = local_terminal_cwds
             .iter()
             .filter_map(|(_, cwd)| root_for_raw_path(cwd))
+            .chain(herdr_root.clone())
             .collect();
 
         // Split editor paths into local and remote buckets.
@@ -694,6 +712,7 @@ impl WorkingDirectoriesModel {
             .iter()
             .chain(local_cwds.iter())
             .filter_map(|(_, cwd)| root_for_raw_path(cwd))
+            .chain(herdr_root.clone())
             .collect();
 
         // Build remote root paths for pane_groups from remote terminal CWDs
@@ -787,7 +806,10 @@ impl WorkingDirectoriesModel {
 
         // Second pass: if we have a focused terminal, ensure its repo maps to it
         // This ensures the dropdown selects the correct repo when a pane is focused or CD'd
-        let mut focused_repo: Option<LocalOrRemotePath> = None;
+        let mut focused_repo: Option<LocalOrRemotePath> = herdr_root.as_ref().and_then(|root| {
+            DetectedRepositories::as_ref(ctx)
+                .get_root_for_path(&LocalOrRemotePath::Local(root.clone()))
+        });
         if let Some(focused_id) = focused_terminal_id {
             let mut repos_to_insert = Vec::new();
             for (dir, terminal_id) in &new_root_to_terminal {
@@ -1020,6 +1042,7 @@ impl WorkingDirectoriesModel {
         _terminal_cwds: Vec<(EntityId, LocalOrRemotePath)>,
         _editor_paths: Vec<(EntityId, LocalOrRemotePath)>,
         _focused_terminal_id: Option<EntityId>,
+        _herdr_directory: Option<PathBuf>,
         _ctx: &mut ModelContext<Self>,
     ) {
     }
@@ -1058,6 +1081,13 @@ impl WorkingDirectoriesModel {
     }
 
     pub fn get_selected_review_repo(&self, _pane_group_id: EntityId) -> Option<&LocalOrRemotePath> {
+        None
+    }
+
+    pub fn focused_repo_for_pane_group(
+        &self,
+        _pane_group_id: EntityId,
+    ) -> Option<&LocalOrRemotePath> {
         None
     }
 
