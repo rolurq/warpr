@@ -18,6 +18,8 @@ pub(super) struct SessionSelection {
     /// in which case no session can be located.
     config_dir: Option<PathBuf>,
     current: Option<SessionName>,
+    /// The target of the session being kept current, once connecting to it has begun.
+    pub(super) live_target: Option<SessionTarget>,
     listed: Vec<ListedSession>,
 }
 
@@ -27,6 +29,7 @@ impl SessionSelection {
             cli,
             config_dir,
             current: None,
+            live_target: None,
             listed: Vec::new(),
         }
     }
@@ -108,6 +111,12 @@ impl HerdrSessionModel {
         Some((self.sessions.cli.clone(), target))
     }
 
+    /// The session this window is connected to, addressed as it was connected to, or `None`
+    /// while it is being connected to.
+    pub(crate) fn session_target(&self) -> Option<SessionTarget> {
+        self.sessions.live_target.clone()
+    }
+
     /// Reads Herdr's session listing in the background. A listing that fails leaves the previous
     /// one in place and is logged.
     pub(crate) fn refresh_sessions(&mut self, ctx: &mut ModelContext<Self>) {
@@ -140,6 +149,7 @@ impl HerdrSessionModel {
         }
 
         self.sessions.current = Some(name.clone());
+        self.sessions.live_target = None;
         self.live_session = None;
         self.stop_tracking_agents(ctx);
         let target = match self.sessions.target(name) {

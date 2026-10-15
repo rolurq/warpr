@@ -7,6 +7,7 @@ use warp_core::features::FeatureFlag;
 use warpui::{App, EntityId, TypedActionView as _, ViewHandle};
 
 use super::*;
+use crate::tab::NewSessionMenuItem;
 use crate::test_util::assert_eventually;
 use crate::workspace::WorkspaceAction;
 use crate::workspace::view::tests::{initialize_app, mock_workspace};
@@ -534,5 +535,240 @@ fn the_agent_panel_opens_without_warps_hosted_agent_and_selecting_an_agent_goes_
             .iter()
             .any(|method| method.ends_with(".focus") || method.ends_with(".focused"));
         assert!(!moved_focus, "{:?}", session.served_methods());
+    });
+}
+
+fn has_toasts(app: &App, workspace: &ViewHandle<Workspace>) -> bool {
+    workspace.read(app, |workspace, ctx| {
+        workspace.toast_stack.as_ref(ctx).has_toasts()
+    })
+}
+
+fn dispatch(app: &mut App, workspace: &ViewHandle<Workspace>, action: WorkspaceAction) {
+    workspace.update(app, |workspace, ctx| workspace.handle_action(&action, ctx));
+}
+
+#[test]
+fn the_new_tab_action_creates_a_herdr_workspace_that_takes_focus_through_herdrs_state() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(0, ctx));
+
+        dispatch(&mut app, &workspace, WorkspaceAction::AddDefaultTab);
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "3"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eventually!(
+            600 => active_tab_title(&app, &workspace) == "3",
+            "active tab was {:?}", active_tab_title(&app, &workspace)
+        );
+        assert_eq!(
+            session
+                .served_methods()
+                .iter()
+                .filter(|method| method.as_str() == "workspace.create")
+                .count(),
+            1
+        );
+    });
+}
+
+#[test]
+fn a_refused_workspace_creation_shows_an_error_and_adds_no_tab() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        session.reject_next_creation("server_busy", "try again later");
+
+        dispatch(&mut app, &workspace, WorkspaceAction::AddDefaultTab);
+
+        assert_eventually!(600 => has_toasts(&app, &workspace), "no error was shown");
+        assert_eq!(tab_titles(&app, &workspace), ["api", "web"]);
+    });
+}
+
+#[cfg(feature = "local_tty")]
+#[test]
+fn adding_a_tab_with_a_shell_creates_a_herdr_workspace_instead_of_a_local_tab() {
+    use std::path::PathBuf;
+
+    use crate::server::telemetry::AddTabWithShellSource;
+    use crate::terminal::available_shells::AvailableShell;
+    use crate::terminal::shell::ShellType;
+
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let shell = AvailableShell::new_custom_shell(
+            "zsh".to_owned(),
+            PathBuf::from("/bin/zsh"),
+            ShellType::Zsh,
+        );
+
+        dispatch(
+            &mut app,
+            &workspace,
+            WorkspaceAction::AddTabWithShell {
+                shell,
+                source: AddTabWithShellSource::CommandPalette,
+            },
+        );
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "2"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert!(
+            session
+                .served_methods()
+                .contains(&"workspace.create".to_owned())
+        );
+    });
+}
+
+/// The name of the group each top-level tab belongs to, in tab order.
+fn group_names(app: &App, workspace: &ViewHandle<Workspace>) -> Vec<Option<String>> {
+    workspace.read(app, |workspace, _| {
+        workspace
+            .tabs
+            .iter()
+            .map(|tab| {
+                let group = workspace.tab_groups.get(&tab.group_id?)?;
+                group.name.clone()
+            })
+            .collect()
+    })
+}
+
+fn group_count(app: &App, workspace: &ViewHandle<Workspace>) -> usize {
+    workspace.read(app, |workspace, _| workspace.tab_groups.len())
+}
+
+fn worktree_script() -> SessionScript {
+    const REPO: &str = "/src/app/.git";
+    SessionScript::new()
+        .workspace("feature")
+        .workspace("notes")
+        .workspace("app")
+        .workspace_worktree("feature", REPO, true)
+        .workspace_worktree("app", REPO, false)
+}
+
+#[test]
+fn each_workspace_is_a_group_with_its_linked_worktrees_nested_after_it() {
+    let _herdr = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let _session = fake.start_session("default", worktree_script());
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["notes", "app", "feature"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let named = |name: &str| Some(name.to_owned());
+        assert_eq!(
+            group_names(&app, &workspace),
+            [named("notes"), named("app"), named("app")]
+        );
+        assert_eq!(group_count(&app, &workspace), 2);
+    });
+}
+
+#[test]
+fn a_worktree_workspace_whose_main_checkout_closes_leads_its_own_group() {
+    let _herdr = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", worktree_script());
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["notes", "app", "feature"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        session.set_script(worktree_script().without_workspace("app"));
+        announce(&session, "workspace_closed");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["feature", "notes"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let named = |name: &str| Some(name.to_owned());
+        assert_eq!(
+            group_names(&app, &workspace),
+            [named("feature"), named("notes")]
+        );
+        assert_eq!(group_count(&app, &workspace), 2);
+    });
+}
+
+#[test]
+fn the_user_cannot_create_groups_in_a_herdr_window() {
+    let _herdr = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let groups_before = group_count(&app, &workspace);
+
+        dispatch(
+            &mut app,
+            &workspace,
+            WorkspaceAction::NewTabGroupFromActiveOrSelectedTabs,
+        );
+        dispatch(
+            &mut app,
+            &workspace,
+            WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+        );
+
+        assert_eq!(tab_titles(&app, &workspace), ["api", "web"]);
+        assert_eq!(group_count(&app, &workspace), groups_before);
+        assert!(
+            !session
+                .served_methods()
+                .contains(&"workspace.create".to_owned())
+        );
     });
 }

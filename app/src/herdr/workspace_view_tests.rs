@@ -112,7 +112,7 @@ fn the_view_shows_a_strip_of_the_workspaces_herdr_tabs_in_herdr_order() {
         let text = rendered_text(&app, &view);
 
         assert!(
-            text.starts_with("server logs zoomed\n"),
+            text.starts_with("server logs zoomed +\n"),
             "rendered text was {text:?}"
         );
     });
@@ -126,7 +126,7 @@ fn the_tab_herdr_has_focused_shows_its_pane_frames_until_another_is_picked() {
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
 
-        assert_eq!(rendered_text(&app, &view), "server logs zoomed\nw1:p1");
+        assert_eq!(rendered_text(&app, &view), "server logs zoomed +\nw1:p1");
     });
 }
 
@@ -142,7 +142,7 @@ fn picking_a_herdr_tab_shows_its_panes_in_herdrs_layout() {
 
         assert_eq!(
             rendered_text(&app, &view),
-            "server logs zoomed\nw1:p2 w1:p3 w1:p4"
+            "server logs zoomed +\nw1:p2 w1:p3 w1:p4"
         );
     });
 }
@@ -157,7 +157,7 @@ fn a_zoomed_herdr_tab_shows_only_its_zoomed_pane() {
 
         select(&mut app, &view, "w1:t3");
 
-        assert_eq!(rendered_text(&app, &view), "server logs zoomed\nw1:p7");
+        assert_eq!(rendered_text(&app, &view), "server logs zoomed +\nw1:p7");
     });
 }
 
@@ -231,7 +231,7 @@ fn herdr_tabs_and_panes_created_in_another_client_appear_without_a_refresh() {
         session.emit_event("tab_created", serde_json::json!({}));
 
         assert_eventually!(
-            600 => rendered_text(&app, &view).starts_with("server logs zoomed build\n"),
+            600 => rendered_text(&app, &view).starts_with("server logs zoomed build +\n"),
             "rendered text was {:?}", rendered_text(&app, &view)
         );
     });
@@ -244,7 +244,7 @@ fn a_layout_change_made_in_another_client_redraws_the_pane_frames() {
         let session = api_session(&fake);
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
-        assert_eq!(rendered_text(&app, &view), "server logs zoomed\nw1:p1");
+        assert_eq!(rendered_text(&app, &view), "server logs zoomed +\nw1:p1");
 
         session.set_script(
             SessionScript::new().workspace_with_tabs(
@@ -261,7 +261,7 @@ fn a_layout_change_made_in_another_client_redraws_the_pane_frames() {
         session.emit_event("layout_updated", serde_json::json!({}));
 
         assert_eventually!(
-            600 => rendered_text(&app, &view) == "server logs zoomed\nw1:p1 w1:p2 w1:p3",
+            600 => rendered_text(&app, &view) == "server logs zoomed +\nw1:p1 w1:p2 w1:p3",
             "rendered text was {:?}", rendered_text(&app, &view)
         );
     });
@@ -281,12 +281,12 @@ fn a_lost_connection_is_shown_above_the_workspace_until_it_returns() {
             600 => rendered_text(&app, &view).starts_with("Lost the connection to Herdr, reconnecting"),
             "rendered text was {:?}", rendered_text(&app, &view)
         );
-        assert!(rendered_text(&app, &view).contains("server logs zoomed\nw1:p1"));
+        assert!(rendered_text(&app, &view).contains("server logs zoomed +\nw1:p1"));
 
         session.go_online();
 
         assert_eventually!(
-            600 => rendered_text(&app, &view) == "server logs zoomed\nw1:p1",
+            600 => rendered_text(&app, &view) == "server logs zoomed +\nw1:p1",
             "rendered text was {:?}", rendered_text(&app, &view)
         );
     });
@@ -307,28 +307,28 @@ fn the_metadata_tokens_herdr_shows_appear_above_the_herdr_tabs_and_follow_their_
         let view = open_workspace_view(&mut app, &fake);
         assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
         assert_eventually!(
-            600 => rendered_text(&app, &view).starts_with("vcs: main\n1\n"),
+            600 => rendered_text(&app, &view).starts_with("vcs: main\n1 +\n"),
             "rendered text was {:?}", rendered_text(&app, &view)
         );
 
         session.set_script(api_with_tokens(&[("vcs", "main*"), ("ci", "running")]));
         session.emit_event("workspace_metadata_updated", serde_json::json!({}));
         assert_eventually!(
-            600 => rendered_text(&app, &view).starts_with("ci: running  vcs: main*\n1\n"),
+            600 => rendered_text(&app, &view).starts_with("ci: running  vcs: main*\n1 +\n"),
             "rendered text was {:?}", rendered_text(&app, &view)
         );
 
         session.set_script(api_with_tokens(&[("vcs", "main*")]));
         session.emit_event("workspace_metadata_updated", serde_json::json!({}));
         assert_eventually!(
-            600 => rendered_text(&app, &view).starts_with("vcs: main*\n1\n"),
+            600 => rendered_text(&app, &view).starts_with("vcs: main*\n1 +\n"),
             "rendered text was {:?}", rendered_text(&app, &view)
         );
 
         session.set_script(api_with_tokens(&[]));
         session.emit_event("workspace_metadata_updated", serde_json::json!({}));
         assert_eventually!(
-            600 => rendered_text(&app, &view).starts_with("1\n"),
+            600 => rendered_text(&app, &view).starts_with("1 +\n"),
             "rendered text was {:?}", rendered_text(&app, &view)
         );
     });
@@ -380,5 +380,64 @@ fn a_shown_pane_is_controlled_at_the_cell_size_of_its_frame_and_hidden_panes_are
         assert_eq!(resize["rows"].to_string(), runs[0].args[7]);
         assert!(resize["cell_width_px"].as_u64().is_some_and(|px| px > 0));
         assert!(resize["cell_height_px"].as_u64().is_some_and(|px| px > 0));
+    });
+}
+
+fn create_tab(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>) {
+    app.update(|ctx| {
+        view.update(ctx, |view, ctx| {
+            view.handle_action(&HerdrWorkspaceViewAction::CreateTab, ctx);
+        });
+    });
+}
+
+#[test]
+fn the_plus_button_creates_a_herdr_tab_in_this_workspace_and_shows_it_through_herdrs_state() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        create_tab(&mut app, &view);
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view) == "server logs zoomed 4 +\nw1:p8",
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        assert_eq!(
+            session
+                .served_methods()
+                .iter()
+                .filter(|method| method.as_str() == "tab.create")
+                .count(),
+            1
+        );
+    });
+}
+
+#[test]
+fn a_refused_tab_creation_shows_the_error_and_leaves_the_strip_and_selection_alone() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        session.reject_next_creation("server_busy", "try again later");
+
+        create_tab(&mut app, &view);
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("Could not create a tab:"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        let text = rendered_text(&app, &view);
+        assert!(text.contains("try again later"), "{text:?}");
+        assert!(
+            text.ends_with("server logs zoomed +\nw1:p2 w1:p3 w1:p4"),
+            "{text:?}"
+        );
     });
 }

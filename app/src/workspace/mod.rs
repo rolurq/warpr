@@ -734,7 +734,11 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE) & id!("IsOnline")),
         EditableBinding::new(
             NEW_TAB_BINDING_NAME,
-            BindingDescription::new("Create new tab"),
+            BindingDescription::new(if FeatureFlag::HerdrWorkspaceTabs.is_enabled() {
+                "Create new workspace"
+            } else {
+                "Create new tab"
+            }),
             WorkspaceAction::AddDefaultTab,
         )
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging"))
@@ -742,7 +746,11 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
         EditableBinding::new(
             NEW_TERMINAL_TAB_BINDING_NAME,
-            BindingDescription::new("New Terminal Tab"),
+            BindingDescription::new(if FeatureFlag::HerdrWorkspaceTabs.is_enabled() {
+                "New Terminal Workspace"
+            } else {
+                "New Terminal Tab"
+            }),
             WorkspaceAction::AddTerminalTab {
                 hide_homepage: false,
             },
@@ -760,7 +768,10 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(
             id!("Workspace") & id!(flags::IS_ANY_AI_ENABLED) & !id!("Workspace_PaneDragging"),
         )
-        .with_enabled(|| !FeatureFlag::DisableHostedAgent.is_enabled()),
+        .with_enabled(|| {
+            !FeatureFlag::DisableHostedAgent.is_enabled()
+                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        }),
         EditableBinding::new(
             NEW_AMBIENT_AGENT_TAB_BINDING_NAME,
             BindingDescription::new("New Cloud Agent Tab"),
@@ -1017,7 +1028,9 @@ pub fn init(app: &mut AppContext) {
             // Reuse the new-session dropdown's action, not a dedicated variant.
             WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
         )
-        .with_enabled(|| FeatureFlag::GroupedTabs.is_enabled())
+        .with_enabled(|| {
+            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging")),
         EditableBinding::new(
@@ -1025,7 +1038,9 @@ pub fn init(app: &mut AppContext) {
             "Create tab group from active or selected tab(s)",
             WorkspaceAction::NewTabGroupFromActiveOrSelectedTabs,
         )
-        .with_enabled(|| FeatureFlag::GroupedTabs.is_enabled())
+        .with_enabled(|| {
+            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging")),
         // Gated on `Workspace_ActiveOrSelectedTabsInGroup`: offered only when
@@ -1037,7 +1052,9 @@ pub fn init(app: &mut AppContext) {
             "Remove active or selected tab(s) from group",
             WorkspaceAction::RemoveActiveOrSelectedTabsFromGroup,
         )
-        .with_enabled(|| FeatureFlag::GroupedTabs.is_enabled())
+        .with_enabled(|| {
+            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
             id!("Workspace")
@@ -1076,7 +1093,9 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::PinActiveTabGroup,
         )
         .with_enabled(|| {
-            FeatureFlag::PinnedTabs.is_enabled() && FeatureFlag::GroupedTabs.is_enabled()
+            FeatureFlag::PinnedTabs.is_enabled()
+                && FeatureFlag::GroupedTabs.is_enabled()
+                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
         })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
@@ -1091,7 +1110,9 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::UnpinActiveTabGroup,
         )
         .with_enabled(|| {
-            FeatureFlag::PinnedTabs.is_enabled() && FeatureFlag::GroupedTabs.is_enabled()
+            FeatureFlag::PinnedTabs.is_enabled()
+                && FeatureFlag::GroupedTabs.is_enabled()
+                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
         })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(

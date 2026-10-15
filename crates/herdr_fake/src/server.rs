@@ -113,6 +113,8 @@ struct Shared {
     methods_served: Mutex<Vec<String>>,
     /// How many of the next `events.subscribe` requests are answered with `events_lost`.
     subscriptions_to_lose: Mutex<usize>,
+    /// The error the next creation request is answered with, if one is armed.
+    creation_rejection: Mutex<Option<(String, String)>>,
 }
 
 impl Shared {
@@ -135,6 +137,77 @@ impl Shared {
         let lose = *remaining > 0;
         *remaining = remaining.saturating_sub(1);
         lose
+    }
+
+    fn emit(&self, name: &str, data: &Value) -> usize {
+        let line = format!("{}\n", json!({ "event": name, "data": data }));
+        let mut subscribers = self.subscribers.lock();
+        let mut delivered = 0;
+        subscribers.retain_mut(|subscriber| {
+            if !subscriber.events.contains(name) {
+                return true;
+            }
+            let written = subscriber.stream.write_all(line.as_bytes()).is_ok();
+            delivered += usize::from(written);
+            written
+        });
+        delivered
+    }
+
+    /// Serves `workspace.create` and `tab.create`: changes the script as Herdr would, announces
+    /// the result to subscribers and answers with it.
+    fn create(&self, id: &Value, method: &str, params: &Value) -> Value {
+        if let Some((code, message)) = self.creation_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let label = params["label"].as_str();
+        let focus = params["focus"].as_bool().unwrap_or(false);
+        let mut script = self.script.lock();
+        let (event, workspace_id, tab_id) = if method == "workspace.create" {
+            let workspace_id = script.create_workspace(label, focus);
+            let tab_id = format!("{workspace_id}:t1");
+            ("workspace_created", workspace_id, tab_id)
+        } else {
+            let Some(workspace_id) = params["workspace_id"].as_str() else {
+                return error(
+                    id,
+                    "invalid_request",
+                    "invalid request: missing field `workspace_id`",
+                );
+            };
+            match script.create_tab(workspace_id, label, focus) {
+                Some(tab_id) => ("tab_created", workspace_id.to_owned(), tab_id),
+                None => {
+                    return error(
+                        id,
+                        "workspace_not_found",
+                        &format!("workspace {workspace_id} not found"),
+                    );
+                }
+            }
+        };
+        let snapshot = script.snapshot();
+        drop(script);
+
+        let find = |list: &str, key: &str, wanted: &str| {
+            snapshot[list]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|entry| entry[key] == wanted)
+                .cloned()
+                .unwrap_or(Value::Null)
+        };
+        let mut result = json!({
+            "type": event,
+            "tab": find("tabs", "tab_id", &tab_id),
+            "root_pane": find("panes", "tab_id", &tab_id),
+        });
+        if event == "workspace_created" {
+            result["workspace"] = find("workspaces", "workspace_id", &workspace_id);
+        }
+        self.emit(event, &result);
+        ok(id, result)
     }
 
     /// Validates `events.subscribe` params as Herdr does: every entry must be a known type, pane
@@ -209,6 +282,7 @@ impl FakeSession {
                 requests_served: AtomicUsize::new(0),
                 methods_served: Mutex::new(Vec::new()),
                 subscriptions_to_lose: Mutex::new(0),
+                creation_rejection: Mutex::new(None),
             }),
             listener: Mutex::new(None),
         };
@@ -241,18 +315,7 @@ impl FakeSession {
     /// `{"event": <name>, "data": <data>}`. `name` is the event name (`workspace_renamed`), not
     /// the subscription type (`workspace.renamed`). Returns how many connections received it.
     pub fn emit_event(&self, name: &str, data: Value) -> usize {
-        let line = format!("{}\n", json!({ "event": name, "data": data }));
-        let mut subscribers = self.shared.subscribers.lock();
-        let mut delivered = 0;
-        subscribers.retain_mut(|subscriber| {
-            if !subscriber.events.contains(name) {
-                return true;
-            }
-            let written = subscriber.stream.write_all(line.as_bytes()).is_ok();
-            delivered += usize::from(written);
-            written
-        });
-        delivered
+        self.shared.emit(name, &data)
     }
 
     /// Pushes `pane.agent_status_changed` for `pane_id` to the connections that subscribed to
@@ -326,6 +389,12 @@ impl FakeSession {
     /// them, as Herdr does when the history is overrun while a subscription is being set up.
     pub fn lose_events_on_next_subscriptions(&self, times: usize) {
         *self.shared.subscriptions_to_lose.lock() = times;
+    }
+
+    /// Answers the next `workspace.create` or `tab.create` request with the error `code` and
+    /// `message` instead of creating anything, as Herdr does for a request it refuses.
+    pub fn reject_next_creation(&self, code: &str, message: &str) {
+        *self.shared.creation_rejection.lock() = Some((code.to_owned(), message.to_owned()));
     }
 
     /// How many connections are subscribed to events.
@@ -465,6 +534,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared, connection_id: u64) {
                 shared.snapshot_gate.pass();
                 response
             }
+            "workspace.create" | "tab.create" => shared.create(&id, method, &request["params"]),
             "pane.list" => {
                 let panes = shared.script.lock().snapshot()["panes"].clone();
                 ok(&id, json!({ "type": "pane_list", "panes": panes }))

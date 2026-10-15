@@ -170,6 +170,8 @@ pub(crate) struct WorkspaceScript {
     pub(crate) tabs: Vec<TabScript>,
     pub(crate) active_tab_label: Option<String>,
     pub(crate) tokens: Vec<(String, String)>,
+    /// The repository's key and whether this is a linked worktree, when Herdr reports a checkout.
+    pub(crate) worktree: Option<(String, bool)>,
 }
 
 impl WorkspaceScript {
@@ -221,7 +223,26 @@ impl SessionScript {
             tabs: tabs.into_iter().collect(),
             active_tab_label: None,
             tokens: Vec::new(),
+            worktree: None,
         });
+        self
+    }
+
+    /// Makes the workspace labelled `workspace_label` a checkout of the Git repository
+    /// identified by `repo_key`, as Herdr reports a workspace whose directory is in a work tree:
+    /// the main checkout, or a linked worktree when `is_linked` is set.
+    pub fn workspace_worktree(
+        mut self,
+        workspace_label: &str,
+        repo_key: &str,
+        is_linked: bool,
+    ) -> Self {
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.label == workspace_label)
+            .unwrap_or_else(|| panic!("no workspace labelled {workspace_label:?}"));
+        workspace.worktree = Some((repo_key.to_owned(), is_linked));
         self
     }
 
@@ -321,6 +342,59 @@ impl SessionScript {
     pub fn focused(mut self, label: &str) -> Self {
         self.focused_label = Some(label.to_owned());
         self
+    }
+
+    /// Adds a workspace with one Herdr tab holding one pane, as `workspace.create` does, and
+    /// returns the id Herdr gives it. The new workspace becomes the focused one when `focus` is set.
+    pub(crate) fn create_workspace(&mut self, label: Option<&str>, focus: bool) -> String {
+        self.next_workspace_id += 1;
+        let id = self.next_workspace_id;
+        let label = label.map_or_else(|| id.to_string(), str::to_owned);
+        self.workspaces.push(WorkspaceScript {
+            id,
+            label: label.clone(),
+            tabs: vec![TabScript::new("1", PaneTree::pane())],
+            active_tab_label: None,
+            tokens: Vec::new(),
+            worktree: None,
+        });
+        if focus {
+            self.focused_label = Some(label);
+        }
+        format!("w{id}")
+    }
+
+    /// Adds a Herdr tab with one pane to the workspace `workspace_id`, as `tab.create` does, and
+    /// returns the id Herdr gives it, or `None` when there is no such workspace. With `focus` the
+    /// tab becomes the workspace's active one and the workspace becomes the focused one.
+    pub(crate) fn create_tab(
+        &mut self,
+        workspace_id: &str,
+        label: Option<&str>,
+        focus: bool,
+    ) -> Option<String> {
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| format!("w{}", workspace.id) == workspace_id)?;
+        let number = workspace.tabs.len() + 1;
+        let label = label.map_or_else(
+            || {
+                (number..)
+                    .map(|candidate| candidate.to_string())
+                    .find(|candidate| workspace.tabs.iter().all(|tab| &tab.label != candidate))
+                    .expect("an unused label exists")
+            },
+            str::to_owned,
+        );
+        workspace
+            .tabs
+            .push(TabScript::new(&label, PaneTree::pane()));
+        if focus {
+            workspace.active_tab_label = Some(label);
+            self.focused_label = Some(workspace.label.clone());
+        }
+        Some(format!("{workspace_id}:t{number}"))
     }
 
     fn focused_index(&self) -> Option<usize> {
@@ -441,6 +515,15 @@ impl SessionScript {
             // Herdr leaves `tokens` out of a workspace that has none.
             if !workspace.tokens.is_empty() {
                 info["tokens"] = workspace.tokens.iter().cloned().collect();
+            }
+            if let Some((repo_key, is_linked)) = &workspace.worktree {
+                info["worktree"] = json!({
+                    "repo_key": repo_key,
+                    "repo_name": repo_key.rsplit('/').nth(1).unwrap_or(repo_key),
+                    "repo_root": repo_key.trim_end_matches("/.git"),
+                    "checkout_path": format!("{}/{}", repo_key.trim_end_matches("/.git"), workspace.label),
+                    "is_linked_worktree": is_linked,
+                });
             }
             workspaces.push(info);
         }

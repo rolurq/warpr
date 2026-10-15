@@ -212,7 +212,7 @@ fn selecting_an_agent_shows_its_herdr_tab_and_pane_without_moving_herdrs_focus()
         assert_eventually!(600 => rows(&app).len() == 2, "rows were {:?}", rows(&app));
         wait_for_agent_subscriptions(&session);
         assert_eventually!(
-            600 => workspace_text(&app, &workspace_view).starts_with("server logs\nw1:p1"),
+            600 => workspace_text(&app, &workspace_view).starts_with("server logs +\nw1:p1"),
             "text was {:?}", workspace_text(&app, &workspace_view)
         );
 
@@ -224,7 +224,7 @@ fn selecting_an_agent_shows_its_herdr_tab_and_pane_without_moving_herdrs_focus()
 
         assert_eq!(
             workspace_text(&app, &workspace_view),
-            "server logs\nw1:p2 w1:p3"
+            "server logs +\nw1:p2 w1:p3"
         );
         let moved_focus = session
             .served_methods()

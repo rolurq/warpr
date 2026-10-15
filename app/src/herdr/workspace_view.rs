@@ -43,6 +43,8 @@ pub enum HerdrWorkspaceViewAction {
     SelectPane(PaneId),
     /// Sends the clipboard's text to a pane's program.
     Paste(PaneId),
+    /// Asks Herdr to create a Herdr tab in this workspace.
+    CreateTab,
 }
 
 /// The contents of the pane that stands for a Herdr workspace in its top-level tab, or for the
@@ -57,6 +59,9 @@ pub struct HerdrWorkspaceView {
     /// Filled while rendering, because Herdr decides which tabs exist and `render` only has
     /// shared access to the view.
     tab_mouse_states: RefCell<HashMap<HerdrTabId, MouseStateHandle>>,
+    new_tab_mouse_state: MouseStateHandle,
+    /// Why the last request to create a Herdr tab was refused, until the next one succeeds.
+    creation_error: Option<String>,
     pane_configuration: ModelHandle<PaneConfiguration>,
     focus_handle: Option<PaneFocusHandle>,
     window_id: WindowId,
@@ -89,6 +94,8 @@ impl HerdrWorkspaceView {
             selected_tab: None,
             selected_pane: None,
             tab_mouse_states: RefCell::default(),
+            new_tab_mouse_state: MouseStateHandle::default(),
+            creation_error: None,
             pane_configuration,
             focus_handle: None,
             window_id: ctx.window_id(),
@@ -289,9 +296,14 @@ impl HerdrWorkspaceView {
             .with_cursor(Cursor::PointingHand)
             .finish()
         });
-        Container::new(Flex::row().with_children(tabs).finish())
-            .with_background(theme.background())
-            .finish()
+        Container::new(
+            Flex::row()
+                .with_children(tabs)
+                .with_child(self.render_new_tab_button(appearance))
+                .finish(),
+        )
+        .with_background(theme.background())
+        .finish()
     }
 
     fn render_pane_frames(
@@ -495,6 +507,67 @@ impl HerdrWorkspaceView {
     }
 }
 
+impl HerdrWorkspaceView {
+    /// Asks Herdr to create a Herdr tab in this workspace. Nothing is added here: the tab is
+    /// shown, and active, once the session presents it. A refused request is shown in the view.
+    fn create_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
+            return;
+        };
+        let workspace_id = workspace.workspace_id.clone();
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.creation_error =
+                Some("Could not create a tab: no Herdr session is connected".to_owned());
+            ctx.notify();
+            return;
+        };
+        ctx.spawn(
+            async move { herdr_client::create_herdr_tab(&target, &workspace_id) },
+            |me, result, ctx| {
+                match result {
+                    Ok(()) => {
+                        me.creation_error = None;
+                        me.selected_tab = None;
+                        me.selected_pane = None;
+                        me.report_viewed_panes(ctx);
+                        me.update_shown_panes(ctx);
+                    }
+                    Err(failure) => {
+                        log::error!("Could not create a Herdr tab: {failure}");
+                        me.creation_error = Some(format!("Could not create a tab: {failure}"));
+                    }
+                }
+                ctx.notify();
+            },
+        );
+    }
+
+    fn render_new_tab_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        Hoverable::new(self.new_tab_mouse_state.clone(), |state| {
+            let background = if state.is_hovered() {
+                theme.surface_1()
+            } else {
+                theme.background()
+            };
+            let plus = Text::new_inline("+".to_owned(), appearance.ui_font_family(), TAB_FONT_SIZE)
+                .with_color(theme.sub_text_color(background).into())
+                .finish();
+            Container::new(plus)
+                .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+                .with_vertical_padding(TAB_VERTICAL_PADDING)
+                .with_background(background)
+                .with_border(Border::bottom(2.).with_border_fill(background))
+                .finish()
+        })
+        .on_click(|ctx, _, _| {
+            ctx.dispatch_typed_action(HerdrWorkspaceViewAction::CreateTab);
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+    }
+}
+
 impl Entity for HerdrWorkspaceView {
     type Event = PaneEvent;
 }
@@ -507,7 +580,10 @@ impl View for HerdrWorkspaceView {
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let workspace = self.render_workspace(app, appearance);
-        let Some(notice) = self.connection_notice(app) else {
+        let Some(notice) = self
+            .connection_notice(app)
+            .or_else(|| self.creation_error.clone())
+        else {
             return workspace;
         };
         Flex::column()
@@ -522,6 +598,7 @@ impl TypedActionView for HerdrWorkspaceView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
+            HerdrWorkspaceViewAction::CreateTab => self.create_tab(ctx),
             HerdrWorkspaceViewAction::Paste(pane) => {
                 let text = ctx
                     .clipboard()
