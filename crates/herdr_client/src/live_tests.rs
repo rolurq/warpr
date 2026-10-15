@@ -873,3 +873,24 @@ fn a_layout_change_whose_events_were_lost_is_presented_after_the_resync() {
     });
     assert_eq!(presented, authoritative(&fake));
 }
+
+#[test]
+fn a_workspace_and_a_herdr_tab_created_through_the_client_are_presented_by_the_live_session() {
+    let fake = fake();
+    let _session = fake.start_session("default", workspaces(&["api"]));
+    let observed = observe(&fake, ReconnectPolicy::default());
+    observed.wait_for_labels(&["api"]);
+
+    crate::create_workspace(&target(&fake)).expect("workspace created");
+    let presented = observed.wait_for("the created workspace, focused", |presented| {
+        labels(presented) == ["api", "2"] && presented.focused_workspace_index() == Some(1)
+    });
+    assert_eq!(presented, authoritative(&fake));
+
+    crate::create_herdr_tab(&target(&fake), &presented.workspaces[1].id).expect("tab created");
+    observed.wait_for("the created Herdr tab, active", |presented| {
+        let workspace = &presented.workspaces[1];
+        workspace.herdr_tabs.len() == 2
+            && workspace.active_herdr_tab == Some(workspace.herdr_tabs[1].id.clone())
+    });
+}

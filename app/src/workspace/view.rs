@@ -24418,7 +24418,7 @@ impl TypedActionView for Workspace {
                     self.unpin_tab_group(group_id, ctx);
                 }
             }
-            AddDefaultTab | AddTerminalTab { .. }
+            AddDefaultTab | AddTerminalTab { .. } | AddTabWithShell { .. }
                 if crate::herdr::presents_herdr_workspaces(ctx) =>
             {
                 self.create_herdr_workspace(ctx)

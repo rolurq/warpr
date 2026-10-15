@@ -604,3 +604,50 @@ fn a_refused_workspace_creation_shows_an_error_and_adds_no_tab() {
         assert_eq!(tab_titles(&app, &workspace), ["api", "web"]);
     });
 }
+
+#[cfg(feature = "local_tty")]
+#[test]
+fn adding_a_tab_with_a_shell_creates_a_herdr_workspace_instead_of_a_local_tab() {
+    use std::path::PathBuf;
+
+    use crate::server::telemetry::AddTabWithShellSource;
+    use crate::terminal::available_shells::AvailableShell;
+    use crate::terminal::shell::ShellType;
+
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let shell = AvailableShell::new_custom_shell(
+            "zsh".to_owned(),
+            PathBuf::from("/bin/zsh"),
+            ShellType::Zsh,
+        );
+
+        dispatch(
+            &mut app,
+            &workspace,
+            WorkspaceAction::AddTabWithShell {
+                shell,
+                source: AddTabWithShellSource::CommandPalette,
+            },
+        );
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "2"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert!(
+            session
+                .served_methods()
+                .contains(&"workspace.create".to_owned())
+        );
+    });
+}

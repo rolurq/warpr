@@ -1773,9 +1773,17 @@ fn render_groups(
 
     if workspace.tabs.is_empty() {
         return Container::new(
-            Text::new_inline("No tabs open", appearance.ui_font_family(), 12.)
-                .with_color(theme.sub_text_color(theme.background()).into())
-                .finish(),
+            Text::new_inline(
+                if crate::herdr::presents_herdr_workspaces(app) {
+                    "No workspaces open"
+                } else {
+                    "No tabs open"
+                },
+                appearance.ui_font_family(),
+                12.,
+            )
+            .with_color(theme.sub_text_color(theme.background()).into())
+            .finish(),
         )
         .with_padding(Padding::uniform(12.))
         .finish();
@@ -3277,7 +3285,11 @@ fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn
     let theme = appearance.theme();
     let title = pane_group.display_title(app);
     let title = if title.is_empty() {
-        "Untitled tab".to_string()
+        if crate::herdr::presents_herdr_workspaces(app) {
+            "Untitled workspace".to_string()
+        } else {
+            "Untitled tab".to_string()
+        }
     } else {
         title
     };
