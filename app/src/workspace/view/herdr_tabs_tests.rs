@@ -7,6 +7,7 @@ use warp_core::features::FeatureFlag;
 use warpui::{App, EntityId, TypedActionView as _, ViewHandle};
 
 use super::*;
+use crate::tab::NewSessionMenuItem;
 use crate::test_util::assert_eventually;
 use crate::workspace::WorkspaceAction;
 use crate::workspace::view::tests::{initialize_app, mock_workspace};
@@ -646,6 +647,126 @@ fn adding_a_tab_with_a_shell_creates_a_herdr_workspace_instead_of_a_local_tab() 
         );
         assert!(
             session
+                .served_methods()
+                .contains(&"workspace.create".to_owned())
+        );
+    });
+}
+
+/// The name of the group each top-level tab belongs to, in tab order.
+fn group_names(app: &App, workspace: &ViewHandle<Workspace>) -> Vec<Option<String>> {
+    workspace.read(app, |workspace, _| {
+        workspace
+            .tabs
+            .iter()
+            .map(|tab| {
+                let group = workspace.tab_groups.get(&tab.group_id?)?;
+                group.name.clone()
+            })
+            .collect()
+    })
+}
+
+fn group_count(app: &App, workspace: &ViewHandle<Workspace>) -> usize {
+    workspace.read(app, |workspace, _| workspace.tab_groups.len())
+}
+
+fn worktree_script() -> SessionScript {
+    const REPO: &str = "/src/app/.git";
+    SessionScript::new()
+        .workspace("feature")
+        .workspace("notes")
+        .workspace("app")
+        .workspace_worktree("feature", REPO, true)
+        .workspace_worktree("app", REPO, false)
+}
+
+#[test]
+fn each_workspace_is_a_group_with_its_linked_worktrees_nested_after_it() {
+    let _herdr = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let _session = fake.start_session("default", worktree_script());
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["notes", "app", "feature"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let named = |name: &str| Some(name.to_owned());
+        assert_eq!(
+            group_names(&app, &workspace),
+            [named("notes"), named("app"), named("app")]
+        );
+        assert_eq!(group_count(&app, &workspace), 2);
+    });
+}
+
+#[test]
+fn a_worktree_workspace_whose_main_checkout_closes_leads_its_own_group() {
+    let _herdr = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", worktree_script());
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["notes", "app", "feature"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        session.set_script(worktree_script().without_workspace("app"));
+        announce(&session, "workspace_closed");
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["feature", "notes"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let named = |name: &str| Some(name.to_owned());
+        assert_eq!(
+            group_names(&app, &workspace),
+            [named("feature"), named("notes")]
+        );
+        assert_eq!(group_count(&app, &workspace), 2);
+    });
+}
+
+#[test]
+fn the_user_cannot_create_groups_in_a_herdr_window() {
+    let _herdr = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let groups_before = group_count(&app, &workspace);
+
+        dispatch(
+            &mut app,
+            &workspace,
+            WorkspaceAction::NewTabGroupFromActiveOrSelectedTabs,
+        );
+        dispatch(
+            &mut app,
+            &workspace,
+            WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+        );
+
+        assert_eq!(tab_titles(&app, &workspace), ["api", "web"]);
+        assert_eq!(group_count(&app, &workspace), groups_before);
+        assert!(
+            !session
                 .served_methods()
                 .contains(&"workspace.create".to_owned())
         );

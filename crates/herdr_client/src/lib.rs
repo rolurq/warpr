@@ -39,6 +39,7 @@ mod sessions;
 mod socket;
 mod tabs;
 mod viewing;
+mod worktree;
 
 use std::time::Duration;
 
@@ -68,6 +69,7 @@ pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarge
 pub use sessions::{ListedSession, SessionState, launch_session, list_sessions, open_session};
 pub use tabs::{CellRect, HerdrTabId, PaneId, PaneLayout, PresentedHerdrTab, PresentedPane};
 pub use viewing::{ViewedPanes, ViewerId};
+pub use worktree::PresentedWorktree;
 
 /// How long each `herdr status` run in the compatibility check may take; it matches the socket
 /// client's timeout.

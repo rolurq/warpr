@@ -6,6 +6,7 @@ use serde::Deserialize;
 use crate::compat::Refusal;
 use crate::metadata::{MetadataToken, presented_tokens};
 use crate::tabs::{HerdrTabId, PresentedHerdrTab, TabInfo, TabLayout};
+use crate::worktree::PresentedWorktree;
 
 /// Herdr's identifier for a workspace, stable for the life of the workspace.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
@@ -34,6 +35,8 @@ pub struct PresentedWorkspace {
     pub active_herdr_tab: Option<HerdrTabId>,
     /// Sorted by name.
     pub tokens: Vec<MetadataToken>,
+    /// The Git checkout the workspace is in, when Herdr reports one.
+    pub worktree: Option<PresentedWorktree>,
 }
 
 impl PresentedWorkspace {
@@ -159,6 +162,8 @@ struct WorkspaceInfo {
     active_tab_id: Option<HerdrTabId>,
     #[serde(default)]
     tokens: BTreeMap<String, String>,
+    #[serde(default)]
+    worktree: Option<PresentedWorktree>,
 }
 
 impl Snapshot {
@@ -195,6 +200,7 @@ impl Snapshot {
                 id: workspace.workspace_id,
                 label: workspace.label,
                 active_herdr_tab: workspace.active_tab_id,
+                worktree: workspace.worktree,
             })
             .collect()
     }

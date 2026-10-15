@@ -1627,12 +1627,17 @@ fn render_new_tab_button(
         let contents = if hover_state.is_hovered() {
             let tooltip = if let Some(sublabel) = tab_configs_keybinding.clone() {
                 ui_builder
-                    .tool_tip_with_sublabel("Tab configs".to_string(), sublabel)
+                    .tool_tip_with_sublabel(
+                        crate::herdr::wording(app, "Tab configs", "Workspace configs").to_string(),
+                        sublabel,
+                    )
                     .build()
                     .finish()
             } else {
                 ui_builder
-                    .tool_tip("Tab configs".to_string())
+                    .tool_tip(
+                        crate::herdr::wording(app, "Tab configs", "Workspace configs").to_string(),
+                    )
                     .build()
                     .finish()
             };
@@ -1927,7 +1932,11 @@ fn render_groups(
         } else {
             return Container::new(
                 Text::new_inline(
-                    "No tabs match your search.",
+                    crate::herdr::wording(
+                        app,
+                        "No tabs match your search.",
+                        "No workspaces match your search.",
+                    ),
                     appearance.ui_font_family(),
                     12.,
                 )
@@ -2845,10 +2854,11 @@ fn render_grouped_tabs_header(
                 )
                 .finish()
         };
-    let subtitle_text = if member_count == 1 {
-        "1 tab".to_string()
-    } else {
-        format!("{member_count} tabs")
+    let subtitle_text = match (member_count, crate::herdr::presents_herdr_workspaces(ctx)) {
+        (1, false) => "1 tab".to_string(),
+        (1, true) => "1 workspace".to_string(),
+        (_, false) => format!("{member_count} tabs"),
+        (_, true) => format!("{member_count} workspaces"),
     };
     let subtitle = Text::new_inline(subtitle_text, font_family, 10.)
         .with_clip(ClipConfig::ellipsis())
@@ -5982,7 +5992,7 @@ pub(super) fn render_settings_popup(
                 Expanded::new(
                     1.,
                     render_popup_text_segment(
-                        "Tabs",
+                        crate::herdr::wording(app, "Tabs", "Workspaces"),
                         matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs),
                         state.tabs_segment_mouse_state.clone(),
                         VerticalTabsDisplayGranularity::Tabs,
@@ -6008,7 +6018,7 @@ pub(super) fn render_settings_popup(
 
     let tab_item_header = Container::new(
         Text::new_inline(
-            "Tab item".to_string(),
+            crate::herdr::wording(app, "Tab item", "Workspace item").to_string(),
             appearance.ui_font_family(),
             SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
         )

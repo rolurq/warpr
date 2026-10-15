@@ -1440,7 +1440,10 @@ impl Workspace {
             EditorView::single_line(options, ctx)
         });
         editor.update(ctx, |editor, ctx| {
-            editor.set_placeholder_text("Search tabs...", ctx);
+            editor.set_placeholder_text(
+                crate::herdr::wording(ctx, "Search tabs...", "Search workspaces..."),
+                ctx,
+            );
         });
         ctx.subscribe_to_view(&editor, |me, editor_view, event, ctx| match event {
             EditorEvent::Edited(_) => {
@@ -7148,18 +7151,22 @@ impl Workspace {
 
             // 6. New tab config — V0: opens the TOML template.
             menu_items.push(
-                MenuItemFields::new("New tab config")
-                    .with_on_select_action(WorkspaceAction::SelectNewSessionMenuItem(
-                        NewSessionMenuItem::CreateNewTabConfig,
-                    ))
-                    .with_icon(icons::Icon::Plus)
-                    .into_item(),
+                MenuItemFields::new(crate::herdr::wording(
+                    ctx,
+                    "New tab config",
+                    "New workspace config",
+                ))
+                .with_on_select_action(WorkspaceAction::SelectNewSessionMenuItem(
+                    NewSessionMenuItem::CreateNewTabConfig,
+                ))
+                .with_icon(icons::Icon::Plus)
+                .into_item(),
             );
         }
 
         // 7. Separator + New tab group entry. Gated on the Grouped Tabs flag.
         // TODO(johnturcoo) add group actions.
-        if FeatureFlag::GroupedTabs.is_enabled() {
+        if Self::user_tab_groups_enabled(ctx) {
             menu_items.push(MenuItem::Separator);
             menu_items.push(
                 MenuItemFields::new("New tab group")
@@ -7328,7 +7335,7 @@ impl Workspace {
             #[cfg(not(feature = "local_fs"))]
             NewSessionMenuItem::CreateNewTabConfig => {}
             NewSessionMenuItem::CreateNewTabGroup => {
-                if FeatureFlag::GroupedTabs.is_enabled() {
+                if Self::user_tab_groups_enabled(ctx) {
                     self.create_new_tab_group(ctx);
                 }
             }
@@ -7617,7 +7624,7 @@ impl Workspace {
     /// * If the tab was effectively pinned, clamp past the pinned region so
     ///   the new (unpinned) group doesn't land inside the pinned area.
     fn new_tab_group_from_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
-        if !FeatureFlag::GroupedTabs.is_enabled() {
+        if !Self::user_tab_groups_enabled(ctx) {
             return;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
@@ -7671,7 +7678,7 @@ impl Workspace {
         group_id: TabGroupId,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !FeatureFlag::GroupedTabs.is_enabled() {
+        if !Self::user_tab_groups_enabled(ctx) {
             return;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
@@ -7705,7 +7712,7 @@ impl Workspace {
     /// the group's last remaining member, or further if the group was pinned
     /// (the removed tab is now unpinned and must clear the pinned region).
     fn remove_tab_from_group(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
-        if !FeatureFlag::GroupedTabs.is_enabled() {
+        if !Self::user_tab_groups_enabled(ctx) {
             return;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
@@ -7736,7 +7743,7 @@ impl Workspace {
     }
 
     fn ungroup_tabs(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
-        if !FeatureFlag::GroupedTabs.is_enabled() || !self.tab_groups.contains_key(&group_id) {
+        if !Self::user_tab_groups_enabled(ctx) || !self.tab_groups.contains_key(&group_id) {
             return;
         }
         // Capture the group's contiguous member range and pinned state
@@ -7781,7 +7788,7 @@ impl Workspace {
     /// tab is created top-level (or in another group), so we pull it to the end
     /// of this group's run.
     fn new_tab_in_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
-        if !FeatureFlag::GroupedTabs.is_enabled() || !self.tab_groups.contains_key(&group_id) {
+        if !Self::user_tab_groups_enabled(ctx) || !self.tab_groups.contains_key(&group_id) {
             return;
         }
 
@@ -7860,7 +7867,7 @@ impl Workspace {
         direction: TabMovement,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !FeatureFlag::GroupedTabs.is_enabled() {
+        if !Self::user_tab_groups_enabled(ctx) {
             return;
         }
         if !self.can_move_tab_group(group_id, direction) {
@@ -10417,25 +10424,30 @@ impl Workspace {
         };
 
         let mut menu_items = vec![];
-        for section_items in [
-            pin_section,
+        let sections = if self.herdr_agent_panel.is_some() {
+            vec![color_section]
+        } else {
             vec![
-                MenuItemFields::new("Ungroup tabs")
-                    .with_on_select_action(WorkspaceAction::UngroupTabs(group_id))
-                    .into_item(),
-                MenuItemFields::new("New tab in group")
-                    .with_on_select_action(WorkspaceAction::NewTabInGroup(group_id))
-                    .into_item(),
-            ],
-            move_section,
-            vec![
-                MenuItemFields::new("Rename")
-                    .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
-                    .into_item(),
-            ],
-            close_section,
-            color_section,
-        ] {
+                pin_section,
+                vec![
+                    MenuItemFields::new("Ungroup tabs")
+                        .with_on_select_action(WorkspaceAction::UngroupTabs(group_id))
+                        .into_item(),
+                    MenuItemFields::new("New tab in group")
+                        .with_on_select_action(WorkspaceAction::NewTabInGroup(group_id))
+                        .into_item(),
+                ],
+                move_section,
+                vec![
+                    MenuItemFields::new("Rename")
+                        .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
+                        .into_item(),
+                ],
+                close_section,
+                color_section,
+            ]
+        };
+        for section_items in sections {
             if section_items.is_empty() {
                 continue;
             }
@@ -21891,7 +21903,8 @@ impl Workspace {
         .to_string();
         let new_tab_tool_tip_sublabel_text =
             keybinding_name_to_display_string(NEW_TAB_BINDING_NAME, ctx);
-        let tab_configs_tool_tip_label_text = "Tab configs".to_string();
+        let tab_configs_tool_tip_label_text =
+            crate::herdr::wording(ctx, "Tab configs", "Workspace configs").to_string();
         let tab_configs_tool_tip_sublabel_text =
             keybinding_name_to_display_string(TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME, ctx);
         let appearance = Appearance::as_ref(ctx);

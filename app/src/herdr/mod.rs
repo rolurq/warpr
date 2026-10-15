@@ -33,6 +33,16 @@ pub(crate) fn presents_herdr_workspaces(app: &AppContext) -> bool {
     FeatureFlag::HerdrWorkspaceTabs.is_enabled() && app.has_singleton_model::<HerdrSessionModel>()
 }
 
+/// `herdr` when this window presents a Herdr session, which calls top-level tabs workspaces, and
+/// `warp` otherwise.
+pub(crate) fn wording<'a>(app: &AppContext, warp: &'a str, herdr: &'a str) -> &'a str {
+    if presents_herdr_workspaces(app) {
+        herdr
+    } else {
+        warp
+    }
+}
+
 /// Names the Herdr session to present. Defaults to Herdr's `default` session.
 const SESSION_ENV: &str = "WARPR_HERDR_SESSION";
 

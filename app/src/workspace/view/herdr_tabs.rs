@@ -14,8 +14,15 @@ use crate::herdr::{HerdrSessionEvent, HerdrSessionModel};
 use crate::pane_group::PanesLayout;
 use crate::settings::AISettings;
 use crate::view_components::DismissibleToast;
+use crate::workspace::tab_group::TabGroup;
 
 impl Workspace {
+    /// Whether the user may create and rearrange tab groups. Herdr windows present Herdr's own
+    /// groupings and own the order, so there the user may not.
+    pub(super) fn user_tab_groups_enabled(app: &AppContext) -> bool {
+        FeatureFlag::GroupedTabs.is_enabled() && !crate::herdr::presents_herdr_workspaces(app)
+    }
+
     fn presents_herdr_workspaces(ctx: &ViewContext<Self>) -> bool {
         crate::herdr::presents_herdr_workspaces(ctx)
     }
@@ -208,11 +215,13 @@ impl Workspace {
         }
 
         let ordered_tabs: Vec<_> = presented
-            .workspaces
-            .iter()
-            .filter_map(|workspace| tab_of_workspace.get(&workspace.id).copied())
+            .workspace_groups()
+            .into_iter()
+            .flatten()
+            .filter_map(|workspace| tab_of_workspace.get(workspace).copied())
             .collect();
         self.order_herdr_workspace_tabs(&ordered_tabs, ctx);
+        self.group_herdr_workspace_tabs(presented, &tab_of_workspace, ctx);
 
         let selected_tab = focused_new_tab
             .or_else(|| {
@@ -317,6 +326,60 @@ impl Workspace {
                 self.hop_tab_to_index(index, first + offset, ctx);
             }
         }
+    }
+
+    /// Presents each Herdr workspace as a tab group named after it, holding the workspace's own
+    /// tab and, after it, the linked worktrees nested under it. A lead keeps its group between
+    /// presentations so the group's color and collapsed state survive; groups left without
+    /// members are dropped.
+    fn group_herdr_workspace_tabs(
+        &mut self,
+        presented: &PresentedSession,
+        tab_of_workspace: &HashMap<WorkspaceId, EntityId>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if !FeatureFlag::GroupedTabs.is_enabled() {
+            return;
+        }
+        let mut claimed = HashSet::new();
+        for members in presented.workspace_groups() {
+            let Some(lead) = members.first().copied() else {
+                continue;
+            };
+            let reusable = tab_of_workspace
+                .get(lead)
+                .and_then(|pane_group_id| self.tab_index_for_pane_group(*pane_group_id))
+                .and_then(|index| self.tabs[index].group_id)
+                .filter(|group_id| {
+                    self.tab_groups.contains_key(group_id) && !claimed.contains(group_id)
+                });
+            let group_id = reusable.unwrap_or_else(|| {
+                let group = TabGroup::new();
+                let group_id = group.id;
+                self.tab_groups.insert(group_id, group);
+                group_id
+            });
+            claimed.insert(group_id);
+            if let (Some(group), Some(workspace)) = (
+                self.tab_groups.get_mut(&group_id),
+                presented.workspace(lead),
+            ) {
+                group.name = Some(workspace.label.clone());
+            }
+            for member in members {
+                let index = tab_of_workspace
+                    .get(member)
+                    .and_then(|pane_group_id| self.tab_index_for_pane_group(*pane_group_id));
+                if let Some(tab) = index.and_then(|index| self.tabs.get_mut(index)) {
+                    tab.group_id = Some(group_id);
+                    tab.pinned = false;
+                }
+            }
+        }
+        let in_use: HashSet<_> = self.tabs.iter().filter_map(|tab| tab.group_id).collect();
+        self.tab_groups
+            .retain(|group_id, _| in_use.contains(group_id));
+        ctx.notify();
     }
 
     fn tab_index_for_pane_group(&self, pane_group_id: EntityId) -> Option<usize> {

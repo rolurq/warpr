@@ -1028,7 +1028,9 @@ pub fn init(app: &mut AppContext) {
             // Reuse the new-session dropdown's action, not a dedicated variant.
             WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
         )
-        .with_enabled(|| FeatureFlag::GroupedTabs.is_enabled())
+        .with_enabled(|| {
+            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging")),
         EditableBinding::new(
@@ -1036,7 +1038,9 @@ pub fn init(app: &mut AppContext) {
             "Create tab group from active or selected tab(s)",
             WorkspaceAction::NewTabGroupFromActiveOrSelectedTabs,
         )
-        .with_enabled(|| FeatureFlag::GroupedTabs.is_enabled())
+        .with_enabled(|| {
+            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging")),
         // Gated on `Workspace_ActiveOrSelectedTabsInGroup`: offered only when
@@ -1048,7 +1052,9 @@ pub fn init(app: &mut AppContext) {
             "Remove active or selected tab(s) from group",
             WorkspaceAction::RemoveActiveOrSelectedTabsFromGroup,
         )
-        .with_enabled(|| FeatureFlag::GroupedTabs.is_enabled())
+        .with_enabled(|| {
+            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+        })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
             id!("Workspace")

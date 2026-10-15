@@ -170,6 +170,8 @@ pub(crate) struct WorkspaceScript {
     pub(crate) tabs: Vec<TabScript>,
     pub(crate) active_tab_label: Option<String>,
     pub(crate) tokens: Vec<(String, String)>,
+    /// The repository's key and whether this is a linked worktree, when Herdr reports a checkout.
+    pub(crate) worktree: Option<(String, bool)>,
 }
 
 impl WorkspaceScript {
@@ -221,7 +223,26 @@ impl SessionScript {
             tabs: tabs.into_iter().collect(),
             active_tab_label: None,
             tokens: Vec::new(),
+            worktree: None,
         });
+        self
+    }
+
+    /// Makes the workspace labelled `workspace_label` a checkout of the Git repository
+    /// identified by `repo_key`, as Herdr reports a workspace whose directory is in a work tree:
+    /// the main checkout, or a linked worktree when `is_linked` is set.
+    pub fn workspace_worktree(
+        mut self,
+        workspace_label: &str,
+        repo_key: &str,
+        is_linked: bool,
+    ) -> Self {
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.label == workspace_label)
+            .unwrap_or_else(|| panic!("no workspace labelled {workspace_label:?}"));
+        workspace.worktree = Some((repo_key.to_owned(), is_linked));
         self
     }
 
@@ -335,6 +356,7 @@ impl SessionScript {
             tabs: vec![TabScript::new("1", PaneTree::pane())],
             active_tab_label: None,
             tokens: Vec::new(),
+            worktree: None,
         });
         if focus {
             self.focused_label = Some(label);
@@ -493,6 +515,15 @@ impl SessionScript {
             // Herdr leaves `tokens` out of a workspace that has none.
             if !workspace.tokens.is_empty() {
                 info["tokens"] = workspace.tokens.iter().cloned().collect();
+            }
+            if let Some((repo_key, is_linked)) = &workspace.worktree {
+                info["worktree"] = json!({
+                    "repo_key": repo_key,
+                    "repo_name": repo_key.rsplit('/').nth(1).unwrap_or(repo_key),
+                    "repo_root": repo_key.trim_end_matches("/.git"),
+                    "checkout_path": format!("{}/{}", repo_key.trim_end_matches("/.git"), workspace.label),
+                    "is_linked_worktree": is_linked,
+                });
             }
             workspaces.push(info);
         }
