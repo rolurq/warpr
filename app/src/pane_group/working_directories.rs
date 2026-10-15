@@ -470,7 +470,8 @@ impl WorkingDirectoriesModel {
         self.remove_inactive_code_reviews(pane_group_id);
     }
 
-    /// Remove any code review view state that is not active in any of the terminal views that belong to this pane group.
+    /// Remove any code review view state that is neither active in a terminal view of this pane
+    /// group nor the focused repository, which is how a Herdr directory (no terminal) is kept.
     fn remove_inactive_code_reviews(&mut self, pane_group_id: EntityId) {
         let Some(code_review_views) = self.code_review_views.get_mut(&pane_group_id) else {
             return;
@@ -479,8 +480,13 @@ impl WorkingDirectoriesModel {
         let Some(terminal_mapping) = self.directory_to_terminal.get(&pane_group_id) else {
             return;
         };
+        let focused_repo = self
+            .focused_repo
+            .get(&pane_group_id)
+            .and_then(Option::as_ref);
 
-        code_review_views.retain(|path, _| terminal_mapping.contains_key(path));
+        code_review_views
+            .retain(|path, _| terminal_mapping.contains_key(path) || focused_repo == Some(path));
     }
 
     /// Get an existing CodeReviewView for a specific repository in a pane group.
