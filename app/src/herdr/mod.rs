@@ -5,6 +5,7 @@
 mod agent_panel;
 mod agents;
 mod desktop;
+mod directory_git;
 mod live;
 mod notifications;
 mod pane_contents;
@@ -19,6 +20,7 @@ mod workspace_view;
 pub use agent_panel::HerdrAgentPanelView;
 use agents::AgentTracking;
 pub(crate) use desktop::show_notified_agent;
+pub use directory_git::DirectoryGitContext;
 use herdr_client::{
     AgentJump, ConnectionFailure, ConnectionStatus, HerdrCli, LiveSession, PresentedSession,
 };

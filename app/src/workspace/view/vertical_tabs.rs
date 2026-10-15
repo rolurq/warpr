@@ -50,9 +50,11 @@ use crate::context_chips::github_pr_display_text_from_url;
 use crate::drive::DriveObjectType;
 use crate::drive::cloud_object_styling::warp_drive_icon_color;
 use crate::editor::EditorView;
+use crate::herdr::DirectoryGitContext;
 use crate::pane_group::pane::IPaneType;
 use crate::pane_group::{
-    CodePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane, WorkflowPane,
+    CodePane, HerdrWorkspacePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane,
+    WorkflowPane,
 };
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::{
@@ -936,6 +938,83 @@ struct VerticalTabsSummaryBranchEntry {
     /// Full PR URL backing the chip, used to open the PR in the browser when the
     /// chip is clicked. Paired with `pull_request_label` (the display text).
     pull_request_url: Option<String>,
+}
+
+/// What a Herdr workspace's entry shows beyond its label, in the fragments a terminal's entry
+/// has.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct HerdrRowDetails {
+    working_directory: Option<String>,
+    /// Present only inside a git repository.
+    branch_entry: Option<VerticalTabsSummaryBranchEntry>,
+}
+
+impl HerdrRowDetails {
+    fn is_present(&self) -> bool {
+        self.working_directory.is_some() || self.branch_entry.is_some()
+    }
+}
+
+fn herdr_row_details(workspace_pane: &HerdrWorkspacePane, app: &AppContext) -> HerdrRowDetails {
+    let view = workspace_pane.workspace_view(app);
+    let details = view.as_ref(app).sidebar_details(app);
+    let home_dir = dirs::home_dir();
+    herdr_row_details_from(
+        details.directory,
+        details.git,
+        home_dir.as_deref().and_then(Path::to_str),
+    )
+}
+
+fn herdr_row_details_from(
+    directory: Option<&Path>,
+    git: Option<DirectoryGitContext>,
+    home_dir: Option<&str>,
+) -> HerdrRowDetails {
+    let working_directory = directory
+        .map(|directory| {
+            warp_util::path::user_friendly_path(&directory.to_string_lossy(), home_dir).to_string()
+        })
+        .filter(|directory| !directory.trim().is_empty());
+    let branch_entry = git.and_then(|git| {
+        let pull_request_label = git
+            .pull_request_url
+            .as_deref()
+            .map(terminal_pull_request_badge_label)
+            .and_then(|label| normalize_summary_text(&label));
+        Some(VerticalTabsSummaryBranchEntry {
+            repo_path: git.repo_path,
+            branch_name: normalize_summary_text(&git.branch)?,
+            diff_stats: git.diff_stats,
+            pull_request_label,
+            pull_request_url: git.pull_request_url,
+        })
+    });
+    HerdrRowDetails {
+        working_directory,
+        branch_entry,
+    }
+}
+
+/// The one line a compact row shows under a Herdr workspace's label, chosen the way a terminal's
+/// compact row chooses it; the flag says whether it is a branch name.
+fn herdr_compact_subtitle(
+    row: &HerdrRowDetails,
+    setting: VerticalTabsCompactSubtitle,
+) -> Option<(String, bool)> {
+    match setting {
+        VerticalTabsCompactSubtitle::Branch => compact_branch_subtitle_display(
+            row.branch_entry
+                .as_ref()
+                .map(|entry| entry.branch_name.as_str()),
+            row.working_directory.as_deref(),
+        ),
+        VerticalTabsCompactSubtitle::WorkingDirectory => row
+            .working_directory
+            .clone()
+            .map(|working_directory| (working_directory, false)),
+        VerticalTabsCompactSubtitle::Command => None,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3559,14 +3638,21 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         theme,
     );
 
+    let herdr_row = match &props.typed {
+        TypedPane::HerdrWorkspace(workspace_pane) => Some(herdr_row_details(workspace_pane, app)),
+        _ => None,
+    };
+
     // Top-align the icon when there are multiple lines of content so it sits next to
     // the first line; center it for single-line rows (Settings, Notebook with no subtitle, etc.).
-    let icon_alignment =
-        if matches!(props.typed, TypedPane::Terminal(_)) || !effective_subtitle.is_empty() {
-            CrossAxisAlignment::Start
-        } else {
-            CrossAxisAlignment::Center
-        };
+    let icon_alignment = if matches!(props.typed, TypedPane::Terminal(_))
+        || !effective_subtitle.is_empty()
+        || herdr_row.as_ref().is_some_and(HerdrRowDetails::is_present)
+    {
+        CrossAxisAlignment::Start
+    } else {
+        CrossAxisAlignment::Center
+    };
 
     let text_content = if let TypedPane::Terminal(terminal_pane) = &props.typed {
         render_terminal_row_content(
@@ -3637,6 +3723,25 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             );
         }
 
+        if let Some(row) = &herdr_row {
+            if let Some(working_directory) = &row.working_directory {
+                content_col.add_child(render_text_line(
+                    working_directory,
+                    theme.sub_text_color(theme.background()),
+                    ClipConfig::start(),
+                    appearance,
+                ));
+            }
+            if let Some(branch_entry) = &row.branch_entry {
+                content_col.add_child(render_summary_branch_line(
+                    branch_entry,
+                    Some(props.badge_mouse_states.pull_request.clone()),
+                    chip_entrypoint_for_granularity(props.display_granularity),
+                    appearance,
+                ));
+            }
+        }
+
         content_col.finish()
     };
 
@@ -3664,6 +3769,7 @@ enum TypedPane<'a> {
     AIFact,
     AIDocument,
     ExecutionProfileEditor,
+    HerdrWorkspace(&'a HerdrWorkspacePane),
     Other,
 }
 
@@ -3700,7 +3806,7 @@ impl TypedPane<'_> {
             TypedPane::AIFact => SummaryPaneKind::AIFact,
             TypedPane::AIDocument => SummaryPaneKind::AIDocument,
             TypedPane::ExecutionProfileEditor => SummaryPaneKind::ExecutionProfileEditor,
-            TypedPane::Other => SummaryPaneKind::Other,
+            TypedPane::HerdrWorkspace(_) | TypedPane::Other => SummaryPaneKind::Other,
         }
     }
 
@@ -3726,6 +3832,7 @@ impl TypedPane<'_> {
             TypedPane::AIFact => "Rules",
             TypedPane::AIDocument => "Plan",
             TypedPane::ExecutionProfileEditor => "Execution Profile",
+            TypedPane::HerdrWorkspace(_) => "Herdr Workspace",
             TypedPane::Other => "Other",
         }
     }
@@ -3748,6 +3855,7 @@ impl TypedPane<'_> {
             | TypedPane::AIFact
             | TypedPane::AIDocument
             | TypedPane::ExecutionProfileEditor
+            | TypedPane::HerdrWorkspace(_)
             | TypedPane::Other => None,
         }
     }
@@ -3769,7 +3877,7 @@ impl TypedPane<'_> {
             TypedPane::AIFact => WarpIcon::BookOpen,
             TypedPane::AIDocument => WarpIcon::Compass,
             TypedPane::ExecutionProfileEditor => WarpIcon::Lightning,
-            TypedPane::Other => WarpIcon::File,
+            TypedPane::HerdrWorkspace(_) | TypedPane::Other => WarpIcon::File,
         }
     }
 }
@@ -3923,6 +4031,23 @@ fn build_vertical_tabs_summary_data(
                     None,
                 );
             }
+            TypedPane::HerdrWorkspace(workspace_pane) => {
+                push_normalized_unique_summary_label(
+                    &mut primary_labels,
+                    &mut primary_seen,
+                    &pane_title,
+                    None,
+                );
+                let row = herdr_row_details(workspace_pane, app);
+                if let Some(working_directory) = row.working_directory {
+                    push_normalized_unique_summary_text(
+                        &mut working_directories,
+                        &mut working_directory_seen,
+                        &working_directory,
+                    );
+                }
+                branch_entries.extend(row.branch_entry);
+            }
         }
     }
 
@@ -4061,6 +4186,20 @@ impl<'a> PaneProps<'a> {
             | TypedPane::ExecutionProfileEditor
             | TypedPane::Other => {
                 non_terminal_search_text_fragments(self.generated_or_tab_title(), &self.subtitle)
+            }
+            TypedPane::HerdrWorkspace(workspace_pane) => {
+                let mut fragments = non_terminal_search_text_fragments(
+                    self.generated_or_tab_title(),
+                    &self.subtitle,
+                );
+                let row = herdr_row_details(workspace_pane, app);
+                fragments.extend(row.working_directory);
+                if let Some(entry) = row.branch_entry {
+                    fragments.push(entry.branch_name);
+                    fragments.extend(entry.pull_request_label);
+                    fragments.extend(entry.diff_stats.as_ref().map(vtab_diff_stats_text));
+                }
+                fragments
             }
         };
         pane_search_text_fragments(
@@ -4492,9 +4631,12 @@ impl PaneGroup {
             IPaneType::ExecutionProfileEditor => TypedPane::ExecutionProfileEditor,
             IPaneType::CustomRouterEditor
             | IPaneType::GetStarted
-            | IPaneType::HerdrWorkspace
             | IPaneType::NetworkLog
             | IPaneType::DeferredPlaceholder => TypedPane::Other,
+            IPaneType::HerdrWorkspace => TypedPane::HerdrWorkspace(
+                self.downcast_pane_by_id::<HerdrWorkspacePane>(pane_id)
+                    .expect("IPaneType::HerdrWorkspace must correspond to a HerdrWorkspacePane"),
+            ),
             #[cfg(test)]
             IPaneType::Dummy => TypedPane::Other,
         }
@@ -7196,6 +7338,7 @@ fn typed_pane_warp_drive_object_type(typed: &TypedPane<'_>) -> Option<DriveObjec
         | TypedPane::Settings
         | TypedPane::EnvironmentManagement
         | TypedPane::ExecutionProfileEditor
+        | TypedPane::HerdrWorkspace(_)
         | TypedPane::Other => None,
     }
 }
@@ -7223,6 +7366,7 @@ fn render_detail_section(
         | TypedPane::Settings
         | TypedPane::EnvironmentManagement
         | TypedPane::ExecutionProfileEditor
+        | TypedPane::HerdrWorkspace(_)
         | TypedPane::Other => Empty::new().finish(),
     }
 }
@@ -7530,20 +7674,40 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
                 appearance,
                 app,
             );
-            let subtitle = if effective_subtitle.is_empty() {
-                None
-            } else {
-                let subtitle_clip = if matches!(props.typed, TypedPane::Code(_)) {
-                    ClipConfig::start()
-                } else {
-                    ClipConfig::ellipsis()
-                };
-                Some(
-                    Text::new_inline(effective_subtitle, font_family, 10.)
-                        .with_clip(subtitle_clip)
+            let herdr_subtitle = match &props.typed {
+                TypedPane::HerdrWorkspace(workspace_pane) => herdr_compact_subtitle(
+                    &herdr_row_details(workspace_pane, app),
+                    compact_subtitle,
+                ),
+                _ => None,
+            };
+            let subtitle = match herdr_subtitle {
+                Some((text, true)) => Some(render_git_branch_text(
+                    &text,
+                    sub_text_color,
+                    10.,
+                    appearance,
+                )),
+                Some((text, false)) => Some(
+                    Text::new_inline(text, font_family, 10.)
+                        .with_clip(ClipConfig::start())
                         .with_color(sub_text_color.into())
                         .finish(),
-                )
+                ),
+                None if effective_subtitle.is_empty() => None,
+                None => {
+                    let subtitle_clip = if matches!(props.typed, TypedPane::Code(_)) {
+                        ClipConfig::start()
+                    } else {
+                        ClipConfig::ellipsis()
+                    };
+                    Some(
+                        Text::new_inline(effective_subtitle, font_family, 10.)
+                            .with_clip(subtitle_clip)
+                            .with_color(sub_text_color.into())
+                            .finish(),
+                    )
+                }
             };
             (title, subtitle)
         };
