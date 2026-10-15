@@ -873,6 +873,11 @@ mod tools_panel_scope {
                 1000 => scope(&app, &workspace) == local(&repo),
                 "the panel was scoped to {:?}", scope(&app, &workspace)
             );
+
+            let review = workspace.read(&app, |workspace, ctx| {
+                workspace.review_repo_and_session(workspace.active_tab_pane_group(), ctx)
+            });
+            assert_eq!(review, Some((Some(LocalOrRemotePath::Local(repo)), None)));
         });
     }
 

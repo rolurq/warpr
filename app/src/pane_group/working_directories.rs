@@ -503,6 +503,14 @@ impl WorkingDirectoriesModel {
         self.selected_review_repo.get(&pane_group_id)
     }
 
+    /// The repository the pane group's focused terminal or Herdr directory is in, if any.
+    pub fn focused_repo_for_pane_group(
+        &self,
+        pane_group_id: EntityId,
+    ) -> Option<&LocalOrRemotePath> {
+        self.focused_repo.get(&pane_group_id)?.as_ref()
+    }
+
     /// Persist the repository the user manually selected for the code review panel
     /// in a given pane group. This is only called for explicit user-driven
     /// selections (e.g. via the dropdown), not for auto-selected defaults.
@@ -1067,6 +1075,13 @@ impl WorkingDirectoriesModel {
     }
 
     pub fn get_selected_review_repo(&self, _pane_group_id: EntityId) -> Option<&LocalOrRemotePath> {
+        None
+    }
+
+    pub fn focused_repo_for_pane_group(
+        &self,
+        _pane_group_id: EntityId,
+    ) -> Option<&LocalOrRemotePath> {
         None
     }
 
