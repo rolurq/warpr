@@ -323,6 +323,58 @@ impl SessionScript {
         self
     }
 
+    /// Adds a workspace with one Herdr tab holding one pane, as `workspace.create` does, and
+    /// returns the id Herdr gives it. The new workspace becomes the focused one when `focus` is set.
+    pub(crate) fn create_workspace(&mut self, label: Option<&str>, focus: bool) -> String {
+        self.next_workspace_id += 1;
+        let id = self.next_workspace_id;
+        let label = label.map_or_else(|| id.to_string(), str::to_owned);
+        self.workspaces.push(WorkspaceScript {
+            id,
+            label: label.clone(),
+            tabs: vec![TabScript::new("1", PaneTree::pane())],
+            active_tab_label: None,
+            tokens: Vec::new(),
+        });
+        if focus {
+            self.focused_label = Some(label);
+        }
+        format!("w{id}")
+    }
+
+    /// Adds a Herdr tab with one pane to the workspace `workspace_id`, as `tab.create` does, and
+    /// returns the id Herdr gives it, or `None` when there is no such workspace. With `focus` the
+    /// tab becomes the workspace's active one and the workspace becomes the focused one.
+    pub(crate) fn create_tab(
+        &mut self,
+        workspace_id: &str,
+        label: Option<&str>,
+        focus: bool,
+    ) -> Option<String> {
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| format!("w{}", workspace.id) == workspace_id)?;
+        let number = workspace.tabs.len() + 1;
+        let label = label.map_or_else(
+            || {
+                (number..)
+                    .map(|candidate| candidate.to_string())
+                    .find(|candidate| workspace.tabs.iter().all(|tab| &tab.label != candidate))
+                    .expect("an unused label exists")
+            },
+            str::to_owned,
+        );
+        workspace
+            .tabs
+            .push(TabScript::new(&label, PaneTree::pane()));
+        if focus {
+            workspace.active_tab_label = Some(label);
+            self.focused_label = Some(workspace.label.clone());
+        }
+        Some(format!("{workspace_id}:t{number}"))
+    }
+
     fn focused_index(&self) -> Option<usize> {
         match &self.focused_label {
             Some(label) => Some(

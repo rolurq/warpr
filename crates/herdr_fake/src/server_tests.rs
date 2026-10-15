@@ -234,3 +234,78 @@ fn a_paused_snapshot_is_computed_when_requested_and_delivered_when_released() {
     assert_eq!(label, "api");
     assert_eq!(client.snapshot_labels(), ["web"]);
 }
+
+#[test]
+fn creating_a_workspace_announces_workspace_created_and_answers_with_it() {
+    let fake = FakeHerdr::new();
+    let session = session_with(&fake, &["api"]);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe(
+        "w",
+        json!([{ "type": "workspace.created" }, { "type": "tab.created" }]),
+    );
+    let mut client = Client::connect(&session);
+
+    client.send(
+        "c",
+        "workspace.create",
+        json!({ "label": "web", "focus": true }),
+    );
+    let response = client.read().expect("a response");
+
+    assert_eq!(response["result"]["type"], "workspace_created");
+    assert_eq!(response["result"]["workspace"]["label"], "web");
+    assert_eq!(response["result"]["workspace"]["focused"], true);
+    let event = watcher.read().expect("an event");
+    assert_eq!(event["event"], "workspace_created");
+    assert_eq!(event["data"], response["result"]);
+    assert_eq!(client.snapshot_labels(), ["api", "web"]);
+}
+
+#[test]
+fn creating_a_tab_announces_tab_created_and_leaves_other_workspaces_alone() {
+    let fake = FakeHerdr::new();
+    let session = session_with(&fake, &["api", "web"]);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe("w", json!([{ "type": "tab.created" }]));
+    let mut client = Client::connect(&session);
+
+    client.send("c", "tab.create", json!({ "workspace_id": "w2" }));
+    let response = client.read().expect("a response");
+
+    assert_eq!(response["result"]["type"], "tab_created");
+    assert_eq!(response["result"]["tab"]["tab_id"], "w2:t2");
+    assert_eq!(response["result"]["tab"]["workspace_id"], "w2");
+    assert_eq!(watcher.read().expect("an event")["event"], "tab_created");
+    client.send("s", "session.snapshot", json!({}));
+    let snapshot = client.read().expect("a snapshot");
+    let tab_counts: Vec<_> = snapshot["result"]["snapshot"]["workspaces"]
+        .as_array()
+        .expect("workspaces")
+        .iter()
+        .map(|workspace| workspace["tab_count"].clone())
+        .collect();
+    assert_eq!(tab_counts, [json!(1), json!(2)]);
+}
+
+#[test]
+fn a_rejected_creation_changes_nothing_and_announces_nothing() {
+    let fake = FakeHerdr::new();
+    let session = session_with(&fake, &["api"]);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe("w", json!([{ "type": "workspace.created" }]));
+    let mut client = Client::connect(&session);
+    session.reject_next_creation("server_busy", "try again later");
+
+    client.send("c", "workspace.create", json!({}));
+    let response = client.read().expect("a response");
+
+    assert_eq!(response["error"]["code"], "server_busy");
+    assert_eq!(client.snapshot_labels(), ["api"]);
+    assert_eq!(session.emit_event("workspace_created", json!({})), 1);
+    assert_eq!(
+        watcher.read().expect("the probe event")["data"],
+        json!({}),
+        "nothing was announced before the probe"
+    );
+}

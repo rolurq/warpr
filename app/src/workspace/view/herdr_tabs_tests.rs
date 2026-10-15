@@ -536,3 +536,71 @@ fn the_agent_panel_opens_without_warps_hosted_agent_and_selecting_an_agent_goes_
         assert!(!moved_focus, "{:?}", session.served_methods());
     });
 }
+
+fn has_toasts(app: &App, workspace: &ViewHandle<Workspace>) -> bool {
+    workspace.read(app, |workspace, ctx| {
+        workspace.toast_stack.as_ref(ctx).has_toasts()
+    })
+}
+
+fn dispatch(app: &mut App, workspace: &ViewHandle<Workspace>, action: WorkspaceAction) {
+    workspace.update(app, |workspace, ctx| workspace.handle_action(&action, ctx));
+}
+
+#[test]
+fn the_new_tab_action_creates_a_herdr_workspace_that_takes_focus_through_herdrs_state() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(0, ctx));
+
+        dispatch(&mut app, &workspace, WorkspaceAction::AddDefaultTab);
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web", "3"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eventually!(
+            600 => active_tab_title(&app, &workspace) == "3",
+            "active tab was {:?}", active_tab_title(&app, &workspace)
+        );
+        assert_eq!(
+            session
+                .served_methods()
+                .iter()
+                .filter(|method| method.as_str() == "workspace.create")
+                .count(),
+            1
+        );
+    });
+}
+
+#[test]
+fn a_refused_workspace_creation_shows_an_error_and_adds_no_tab() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let session = fake.start_session("default", workspaces(&["api", "web"]));
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        session.reject_next_creation("server_busy", "try again later");
+
+        dispatch(&mut app, &workspace, WorkspaceAction::AddDefaultTab);
+
+        assert_eventually!(600 => has_toasts(&app, &workspace), "no error was shown");
+        assert_eq!(tab_titles(&app, &workspace), ["api", "web"]);
+    });
+}

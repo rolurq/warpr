@@ -19,6 +19,7 @@ impl HerdrSessionModel {
     ) {
         self.track_agents(cli.clone(), target.clone(), policy, ctx);
         let name = target.name().clone();
+        self.sessions.live_target = Some(target.clone());
         let (updates_tx, updates_rx) = async_channel::unbounded();
         self.live_session = Some(LiveSession::start(cli, target, policy, move |presented| {
             // Only fails once the model is gone, when nobody is left to present to.

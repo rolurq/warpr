@@ -13,6 +13,7 @@ mod agents;
 mod attention;
 mod cli;
 mod compat;
+mod create;
 mod desktop;
 #[cfg(unix)]
 mod events;
@@ -45,6 +46,7 @@ pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, Presented
 pub use attention::{AgentAttention, AttentionChanges};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
+pub use create::{create_herdr_tab, create_workspace};
 pub use desktop::{DesktopAction, DesktopNotifications};
 pub use live::LiveSession;
 pub use live_agents::LiveAgents;

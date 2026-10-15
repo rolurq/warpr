@@ -734,7 +734,11 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE) & id!("IsOnline")),
         EditableBinding::new(
             NEW_TAB_BINDING_NAME,
-            BindingDescription::new("Create new tab"),
+            BindingDescription::new(if FeatureFlag::HerdrWorkspaceTabs.is_enabled() {
+                "Create new workspace"
+            } else {
+                "Create new tab"
+            }),
             WorkspaceAction::AddDefaultTab,
         )
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging"))
@@ -742,7 +746,11 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
         EditableBinding::new(
             NEW_TERMINAL_TAB_BINDING_NAME,
-            BindingDescription::new("New Terminal Tab"),
+            BindingDescription::new(if FeatureFlag::HerdrWorkspaceTabs.is_enabled() {
+                "New Terminal Workspace"
+            } else {
+                "New Terminal Tab"
+            }),
             WorkspaceAction::AddTerminalTab {
                 hide_homepage: false,
             },

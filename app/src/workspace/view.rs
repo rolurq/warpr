@@ -21883,7 +21883,12 @@ impl Workspace {
         const BUTTON_WIDTH: f32 = 24. + SIDE_MENU_WIDTH;
         const BUTTON_LEFT_MARGIN: f32 = 4.;
 
-        let new_tab_tool_tip_label_text = "New Tab".to_string();
+        let new_tab_tool_tip_label_text = if crate::herdr::presents_herdr_workspaces(ctx) {
+            "New Workspace"
+        } else {
+            "New Tab"
+        }
+        .to_string();
         let new_tab_tool_tip_sublabel_text =
             keybinding_name_to_display_string(NEW_TAB_BINDING_NAME, ctx);
         let tab_configs_tool_tip_label_text = "Tab configs".to_string();
@@ -24412,6 +24417,11 @@ impl TypedActionView for Workspace {
                 {
                     self.unpin_tab_group(group_id, ctx);
                 }
+            }
+            AddDefaultTab | AddTerminalTab { .. }
+                if crate::herdr::presents_herdr_workspaces(ctx) =>
+            {
+                self.create_herdr_workspace(ctx)
             }
             AddDefaultTab => {
                 let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);

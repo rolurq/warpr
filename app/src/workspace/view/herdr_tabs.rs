@@ -13,6 +13,7 @@ use crate::app_state::{
 use crate::herdr::{HerdrSessionEvent, HerdrSessionModel};
 use crate::pane_group::PanesLayout;
 use crate::settings::AISettings;
+use crate::view_components::DismissibleToast;
 
 impl Workspace {
     fn presents_herdr_workspaces(ctx: &ViewContext<Self>) -> bool {
@@ -95,6 +96,34 @@ impl Workspace {
         );
     }
 
+    /// Asks Herdr to create a workspace in the session this window presents. Nothing is added
+    /// here: the workspace gets its tab, and the focus, when the session presents it. A refused
+    /// request is shown to the user.
+    pub(super) fn create_herdr_workspace(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.show_herdr_error(
+                "Could not create a workspace: no Herdr session is connected",
+                ctx,
+            );
+            return;
+        };
+        ctx.spawn(
+            async move { herdr_client::create_workspace(&target) },
+            |me, result, ctx| {
+                if let Err(failure) = result {
+                    log::error!("Could not create a Herdr workspace: {failure}");
+                    me.show_herdr_error(&format!("Could not create a workspace: {failure}"), ctx);
+                }
+            },
+        );
+    }
+
+    fn show_herdr_error(&mut self, message: &str, ctx: &mut ViewContext<Self>) {
+        self.toast_stack.update(ctx, |toast_stack, ctx| {
+            toast_stack.add_ephemeral_toast(DismissibleToast::error(message.to_owned()), ctx);
+        });
+    }
+
     /// Brings this window's top-level tabs in line with what Herdr presents: one tab per
     /// workspace, in Herdr's order, or a single tab that says why when warpr refuses to connect
     /// to Herdr. A tab whose workspace is still there is kept, so what the user is looking at
@@ -102,8 +131,9 @@ impl Workspace {
     ///
     /// The window's own tabs are replaced the first time workspaces are presented, and the one
     /// Herdr has focused is selected. Later, the selected tab stays selected unless its workspace
-    /// closed. Leaves the tabs alone while Herdr is connecting, has no workspaces or is
-    /// unreachable, so the window is never left without a tab.
+    /// closed or a new workspace appears that Herdr has focused. Leaves the tabs alone while
+    /// Herdr is connecting, has no workspaces or is unreachable, so the window is never left
+    /// without a tab.
     pub(super) fn present_herdr_workspaces(&mut self, ctx: &mut ViewContext<Self>) {
         if !Self::presents_herdr_workspaces(ctx) {
             return;
@@ -152,6 +182,7 @@ impl Workspace {
             .into_iter()
             .map(|(pane_group_id, workspace_id)| (workspace_id, pane_group_id))
             .collect();
+        let mut focused_new_tab = None;
         for workspace in &presented.workspaces {
             if !tab_of_workspace.contains_key(&workspace.id) {
                 let contents = HerdrWorkspaceContents::Workspace(HerdrWorkspaceSnapshot {
@@ -159,6 +190,11 @@ impl Workspace {
                     label: workspace.label.clone(),
                 });
                 let pane_group_id = self.add_herdr_tab(contents, ctx);
+                if !is_first_presentation
+                    && presented.focused_workspace.as_ref() == Some(&workspace.id)
+                {
+                    focused_new_tab = Some(pane_group_id);
+                }
                 tab_of_workspace.insert(workspace.id.clone(), pane_group_id);
             }
         }
@@ -178,9 +214,12 @@ impl Workspace {
             .collect();
         self.order_herdr_workspace_tabs(&ordered_tabs, ctx);
 
-        let selected_tab = selected_before
-            .filter(|_| !is_first_presentation)
-            .filter(|pane_group_id| self.tab_index_for_pane_group(*pane_group_id).is_some())
+        let selected_tab = focused_new_tab
+            .or_else(|| {
+                selected_before
+                    .filter(|_| !is_first_presentation)
+                    .filter(|pane_group_id| self.tab_index_for_pane_group(*pane_group_id).is_some())
+            })
             .or_else(|| {
                 let focused = presented.focused_workspace.as_ref()?;
                 tab_of_workspace.get(focused).copied()
