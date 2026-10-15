@@ -108,27 +108,26 @@ fn every_agent_is_listed_with_its_name_kind_state_and_location() {
         let _session = fake.start_session("default", fleet(AgentState::Blocked));
         let _panel = open_panel(&mut app, &fake);
 
-        assert_eventually!(
-            600 => rows(&app).len() == 2,
-            "rows were {:?}", rows(&app)
-        );
+        let expected = [
+            row(
+                "w1:p1",
+                "builder",
+                AgentState::Blocked,
+                "claude · api › server › w1:p1",
+            ),
+            row(
+                "w1:p3",
+                "codex",
+                AgentState::Idle,
+                "codex · api › logs › w1:p3",
+            ),
+        ];
 
-        assert_eq!(
-            rows(&app),
-            [
-                row(
-                    "w1:p1",
-                    "builder",
-                    AgentState::Blocked,
-                    "claude · api › server › w1:p1"
-                ),
-                row(
-                    "w1:p3",
-                    "codex",
-                    AgentState::Idle,
-                    "codex · api › logs › w1:p3"
-                ),
-            ]
+        // The rows exist as soon as the agents are listed, but name their workspace and tab by
+        // id until the session's own presentation, which arrives separately, has the labels.
+        assert_eventually!(
+            600 => rows(&app) == expected,
+            "rows were {:?}", rows(&app)
         );
     });
 }

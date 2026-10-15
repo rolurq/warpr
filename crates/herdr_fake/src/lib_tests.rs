@@ -183,6 +183,36 @@ fn invocations_record_args_and_herdr_environment() {
 }
 
 #[test]
+fn concurrent_invocations_are_each_recorded_whole() {
+    const CONCURRENT: usize = 48;
+    let mut fake = FakeHerdr::new();
+    fake.script_command(&["pane", "list"], "", 0);
+
+    let runs: Vec<_> = (0..CONCURRENT)
+        .map(|_| {
+            let binary = fake.binary_path().to_owned();
+            std::thread::spawn(move || {
+                Command::new(binary)
+                    .args(["pane", "list"])
+                    .output()
+                    .unwrap()
+            })
+        })
+        .collect();
+    for run in runs {
+        run.join().unwrap();
+    }
+
+    let invocations = fake.invocations();
+    assert_eq!(invocations.len(), CONCURRENT);
+    assert!(
+        invocations
+            .iter()
+            .all(|invocation| invocation.args == ["pane", "list"])
+    );
+}
+
+#[test]
 fn scripted_tabs_are_reported_with_herdr_ids_and_split_geometry() {
     let fake = FakeHerdr::new();
     let session = fake.start_session(
