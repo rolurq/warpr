@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use herdr_client::{
     AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput, PaneOwnership,
@@ -78,6 +78,8 @@ pub struct HerdrWorkspaceView {
     focus_handle: Option<PaneFocusHandle>,
     window_id: WindowId,
     view_id: EntityId,
+    /// The directory last reported to the pane group.
+    reported_directory: Option<PathBuf>,
 }
 
 impl HerdrWorkspaceView {
@@ -120,6 +122,7 @@ impl HerdrWorkspaceView {
             focus_handle: None,
             window_id: ctx.window_id(),
             view_id: ctx.view_id(),
+            reported_directory: None,
         };
         view.update_shown_panes(ctx);
         view.sync_sidebar_details(ctx);
@@ -202,10 +205,22 @@ impl HerdrWorkspaceView {
         ctx.notify();
     }
 
-    /// Tells the pane registry which panes this view shows: those of the Herdr tab on screen.
+    /// Tells the pane registry which panes this view shows, those of the Herdr tab on screen,
+    /// and the pane group when the directory this view presents changed.
     fn update_shown_panes(&mut self, ctx: &mut ViewContext<Self>) {
         let shown = self.shown_panes(ctx);
         self.show_panes(shown, ctx);
+        self.report_directory_change(ctx);
+    }
+
+    /// Emits [`PaneEvent::RepoChanged`] when [`Self::focused_pane_directory`] differs from the
+    /// last one reported, so that what is scoped to it can follow.
+    fn report_directory_change(&mut self, ctx: &mut ViewContext<Self>) {
+        let directory = self.focused_pane_directory(ctx).map(Path::to_path_buf);
+        if directory != self.reported_directory {
+            self.reported_directory = directory;
+            ctx.emit(PaneEvent::RepoChanged);
+        }
     }
 
     fn show_panes(&mut self, panes: Vec<PaneId>, ctx: &mut ViewContext<Self>) {

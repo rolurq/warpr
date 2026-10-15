@@ -15608,6 +15608,10 @@ impl Workspace {
             .as_ref(ctx)
             .active_session_view(ctx)
             .map(|terminal_view| terminal_view.id());
+        let herdr_directory = pane_group
+            .as_ref(ctx)
+            .herdr_workspace_directory(ctx)
+            .map(Path::to_path_buf);
 
         self.working_directories_model.update(ctx, |model, ctx| {
             model.refresh_working_directories_for_pane_group(
@@ -15615,6 +15619,7 @@ impl Workspace {
                 terminal_cwds,
                 local_paths,
                 focused_terminal_id,
+                herdr_directory,
                 ctx,
             );
         });
@@ -20979,6 +20984,7 @@ impl Workspace {
             .filter(|id| !pane_group.is_pane_hidden_for_close(*id))
             .any(|id| {
                 id.is_terminal_pane()
+                    || id.is_herdr_workspace_pane()
                     || id.is_file_pane()
                     || id.is_code_pane()
                     || id.is_code_diff_pane()

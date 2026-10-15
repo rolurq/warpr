@@ -595,18 +595,20 @@ impl WorkingDirectoriesModel {
     }
 
     /// Refreshes the working directories for a pane group from terminal CWDs
-    /// (both local and remote) and code editor paths.
+    /// (both local and remote), code editor paths and the directory of a Herdr workspace.
     ///
-    /// If `focused_terminal_id` is provided, the repo_to_terminal map will prioritize
+    /// If `focused_terminal_id` is provided, the repo_to_terminal map will prioritize it.
+    /// `herdr_directory` has no Warp terminal behind it, so it maps to none.
     pub fn refresh_working_directories_for_pane_group(
         &mut self,
         pane_group_id: EntityId,
         terminal_cwds: Vec<(EntityId, LocalOrRemotePath)>,
         editor_paths: Vec<(EntityId, LocalOrRemotePath)>,
         focused_terminal_id: Option<EntityId>,
+        herdr_directory: Option<PathBuf>,
         ctx: &mut ModelContext<Self>,
     ) {
-        if terminal_cwds.is_empty() && editor_paths.is_empty() {
+        if terminal_cwds.is_empty() && editor_paths.is_empty() && herdr_directory.is_none() {
             self.handle_empty_pane_group(pane_group_id, ctx);
             return;
         }
@@ -638,6 +640,8 @@ impl WorkingDirectoriesModel {
         };
 
         let root_for_raw_path = |raw_path: &str| normalize_cwd(raw_path).map(root_for_path);
+        let herdr_root =
+            herdr_directory.and_then(|directory| root_for_raw_path(&directory.to_string_lossy()));
 
         // Split terminal CWDs into local and remote buckets.
         let mut local_terminal_cwds: Vec<(EntityId, String)> = Vec::new();
@@ -657,6 +661,7 @@ impl WorkingDirectoriesModel {
         let mut file_path_ancestors: HashSet<PathBuf> = local_terminal_cwds
             .iter()
             .filter_map(|(_, cwd)| root_for_raw_path(cwd))
+            .chain(herdr_root.clone())
             .collect();
 
         // Split editor paths into local and remote buckets.
@@ -694,6 +699,7 @@ impl WorkingDirectoriesModel {
             .iter()
             .chain(local_cwds.iter())
             .filter_map(|(_, cwd)| root_for_raw_path(cwd))
+            .chain(herdr_root.clone())
             .collect();
 
         // Build remote root paths for pane_groups from remote terminal CWDs
@@ -787,7 +793,10 @@ impl WorkingDirectoriesModel {
 
         // Second pass: if we have a focused terminal, ensure its repo maps to it
         // This ensures the dropdown selects the correct repo when a pane is focused or CD'd
-        let mut focused_repo: Option<LocalOrRemotePath> = None;
+        let mut focused_repo: Option<LocalOrRemotePath> = herdr_root.as_ref().and_then(|root| {
+            DetectedRepositories::as_ref(ctx)
+                .get_root_for_path(&LocalOrRemotePath::Local(root.clone()))
+        });
         if let Some(focused_id) = focused_terminal_id {
             let mut repos_to_insert = Vec::new();
             for (dir, terminal_id) in &new_root_to_terminal {
@@ -1020,6 +1029,7 @@ impl WorkingDirectoriesModel {
         _terminal_cwds: Vec<(EntityId, LocalOrRemotePath)>,
         _editor_paths: Vec<(EntityId, LocalOrRemotePath)>,
         _focused_terminal_id: Option<EntityId>,
+        _herdr_directory: Option<PathBuf>,
         _ctx: &mut ModelContext<Self>,
     ) {
     }

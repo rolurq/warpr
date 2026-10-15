@@ -430,6 +430,10 @@ impl PaneId {
         matches!(self.0.pane_type, IPaneType::Terminal)
     }
 
+    pub fn is_herdr_workspace_pane(&self) -> bool {
+        matches!(self.0.pane_type, IPaneType::HerdrWorkspace)
+    }
+
     pub fn is_notebook_pane(&self) -> bool {
         matches!(self.0.pane_type, IPaneType::Notebook)
     }

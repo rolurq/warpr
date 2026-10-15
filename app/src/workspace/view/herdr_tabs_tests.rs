@@ -772,3 +772,102 @@ fn the_user_cannot_create_groups_in_a_herdr_window() {
         );
     });
 }
+
+#[cfg(feature = "local_fs")]
+mod tools_panel_scope {
+    use std::path::{Path, PathBuf};
+
+    use herdr_fake::{PaneTree, TabScript};
+
+    use super::*;
+    use crate::code::buffer_location::LocalOrRemotePath;
+
+    fn directory_named(parent: &Path, name: &str) -> PathBuf {
+        let path = parent.join(name);
+        std::fs::create_dir_all(&path).expect("create directory");
+        dunce::canonicalize(path).expect("canonical directory")
+    }
+
+    fn two_workspaces(api_cwd: &Path, web_cwd: &Path) -> SessionScript {
+        SessionScript::new()
+            .workspace_with_tabs(
+                "api",
+                [TabScript::new("server", PaneTree::pane()).cwd(0, api_cwd.to_str().unwrap())],
+            )
+            .workspace_with_tabs(
+                "web",
+                [TabScript::new("site", PaneTree::pane()).cwd(0, web_cwd.to_str().unwrap())],
+            )
+    }
+
+    /// What the tools panel is scoped to in the shown tab.
+    fn scope(app: &App, workspace: &ViewHandle<Workspace>) -> Vec<LocalOrRemotePath> {
+        workspace.read(app, |workspace, ctx| {
+            let pane_group_id = workspace.active_tab_pane_group().id();
+            workspace
+                .working_directories_model
+                .as_ref(ctx)
+                .most_recent_directories_for_pane_group(pane_group_id)
+                .map(|directories| directories.map(|directory| directory.path).collect())
+                .unwrap_or_default()
+        })
+    }
+
+    fn local(path: &Path) -> Vec<LocalOrRemotePath> {
+        vec![LocalOrRemotePath::Local(path.to_path_buf())]
+    }
+
+    #[test]
+    fn the_tools_panel_follows_the_focused_pane_across_workspaces_and_snapshots() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let api = directory_named(temp_dir.path(), "api");
+            let api_src = directory_named(temp_dir.path(), "api-src");
+            let web = directory_named(temp_dir.path(), "web");
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces(&api, &web));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+            assert_eventually!(
+                600 => scope(&app, &workspace) == local(&api),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.set_active_tab_index(1, ctx)
+            });
+            assert_eq!(scope(&app, &workspace), local(&web));
+
+            session.set_script(two_workspaces(&api, &api_src));
+            announce(&session, "pane_updated");
+            assert_eventually!(
+                600 => scope(&app, &workspace) == local(&api_src),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+        });
+    }
+
+    #[test]
+    fn a_herdr_workspace_has_a_tools_panel_to_open() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", workspaces(&["api"]));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+            assert_eventually!(
+                200 => tab_titles(&app, &workspace) == ["api"],
+                "tabs were {:?}", tab_titles(&app, &workspace)
+            );
+
+            assert!(workspace.read(&app, |workspace, ctx| {
+                Workspace::should_enable_file_tree_and_global_search_for_pane_group(
+                    workspace.active_tab_pane_group().as_ref(ctx),
+                )
+            }));
+        });
+    }
+}
