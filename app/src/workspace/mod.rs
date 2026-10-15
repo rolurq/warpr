@@ -1093,7 +1093,9 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::PinActiveTabGroup,
         )
         .with_enabled(|| {
-            FeatureFlag::PinnedTabs.is_enabled() && FeatureFlag::GroupedTabs.is_enabled()
+            FeatureFlag::PinnedTabs.is_enabled()
+                && FeatureFlag::GroupedTabs.is_enabled()
+                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
         })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
@@ -1108,7 +1110,9 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::UnpinActiveTabGroup,
         )
         .with_enabled(|| {
-            FeatureFlag::PinnedTabs.is_enabled() && FeatureFlag::GroupedTabs.is_enabled()
+            FeatureFlag::PinnedTabs.is_enabled()
+                && FeatureFlag::GroupedTabs.is_enabled()
+                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
         })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
