@@ -616,8 +616,8 @@ fn the_sidebar_is_told_when_the_selection_or_a_snapshot_changes_the_directory() 
 fn count_directory_changes(
     app: &mut App,
     view: &ViewHandle<HerdrWorkspaceView>,
-) -> std::rc::Rc<std::cell::Cell<usize>> {
-    let changes = std::rc::Rc::new(std::cell::Cell::new(0));
+) -> Rc<Cell<usize>> {
+    let changes = Rc::new(Cell::new(0));
     app.update(|ctx| {
         let changes = changes.clone();
         ctx.subscribe_to_view(view, move |_, event, _| {

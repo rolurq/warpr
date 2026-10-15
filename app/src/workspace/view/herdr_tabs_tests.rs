@@ -850,6 +850,33 @@ mod tools_panel_scope {
     }
 
     #[test]
+    fn a_directory_inside_a_git_repository_scopes_the_tools_panel_to_that_repository() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let repo = directory_named(temp_dir.path(), "repo");
+            let status = std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&repo)
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git init failed");
+            let nested = directory_named(&repo, "src");
+            let web = directory_named(temp_dir.path(), "web");
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces(&nested, &web));
+            connect_to(&mut app, &fake, "default");
+            let workspace = mock_workspace(&mut app);
+
+            assert_eventually!(
+                1000 => scope(&app, &workspace) == local(&repo),
+                "the panel was scoped to {:?}", scope(&app, &workspace)
+            );
+        });
+    }
+
+    #[test]
     fn a_herdr_workspace_has_a_tools_panel_to_open() {
         let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
         App::test((), |mut app| async move {

@@ -597,8 +597,7 @@ impl WorkingDirectoriesModel {
     /// Refreshes the working directories for a pane group from terminal CWDs
     /// (both local and remote), code editor paths and the directory of a Herdr workspace.
     ///
-    /// If `focused_terminal_id` is provided, the repo_to_terminal map will prioritize it.
-    /// `herdr_directory` has no Warp terminal behind it, so it maps to none.
+    /// If `focused_terminal_id` is provided, the repo_to_terminal map will prioritize
     pub fn refresh_working_directories_for_pane_group(
         &mut self,
         pane_group_id: EntityId,
