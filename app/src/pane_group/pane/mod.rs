@@ -1136,6 +1136,8 @@ pub enum PaneEvent {
     AppStateChanged,
     /// Repo for this pane's terminal has changed
     RepoChanged,
+    /// What the vertical tabs show about this pane beyond its title changed.
+    SidebarDetailsChanged,
     /// A remote server resolved the repo root for a session in this pane.
     RemoteRepoNavigated {
         remote_path: RemotePath,

@@ -99,7 +99,7 @@ use crate::palette::PaletteMode;
 use crate::pane_group::focus_state::PaneGroupFocusEvent;
 use crate::pane_group::pane::ActionOrigin;
 use crate::pane_group::pane::get_started_pane::GetStartedPane;
-use crate::pane_group::pane::herdr_workspace_pane::HerdrWorkspacePane;
+pub use crate::pane_group::pane::herdr_workspace_pane::HerdrWorkspacePane;
 #[cfg(not(target_family = "wasm"))]
 use crate::pane_group::pane::terminal_pane::{
     host_terminal_shared_session_source_type, inherit_share_for_local_child,
@@ -5191,6 +5191,7 @@ impl PaneGroup {
             PaneEvent::AppStateChanged => {
                 ctx.emit(Event::AppStateChanged);
             }
+            PaneEvent::SidebarDetailsChanged => ctx.emit(Event::PaneTitleUpdated),
             PaneEvent::NewPaneInAIMode { initial_query } => {
                 self.add_terminal_pane_in_agent_mode(initial_query.as_deref(), None, ctx)
             }

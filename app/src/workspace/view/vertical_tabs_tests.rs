@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::iter::once;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
@@ -8,32 +8,33 @@ use warpui::EntityId;
 use warpui::elements::PositionedElementOffsetBounds;
 
 use super::{
-    AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText,
-    TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
+    AgentTabTextPreference, HerdrRowDetails, SummaryPaneKind, SummaryPaneKindIcons,
+    TerminalAgentText, TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
     VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
     VerticalTabsSummaryPrimaryLabel, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, group_display_name, group_name_highlight_indices,
-    matched_group_ids, merge_group_name_matches, non_terminal_search_text_fragments,
-    pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
-    push_normalized_unique_summary_label, search_fragments_contain_query,
-    select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
-    should_show_tab_group_header, shows_synced_inputs_indicator,
-    sort_summary_primary_labels_status_first, summary_overflow_count,
-    summary_search_text_fragments, tab_admitted_by_group_name, terminal_kind_badge_label,
-    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
-    terminal_title_fallback_font, uses_outer_group_container, visible_pane_ids_for_detail_target,
-    vtab_diff_stats_text,
+    herdr_compact_subtitle, herdr_row_details_from, matched_group_ids, merge_group_name_matches,
+    non_terminal_search_text_fragments, pane_ids_for_display_granularity,
+    pane_search_text_fragments, preferred_agent_tab_titles, push_normalized_unique_summary_label,
+    search_fragments_contain_query, select_summary_pane_kind_icons,
+    should_keep_detail_sidecar_visible_for_mouse_position, should_show_tab_group_header,
+    shows_synced_inputs_indicator, sort_summary_primary_labels_status_first,
+    summary_overflow_count, summary_search_text_fragments, tab_admitted_by_group_name,
+    terminal_kind_badge_label, terminal_primary_line_data, terminal_pull_request_badge_label,
+    terminal_search_text_fragments, terminal_title_fallback_font, uses_outer_group_container,
+    visible_pane_ids_for_detail_target, vtab_diff_stats_text,
 };
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::context_chips::display_chip::GitLineChanges;
+use crate::herdr::DirectoryGitContext;
 use crate::pane_group::pane::IPaneType;
 use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::{ShortcutModifierKind, reveals_shortcut_hints};
 use crate::terminal::CLIAgent;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
-use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
+use crate::workspace::tab_settings::{VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity};
 
 fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
     VerticalTabsSummaryPrimaryLabel {
@@ -1476,5 +1477,100 @@ fn group_name_highlights_match_untitled_fallback() {
     assert_eq!(
         group_name_highlight_indices(&group_display_name(&tab_group(None)), "group"),
         vec![4, 5, 6, 7, 8]
+    );
+}
+
+fn herdr_git(pull_request_url: Option<&str>) -> DirectoryGitContext {
+    DirectoryGitContext {
+        repo_path: PathBuf::from("/home/me/api"),
+        branch: "feature/sidebar".to_string(),
+        diff_stats: Some(GitLineChanges {
+            files_changed: 2,
+            lines_added: 10,
+            lines_removed: 3,
+        }),
+        pull_request_url: pull_request_url.map(str::to_string),
+    }
+}
+
+#[test]
+fn herdr_row_outside_a_repository_shows_only_the_directory() {
+    let details = herdr_row_details_from(Some(Path::new("/srv/logs")), None, Some("/home/me"));
+
+    assert_eq!(
+        details,
+        HerdrRowDetails {
+            working_directory: Some("/srv/logs".to_string()),
+            branch_entry: None,
+        }
+    );
+}
+
+#[test]
+fn herdr_row_in_a_repository_has_the_branch_entry_a_terminal_would_build() {
+    let url = "https://github.com/acme/api/pull/42";
+    let details = herdr_row_details_from(
+        Some(Path::new("/home/me/api/src")),
+        Some(herdr_git(Some(url))),
+        Some("/home/me"),
+    );
+
+    assert_eq!(details.working_directory.as_deref(), Some("~/api/src"));
+    assert_eq!(
+        details.branch_entry,
+        Some(VerticalTabsSummaryBranchEntry {
+            repo_path: PathBuf::from("/home/me/api"),
+            branch_name: "feature/sidebar".to_string(),
+            diff_stats: herdr_git(None).diff_stats,
+            pull_request_label: Some(terminal_pull_request_badge_label(url)),
+            pull_request_url: Some(url.to_string()),
+        })
+    );
+}
+
+#[test]
+fn herdr_row_without_a_pull_request_has_no_chip() {
+    let details = herdr_row_details_from(
+        Some(Path::new("/home/me/api")),
+        Some(herdr_git(None)),
+        Some("/home/me"),
+    );
+
+    let entry = details.branch_entry.expect("branch entry");
+    assert_eq!(entry.pull_request_label, None);
+    assert_eq!(entry.pull_request_url, None);
+}
+
+#[test]
+fn herdr_row_without_a_directory_shows_nothing() {
+    let details = herdr_row_details_from(None, None, Some("/home/me"));
+
+    assert!(!details.is_present());
+}
+
+#[test]
+fn herdr_compact_subtitle_follows_the_setting_like_a_terminal_row() {
+    let in_repo = herdr_row_details_from(
+        Some(Path::new("/home/me/api")),
+        Some(herdr_git(None)),
+        Some("/home/me"),
+    );
+    let outside = herdr_row_details_from(Some(Path::new("/srv/logs")), None, Some("/home/me"));
+
+    assert_eq!(
+        herdr_compact_subtitle(&in_repo, VerticalTabsCompactSubtitle::Branch),
+        Some(("feature/sidebar".to_string(), true))
+    );
+    assert_eq!(
+        herdr_compact_subtitle(&outside, VerticalTabsCompactSubtitle::Branch),
+        Some(("/srv/logs".to_string(), false))
+    );
+    assert_eq!(
+        herdr_compact_subtitle(&in_repo, VerticalTabsCompactSubtitle::WorkingDirectory),
+        Some(("~/api".to_string(), false))
+    );
+    assert_eq!(
+        herdr_compact_subtitle(&in_repo, VerticalTabsCompactSubtitle::Command),
+        None
     );
 }

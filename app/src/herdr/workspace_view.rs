@@ -16,6 +16,7 @@ use warpui::{
     View, ViewContext, WindowId,
 };
 
+use super::directory_git::{DirectoryGitContext, HerdrDirectoryGit, HerdrDirectoryGitEvent};
 use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
 use super::pane_frames::PaneFrames;
 use super::pane_grid::{PaneGridElement, PaneGridStyle, PaneInputTarget};
@@ -48,6 +49,14 @@ pub enum HerdrWorkspaceViewAction {
     CreateTab,
 }
 
+/// What the Warp sidebar shows for a Herdr workspace beyond its label.
+pub struct HerdrSidebarDetails<'a> {
+    /// The working directory of the selected pane, as Herdr reports it.
+    pub directory: Option<&'a Path>,
+    /// The git repository holding `directory`; `None` outside one.
+    pub git: Option<DirectoryGitContext>,
+}
+
 /// The contents of the pane that stands for a Herdr workspace in its top-level tab, or for the
 /// session when warpr refuses to connect to it.
 pub struct HerdrWorkspaceView {
@@ -64,6 +73,8 @@ pub struct HerdrWorkspaceView {
     /// Why the last request to create a Herdr tab was refused, until the next one succeeds.
     creation_error: Option<String>,
     pane_configuration: ModelHandle<PaneConfiguration>,
+    /// The git repository of the selected pane's directory.
+    directory_git: ModelHandle<HerdrDirectoryGit>,
     focus_handle: Option<PaneFocusHandle>,
     window_id: WindowId,
     view_id: EntityId,
@@ -90,6 +101,13 @@ impl HerdrWorkspaceView {
                 |_, _, HerdrPaneContentsRegistryEvent::PaneChanged, ctx| ctx.notify(),
             );
         }
+        let directory_git = ctx.add_model(|_| HerdrDirectoryGit::new());
+        ctx.subscribe_to_model(
+            &directory_git,
+            |_, _, HerdrDirectoryGitEvent::Changed, ctx| {
+                ctx.emit(PaneEvent::SidebarDetailsChanged);
+            },
+        );
         let mut view = Self {
             contents,
             selected_tab: None,
@@ -98,11 +116,13 @@ impl HerdrWorkspaceView {
             new_tab_mouse_state: MouseStateHandle::default(),
             creation_error: None,
             pane_configuration,
+            directory_git,
             focus_handle: None,
             window_id: ctx.window_id(),
             view_id: ctx.view_id(),
         };
         view.update_shown_panes(ctx);
+        view.sync_sidebar_details(ctx);
         view
     }
 
@@ -126,6 +146,7 @@ impl HerdrWorkspaceView {
         self.selected_pane = Some(jump.pane.clone());
         self.report_viewed_panes(ctx);
         self.update_shown_panes(ctx);
+        self.sync_sidebar_details(ctx);
         ctx.notify();
     }
 
@@ -176,6 +197,7 @@ impl HerdrWorkspaceView {
             });
         }
         self.report_viewed_panes(ctx);
+        self.sync_sidebar_details(ctx);
         self.update_shown_panes(ctx);
         ctx.notify();
     }
@@ -224,6 +246,27 @@ impl HerdrWorkspaceView {
         match &self.selected_pane {
             Some(selected) => *selected == pane.id,
             None => pane.focused,
+        }
+    }
+
+    /// What the Warp sidebar shows for this workspace beyond its label: the selected pane's
+    /// directory and the git repository that directory is in.
+    pub fn sidebar_details<'a>(&self, app: &'a AppContext) -> HerdrSidebarDetails<'a> {
+        HerdrSidebarDetails {
+            directory: self.focused_pane_directory(app),
+            git: self.directory_git.as_ref(app).context(app),
+        }
+    }
+
+    /// Points the git context at the selected pane's directory and tells the pane group when
+    /// what the sidebar shows changed.
+    fn sync_sidebar_details(&mut self, ctx: &mut ViewContext<Self>) {
+        let directory = self.focused_pane_directory(ctx).map(Path::to_path_buf);
+        let changed = self
+            .directory_git
+            .update(ctx, |git, ctx| git.set_directory(directory, ctx));
+        if changed {
+            ctx.emit(PaneEvent::SidebarDetailsChanged);
         }
     }
 
@@ -646,6 +689,7 @@ impl TypedActionView for HerdrWorkspaceView {
                 self.selected_pane = Some(pane.clone());
                 self.report_viewed_panes(ctx);
                 self.update_shown_panes(ctx);
+                self.sync_sidebar_details(ctx);
                 ctx.focus_self();
                 ctx.notify();
             }
@@ -654,6 +698,7 @@ impl TypedActionView for HerdrWorkspaceView {
                 self.selected_pane = None;
                 self.report_viewed_panes(ctx);
                 self.update_shown_panes(ctx);
+                self.sync_sidebar_details(ctx);
                 ctx.notify();
             }
         }
