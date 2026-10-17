@@ -2322,6 +2322,7 @@ fn test_close_tab_confirmation_dialog() {
 #[test]
 fn test_close_active_horizontal_tab_activates_tab_to_right() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         app.update(|ctx| {
@@ -2350,6 +2351,7 @@ fn test_close_active_horizontal_tab_activates_tab_to_right() {
 #[test]
 fn test_close_last_horizontal_tab_activates_tab_to_left() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         app.update(|ctx| {
@@ -3884,6 +3886,7 @@ fn test_vertical_tabs_panel_closed_when_disabled_even_if_persisted_open() {
     // not honor the stale snapshot — otherwise a dismiss underlay paints over
     // the window and silently swallows every click.
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 
@@ -3933,6 +3936,34 @@ fn test_vertical_tabs_panel_defaults_open_for_new_window_when_vertical_tabs_enab
 }
 
 #[test]
+fn test_a_persisted_horizontal_choice_still_opens_the_vertical_tabs_panel_while_the_choice_is_off()
+{
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(false);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.update(|ctx| {
+            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+                report_if_error!(settings.use_vertical_tabs.set_value(false, ctx));
+            });
+        });
+
+        let workspace = mock_workspace(&mut app);
+
+        workspace.read(&app, |workspace, _| {
+            assert!(workspace.vertical_tabs_panel_open);
+        });
+        app.read(|ctx| {
+            assert_eq!(
+                active_tab_bar_position_id(ctx),
+                VERTICAL_TABS_PANEL_POSITION_ID
+            );
+        });
+    });
+}
+
+#[test]
 fn test_vertical_tabs_panel_inherits_transferred_tab_source_window_state() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
 
@@ -3959,6 +3990,7 @@ fn test_vertical_tabs_panel_inherits_transferred_tab_source_window_state() {
 #[test]
 fn test_vertical_tabs_panel_auto_shows_when_setting_enabled() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
 
     App::test((), |mut app| async move {
         initialize_app(&mut app);
@@ -3998,6 +4030,7 @@ fn test_active_tab_bar_position_id_tracks_layout() {
     // inactive horizontal bar registered as a drop zone while vertical tabs
     // were enabled, lighting up a spurious placeholder over the top bar.
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 

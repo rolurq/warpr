@@ -89,6 +89,7 @@ use crate::settings::{
 };
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
 use crate::settings_view::{OpenTeamsSettingsModalArgs, SettingsSection, flags};
+use crate::tab::uses_vertical_tabs;
 use crate::terminal::available_shells::AvailableShell;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::keys_settings::KeysSettings;
@@ -102,7 +103,6 @@ use crate::util::traffic_lights::{TrafficLightData, TrafficLightMouseStates, tra
 use crate::view_components::DismissibleToast;
 use crate::window_settings::WindowSettings;
 use crate::workspace::hoa_onboarding::mark_hoa_onboarding_completed;
-use crate::workspace::tab_settings::TabSettings;
 use crate::workspace::view::OnboardingTutorial;
 use crate::workspace::{
     OneTimeModalModel, PaneViewLocator, Workspace, WorkspaceAction, WorkspaceRegistry,
@@ -2719,7 +2719,7 @@ impl RootView {
                                 ui_customization
                                     .as_ref()
                                     .map(|c| c.use_vertical_tabs)
-                                    .unwrap_or(false),
+                                    .unwrap_or(!FeatureFlag::TabLayoutChoice.is_enabled()),
                                 OnboardingIntention::Terminal,
                                 false,
                             ),
@@ -2929,7 +2929,7 @@ impl RootView {
                     .theme()
                     .name()
                     .unwrap_or_else(|| "Dark".to_string());
-                let use_vertical_tabs = *TabSettings::as_ref(ctx).use_vertical_tabs;
+                let use_vertical_tabs = uses_vertical_tabs(ctx);
 
                 // Open the sign-in URL in the browser for existing users.
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {

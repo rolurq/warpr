@@ -761,6 +761,10 @@ pub enum FeatureFlag {
     /// Enables vertical tab layout as an alternative to the horizontal tab bar.
     VerticalTabs,
 
+    /// Lets the user choose between the vertical tabs panel and the horizontal tab bar. While it
+    /// is off, vertical tabs are always used and no layout choice is offered.
+    TabLayoutChoice,
+
     /// Enables attaching code review comments, diff hunk, and attach as context
     /// from code review + code editor for House Of Agents work
     HoaCodeReview,

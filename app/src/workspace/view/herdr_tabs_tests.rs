@@ -5,7 +5,7 @@ use herdr_client::{HerdrCli, ReconnectPolicy, Refusal, SessionName, SessionTarge
 use herdr_fake::{FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, TabScript};
 use serde_json::json;
 use warp_core::features::FeatureFlag;
-use warpui::{App, EntityId, TypedActionView as _, ViewHandle};
+use warpui::{App, EntityId, ViewHandle};
 
 use super::*;
 use crate::tab::NewSessionMenuItem;
@@ -1200,6 +1200,190 @@ mod tools_panel_scope {
                     workspace.active_tab_pane_group().as_ref(ctx),
                 )
             }));
+        });
+    }
+}
+
+mod tab_bar {
+    use herdr_client::HerdrTabId;
+
+    use super::*;
+
+    /// `api` (`w1`) has the Herdr tabs `server` and `logs`; `web` (`w2`) has `site`.
+    fn two_workspaces() -> SessionScript {
+        SessionScript::new()
+            .workspace_with_tabs(
+                "api",
+                [
+                    TabScript::new("server", PaneTree::pane()),
+                    TabScript::new("logs", PaneTree::pane()),
+                ],
+            )
+            .workspace_with_tabs("web", [TabScript::new("site", PaneTree::pane())])
+    }
+
+    fn bar_tabs(app: &App, workspace: &ViewHandle<Workspace>) -> Vec<(String, bool)> {
+        workspace.read(app, |workspace, ctx| {
+            workspace
+                .herdr_bar_tabs(ctx)
+                .into_iter()
+                .map(|tab| (tab.label, tab.is_shown))
+                .collect()
+        })
+    }
+
+    fn shown(labels: &[&str], shown: &str) -> Vec<(String, bool)> {
+        labels
+            .iter()
+            .map(|label| ((*label).to_owned(), *label == shown))
+            .collect()
+    }
+
+    async fn open_workspace_window(app: &mut App, fake: &FakeHerdr) -> ViewHandle<Workspace> {
+        initialize_app(app);
+        connect_to(app, fake, "default");
+        let workspace = mock_workspace(app);
+        assert_eventually!(
+            200 => tab_titles(app, &workspace) == ["api", "web"],
+            "tabs were {:?}", tab_titles(app, &workspace)
+        );
+        workspace
+    }
+
+    fn dispatch(app: &mut App, workspace: &ViewHandle<Workspace>, action: WorkspaceAction) {
+        app.update(|ctx| {
+            workspace.update(ctx, |workspace, ctx| workspace.handle_action(&action, ctx));
+        });
+    }
+
+    #[test]
+    fn the_bar_lists_the_herdr_tabs_of_the_active_workspace_and_follows_the_active_workspace() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server")
+            );
+
+            workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(1, ctx));
+            assert_eq!(bar_tabs(&app, &workspace), shown(&["site"], "site"));
+
+            workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(0, ctx));
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server")
+            );
+        });
+    }
+
+    #[test]
+    fn selecting_a_bar_tab_shows_it_in_that_workspace_only_and_sends_nothing_to_herdr() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            let served_before = session.served_methods();
+
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::SelectHerdrTab(HerdrTabId::from("w1:t2")),
+            );
+
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "logs")
+            );
+            workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(1, ctx));
+            assert_eq!(bar_tabs(&app, &workspace), shown(&["site"], "site"));
+            workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(0, ctx));
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "logs")
+            );
+            assert_eq!(session.served_methods(), served_before);
+        });
+    }
+
+    #[test]
+    fn the_plus_button_creates_a_herdr_tab_in_the_active_workspace_through_herdr() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+
+            dispatch(&mut app, &workspace, WorkspaceAction::CreateHerdrTab);
+
+            assert_eventually!(
+                600 => bar_tabs(&app, &workspace).len() == 3,
+                "the bar listed {:?}", bar_tabs(&app, &workspace)
+            );
+            let served: Vec<_> = session
+                .served_methods()
+                .into_iter()
+                .filter(|method| method == "tab.create")
+                .collect();
+            assert_eq!(served.len(), 1);
+        });
+    }
+
+    #[test]
+    fn a_refused_tab_creation_leaves_the_bar_alone() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            session.reject_next_creation("server_busy", "try again later");
+
+            dispatch(&mut app, &workspace, WorkspaceAction::CreateHerdrTab);
+
+            assert_eventually!(
+                600 => session
+                    .served_methods()
+                    .iter()
+                    .any(|method| method == "tab.create"),
+                "Herdr was never asked to create the tab"
+            );
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server")
+            );
+        });
+    }
+
+    #[test]
+    fn the_bar_lists_no_tabs_while_the_agent_panel_covers_the_workspace() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+
+            workspace.update(&mut app, |workspace, _| {
+                workspace
+                    .current_workspace_state
+                    .is_agent_management_view_open = true;
+            });
+
+            assert!(bar_tabs(&app, &workspace).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_window_that_does_not_present_herdr_has_no_herdr_tabs_in_its_bar() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(false);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+
+            assert!(bar_tabs(&app, &workspace).is_empty());
         });
     }
 }

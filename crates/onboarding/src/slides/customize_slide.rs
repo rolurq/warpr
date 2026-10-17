@@ -1,4 +1,5 @@
 use ui_components::{Component as _, Options as _, button};
+use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warpui_core::elements::{
@@ -189,22 +190,20 @@ impl CustomizeUISlide {
         intention: OnboardingIntention,
         ui: &UICustomizationSettings,
     ) -> Box<dyn Element> {
-        let tab_card = self.render_tab_styling_card(appearance, ui);
         let tools_card = self.render_tools_panel_card(appearance, intention, ui);
         let code_card = self.render_code_review_card(appearance, ui);
 
-        Container::new(
-            Flex::column()
-                .with_main_axis_size(MainAxisSize::Min)
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_spacing(12.)
-                .with_child(tab_card)
-                .with_child(tools_card)
-                .with_child(code_card)
-                .finish(),
-        )
-        .with_margin_top(12.)
-        .finish()
+        let mut cards = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(12.);
+        if FeatureFlag::TabLayoutChoice.is_enabled() {
+            cards.add_child(self.render_tab_styling_card(appearance, ui));
+        }
+        cards.add_child(tools_card);
+        cards.add_child(code_card);
+
+        Container::new(cards.finish()).with_margin_top(12.).finish()
     }
 
     fn render_tab_styling_card(
@@ -683,7 +682,9 @@ impl OnboardingSlide for CustomizeUISlide {
     fn on_up(&mut self, ctx: &mut ViewContext<Self>) {
         // Move setting selection up
         self.selected_setting = match self.selected_setting {
-            Some(SettingCard::ToolsPanel) => Some(SettingCard::TabStyling),
+            Some(SettingCard::ToolsPanel) if FeatureFlag::TabLayoutChoice.is_enabled() => {
+                Some(SettingCard::TabStyling)
+            }
             Some(SettingCard::CodeReview) => Some(SettingCard::ToolsPanel),
             _ => self.selected_setting,
         };
@@ -694,7 +695,8 @@ impl OnboardingSlide for CustomizeUISlide {
         self.selected_setting = match self.selected_setting {
             Some(SettingCard::TabStyling) => Some(SettingCard::ToolsPanel),
             Some(SettingCard::ToolsPanel) => Some(SettingCard::CodeReview),
-            None => Some(SettingCard::TabStyling),
+            None if FeatureFlag::TabLayoutChoice.is_enabled() => Some(SettingCard::TabStyling),
+            None => Some(SettingCard::ToolsPanel),
             other => other,
         };
         ctx.notify();

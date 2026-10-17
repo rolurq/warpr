@@ -266,11 +266,14 @@ fn tab_group_menu_entry_flags(
     (show_new_group, has_other_groups, in_group)
 }
 
-/// True when the user has opted into vertical tabs and the feature flag is on.
-/// Exposed so binding-description overrides in `workspace/mod.rs` and context-
-/// menu builders here can share a single predicate.
+/// True when the tab list is shown in the vertical tabs panel: always while the vertical tabs
+/// feature is on, unless [`FeatureFlag::TabLayoutChoice`] lets the user pick the horizontal bar.
+/// Exposed so binding-description overrides in `workspace/mod.rs` and context-menu builders here
+/// can share a single predicate.
 pub fn uses_vertical_tabs(ctx: &AppContext) -> bool {
-    FeatureFlag::VerticalTabs.is_enabled() && *TabSettings::as_ref(ctx).use_vertical_tabs
+    FeatureFlag::VerticalTabs.is_enabled()
+        && (!FeatureFlag::TabLayoutChoice.is_enabled()
+            || *TabSettings::as_ref(ctx).use_vertical_tabs)
 }
 
 const WARP_2_TAB_COLOR_OPACITY: Opacity = 25;

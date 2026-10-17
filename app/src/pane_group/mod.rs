@@ -93,6 +93,7 @@ use crate::drive::items::WarpDriveItemId;
 use crate::drive::{CloudObjectTypeAndId, OpenWarpDriveObjectArgs};
 use crate::env_vars::EnvVarCollectionType;
 use crate::features::FeatureFlag;
+use crate::herdr::HerdrWorkspaceView;
 use crate::launch_configs::launch_config::{self, PaneMode, PaneTemplateType};
 use crate::notebooks::file::FileNotebookView;
 use crate::palette::PaletteMode;
@@ -7980,6 +7981,13 @@ impl PaneGroup {
                 .as_ref(ctx)
                 .focused_pane_directory(ctx)
         })
+    }
+
+    /// The view of the Herdr workspace this pane group shows, if it shows one.
+    pub fn herdr_workspace_view(&self, ctx: &AppContext) -> Option<ViewHandle<HerdrWorkspaceView>> {
+        self.panes_of::<HerdrWorkspacePane>()
+            .next()
+            .map(|pane| pane.workspace_view(ctx))
     }
 
     /// Get all terminal CWDs for this pane group.

@@ -29,7 +29,7 @@ pub use session_picker::HerdrSessionPicker;
 use sessions::SessionSelection;
 use warp_core::features::FeatureFlag;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
-pub use workspace_view::HerdrWorkspaceView;
+pub use workspace_view::{HerdrBarTab, HerdrWorkspaceView, HerdrWorkspaceViewAction};
 
 /// Whether this window presents a Herdr session instead of Warp's own tabs and agents.
 pub(crate) fn presents_herdr_workspaces(app: &AppContext) -> bool {

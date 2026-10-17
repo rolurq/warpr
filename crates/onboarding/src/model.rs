@@ -1,4 +1,5 @@
 use ai::LLMId;
+use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
 use warpui_core::{Entity, ModelContext};
 
@@ -33,7 +34,7 @@ impl UICustomizationSettings {
     /// Defaults for terminal mode (all features disabled).
     pub fn terminal_defaults() -> Self {
         Self {
-            use_vertical_tabs: false,
+            use_vertical_tabs: !FeatureFlag::TabLayoutChoice.is_enabled(),
             show_conversation_history: false,
             show_project_explorer: false,
             show_global_search: false,
@@ -470,7 +471,9 @@ impl OnboardingStateModel {
     }
 
     pub(crate) fn set_use_vertical_tabs(&mut self, value: bool, ctx: &mut ModelContext<Self>) {
-        if self.ui_customization.use_vertical_tabs == value {
+        if !FeatureFlag::TabLayoutChoice.is_enabled()
+            || self.ui_customization.use_vertical_tabs == value
+        {
             return;
         }
         send_telemetry_from_ctx!(

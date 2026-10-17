@@ -1,24 +1,37 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use herdr_client::{AgentJump, ConnectionStatus, NewWorktree, PresentedSession, WorkspaceId};
+use herdr_client::{
+    AgentJump, ConnectionStatus, HerdrTabId, NewWorktree, PresentedSession, WorkspaceId,
+};
 use warp_core::features::FeatureFlag;
 use warp_util::worktree_names::generate_worktree_branch_name;
-use warpui::elements::{ChildView, Element};
-use warpui::{AppContext, EntityId, SingletonEntity as _, ViewContext};
+use warpui::elements::{
+    Align, Border, ChildView, Clipped, Container, Element, Expanded, Flex, Hoverable,
+    MouseStateHandle, ParentElement as _, Text,
+};
+use warpui::platform::Cursor;
+use warpui::{AppContext, EntityId, SingletonEntity as _, TypedActionView as _, ViewContext};
 
 use super::Workspace;
 use crate::app_state::{
     HerdrWorkspaceContents, HerdrWorkspaceSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot,
 };
+use crate::appearance::Appearance;
 use crate::herdr::repository_root::repository_root;
-use crate::herdr::{HerdrSessionEvent, HerdrSessionModel};
+use crate::herdr::{HerdrBarTab, HerdrSessionEvent, HerdrSessionModel, HerdrWorkspaceViewAction};
 use crate::pane_group::PanesLayout;
 use crate::settings::AISettings;
 use crate::util::git::list_local_branches_sync;
 use crate::view_components::DismissibleToast;
+use crate::workspace::WorkspaceAction;
 use crate::workspace::tab_group::TabGroup;
+
+const TAB_FONT_SIZE: f32 = 13.;
+const TAB_HORIZONTAL_PADDING: f32 = 12.;
+const TAB_VERTICAL_PADDING: f32 = 6.;
 
 /// The repositories of the session's workspaces.
 pub(super) struct HerdrRepositories {
@@ -61,6 +74,94 @@ impl HerdrRepositories {
     }
 }
 
+/// What the tab bar keeps between renders to draw the Herdr tabs it lists.
+#[derive(Default)]
+pub(super) struct HerdrTabBarState {
+    /// Filled while rendering, because Herdr decides which tabs exist and `render` only has
+    /// shared access to the workspace.
+    tab_mouse_states: RefCell<HashMap<HerdrTabId, MouseStateHandle>>,
+    new_tab_mouse_state: MouseStateHandle,
+}
+
+impl HerdrTabBarState {
+    /// The Herdr tabs in a row, followed by the button that creates one.
+    fn render(&self, tabs: &[HerdrBarTab], appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let mut mouse_states = self.tab_mouse_states.borrow_mut();
+        let tabs = tabs.iter().map(|tab| {
+            let is_shown = tab.is_shown;
+            let tab_id = tab.id.clone();
+            let mouse_state = mouse_states.entry(tab.id.clone()).or_default().clone();
+            Hoverable::new(mouse_state, |state| {
+                let background = if is_shown {
+                    theme.surface_2()
+                } else if state.is_hovered() {
+                    theme.surface_1()
+                } else {
+                    theme.background()
+                };
+                let text_color = if is_shown {
+                    theme.main_text_color(background)
+                } else {
+                    theme.sub_text_color(background)
+                };
+                let label = Text::new_inline(
+                    tab.label.clone(),
+                    appearance.ui_font_family(),
+                    TAB_FONT_SIZE,
+                )
+                .with_color(text_color.into())
+                .finish();
+                let underline = if is_shown {
+                    Border::bottom(2.).with_border_fill(theme.accent())
+                } else {
+                    Border::bottom(2.).with_border_fill(background)
+                };
+                Container::new(label)
+                    .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+                    .with_vertical_padding(TAB_VERTICAL_PADDING)
+                    .with_background(background)
+                    .with_border(underline)
+                    .finish()
+            })
+            .on_click(move |ctx, _, _| {
+                ctx.dispatch_typed_action(WorkspaceAction::SelectHerdrTab(tab_id.clone()));
+            })
+            .with_cursor(Cursor::PointingHand)
+            .finish()
+        });
+        Flex::row()
+            .with_children(tabs)
+            .with_child(self.render_new_tab_button(appearance))
+            .finish()
+    }
+
+    fn render_new_tab_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        Hoverable::new(self.new_tab_mouse_state.clone(), |state| {
+            let background = if state.is_hovered() {
+                theme.surface_1()
+            } else {
+                theme.background()
+            };
+            let plus = Text::new_inline("+".to_owned(), appearance.ui_font_family(), TAB_FONT_SIZE)
+                .with_color(theme.sub_text_color(background).into())
+                .finish();
+            Container::new(plus)
+                .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+                .with_vertical_padding(TAB_VERTICAL_PADDING)
+                .with_background(background)
+                .with_border(Border::bottom(2.).with_border_fill(background))
+                .finish()
+        })
+        .on_click(|ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::CreateHerdrTab);
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+    }
+}
+
 impl Workspace {
     /// Whether the user may create and rearrange tab groups. Herdr windows present Herdr's own
     /// groupings and own the order, so there the user may not.
@@ -70,6 +171,54 @@ impl Workspace {
 
     fn presents_herdr_workspaces(ctx: &AppContext) -> bool {
         crate::herdr::presents_herdr_workspaces(ctx)
+    }
+
+    /// The Herdr tabs the tab bar lists: those of the workspace this window shows, none while the
+    /// agent panel covers the workspaces or the window shows no Herdr workspace.
+    pub(super) fn herdr_bar_tabs(&self, ctx: &AppContext) -> Vec<HerdrBarTab> {
+        if !Self::presents_herdr_workspaces(ctx)
+            || self.current_workspace_state.is_agent_management_view_open
+        {
+            return Vec::new();
+        }
+        self.active_tab_pane_group()
+            .as_ref(ctx)
+            .herdr_workspace_view(ctx)
+            .map(|view| view.as_ref(ctx).bar_tabs(ctx))
+            .unwrap_or_default()
+    }
+
+    /// The tab bar's Herdr tabs as a flexible child of the header row, or `None` when there are
+    /// none to list.
+    pub(super) fn render_herdr_bar_tabs(
+        &self,
+        appearance: &Appearance,
+        ctx: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        let tabs = self.herdr_bar_tabs(ctx);
+        if tabs.is_empty() {
+            return None;
+        }
+        let strip = self.herdr_tab_bar.render(&tabs, appearance);
+        Some(Expanded::new(2., Clipped::new(Align::new(strip).left().finish()).finish()).finish())
+    }
+
+    /// Hands `action` to the view of the Herdr workspace this window shows, which owns the Herdr
+    /// tab selection and the request to create one.
+    pub(super) fn forward_to_herdr_workspace_view(
+        &mut self,
+        action: HerdrWorkspaceViewAction,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(view) = self
+            .active_tab_pane_group()
+            .as_ref(ctx)
+            .herdr_workspace_view(ctx)
+        else {
+            return;
+        };
+        view.update(ctx, |view, ctx| view.handle_action(&action, ctx));
+        ctx.notify();
     }
 
     /// Whether the agent panel can be opened: Herdr's agents when this window presents a Herdr
