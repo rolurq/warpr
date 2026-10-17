@@ -97,6 +97,23 @@ pub struct StandardHeader {
     pub options: StandardHeaderOptions,
 }
 
+impl StandardHeader {
+    /// A header with just a title, clipped at its start, and default options.
+    pub fn simple(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            title_secondary: None,
+            title_style: None,
+            title_clip_config: ClipConfig::start(),
+            title_max_width: None,
+            left_of_title: None,
+            right_of_title: None,
+            left_of_overflow: None,
+            options: StandardHeaderOptions::default(),
+        }
+    }
+}
+
 /// Content that a backing view can return for its pane header.
 ///
 /// The framework handles wrapping the content with draggable behavior,
@@ -135,16 +152,6 @@ impl HeaderContent {
     /// Uses `ClipConfig::start()` and default options. This is the most common
     /// header configuration for panes that just need to display a title.
     pub fn simple(title: impl Into<String>) -> Self {
-        Self::Standard(StandardHeader {
-            title: title.into(),
-            title_secondary: None,
-            title_style: None,
-            title_clip_config: ClipConfig::start(),
-            title_max_width: None,
-            left_of_title: None,
-            right_of_title: None,
-            left_of_overflow: None,
-            options: StandardHeaderOptions::default(),
-        })
+        Self::Standard(StandardHeader::simple(title))
     }
 }

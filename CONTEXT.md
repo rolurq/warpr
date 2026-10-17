@@ -24,6 +24,10 @@ _Avoid_: tab (unqualified)
 One terminal surface owned by Herdr, positioned by Herdr's layout.
 _Avoid_: split, terminal, session
 
+**Pane name**:
+The name Herdr gives a pane (`herdr pane rename`). A pane without one is titled by the folder of its working directory.
+_Avoid_: pane label, pane title
+
 **Pane owner**:
 The one client that currently sets a pane's size and sends its input. warpr is the owner of the panes it shows when no other client is.
 _Avoid_: controller, attached client, lock holder

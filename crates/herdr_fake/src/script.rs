@@ -54,6 +54,33 @@ impl PaneTree {
             Self::Split { first, second, .. } => first.pane_count() + second.pane_count(),
         }
     }
+
+    /// The tree without its pane at `index` in tree order: the sibling takes the freed space.
+    /// `None` when that pane is the whole tree.
+    fn without_pane(self, index: usize) -> Option<PaneTree> {
+        match self {
+            Self::Pane => None,
+            Self::Split {
+                direction,
+                ratio,
+                first,
+                second,
+            } => {
+                let first_count = first.pane_count();
+                if index < first_count {
+                    Some(match first.without_pane(index) {
+                        Some(first) => Self::split(direction, ratio, first, *second),
+                        None => *second,
+                    })
+                } else {
+                    Some(match second.without_pane(index - first_count) {
+                        Some(second) => Self::split(direction, ratio, *first, second),
+                        None => *first,
+                    })
+                }
+            }
+        }
+    }
 }
 
 /// An agent state as Herdr reports it.
@@ -114,6 +141,12 @@ pub struct TabScript {
     /// By pane index in the tree's order; `None` is a pane Herdr reports no `cwd` for. Panes
     /// without an entry report `/`.
     pub(crate) cwds: Vec<(usize, Option<String>)>,
+    /// By pane index in the tree's order; panes without an entry have no name.
+    pub(crate) pane_labels: Vec<(usize, String)>,
+    /// The Herdr pane number of each pane in the tree's order. Empty until a pane of the
+    /// workspace is closed: numbers are derived from position until then, and fixed from then on
+    /// so that closing a pane does not renumber the others, as in Herdr.
+    pub(crate) pane_numbers: Vec<usize>,
 }
 
 impl TabScript {
@@ -125,7 +158,49 @@ impl TabScript {
             zoomed: false,
             agents: Vec::new(),
             cwds: Vec::new(),
+            pane_labels: Vec::new(),
+            pane_numbers: Vec::new(),
         }
+    }
+
+    /// Names the pane at `index` in the tree's order, as `pane.rename` does.
+    pub fn pane_label(mut self, index: usize, label: &str) -> Self {
+        assert!(
+            index < self.tree.pane_count(),
+            "tab {:?} has no pane at index {index}",
+            self.label
+        );
+        self.pane_labels.retain(|(existing, _)| *existing != index);
+        self.pane_labels.push((index, label.to_owned()));
+        self
+    }
+
+    fn label_at(&self, index: usize) -> Option<&str> {
+        self.pane_labels
+            .iter()
+            .find(|(existing, _)| *existing == index)
+            .map(|(_, label)| label.as_str())
+    }
+
+    /// Takes the pane at `index` out of the tab, with what the tab holds for it. Returns `false`
+    /// when it was the tab's only pane, which leaves the tab untouched.
+    fn close_pane(&mut self, index: usize) -> bool {
+        let tree = std::mem::replace(&mut self.tree, PaneTree::Pane);
+        let Some(tree) = tree.without_pane(index) else {
+            return false;
+        };
+        self.tree = tree;
+        shift_entries(&mut self.agents, index);
+        shift_entries(&mut self.cwds, index);
+        shift_entries(&mut self.pane_labels, index);
+        self.pane_numbers.remove(index);
+        let remaining = self.tree.pane_count();
+        if self.focused_pane > index {
+            self.focused_pane -= 1;
+        }
+        self.focused_pane = self.focused_pane.min(remaining - 1);
+        self.zoomed &= remaining > 1;
+        true
     }
 
     /// Puts `agent` in the pane at `index` in the tree's order, replacing any agent there.
@@ -204,6 +279,9 @@ pub(crate) struct WorkspaceScript {
     pub(crate) tokens: Vec<(String, String)>,
     /// The repository's key and whether this is a linked worktree, when Herdr reports a checkout.
     pub(crate) worktree: Option<(String, bool)>,
+    /// The highest pane number Herdr has given a pane of this workspace once panes have been
+    /// closed, so a later pane never takes a closed one's number; zero before that.
+    pub(crate) highest_pane_number: usize,
 }
 
 impl WorkspaceScript {
@@ -218,6 +296,64 @@ impl WorkspaceScript {
                     }),
             ),
             None => (!self.tabs.is_empty()).then_some(0),
+        }
+    }
+
+    /// The pane number of each pane of each tab, in tab and tree order. Herdr numbers a
+    /// workspace's panes in the order it created them; here that is the order they are listed in
+    /// until [`Self::close_pane`] fixes the numbers.
+    pub(crate) fn pane_numbers(&self) -> Vec<Vec<usize>> {
+        let mut next = 1;
+        self.tabs
+            .iter()
+            .map(|tab| {
+                let numbers = if tab.pane_numbers.is_empty() {
+                    let first = next.max(self.highest_pane_number + 1);
+                    (first..first + tab.tree.pane_count()).collect()
+                } else {
+                    tab.pane_numbers.clone()
+                };
+                next = numbers.last().map_or(next, |last| last + 1);
+                numbers
+            })
+            .collect()
+    }
+
+    /// Closes the pane numbered `number`, as `pane.close` does: the Herdr tab goes with its only
+    /// pane, and the workspace is left with no tabs when that was its last one. Returns `false`
+    /// when the workspace has no such pane.
+    pub(crate) fn close_pane(&mut self, number: usize) -> bool {
+        let numbers = self.pane_numbers();
+        let Some((tab_index, pane_index)) = numbers.iter().enumerate().find_map(|(tab, panes)| {
+            Some((
+                tab,
+                panes.iter().position(|candidate| *candidate == number)?,
+            ))
+        }) else {
+            return false;
+        };
+        self.highest_pane_number = self
+            .highest_pane_number
+            .max(numbers.iter().flatten().copied().max().unwrap_or(0));
+        for (tab, panes) in self.tabs.iter_mut().zip(numbers) {
+            tab.pane_numbers = panes;
+        }
+        if !self.tabs[tab_index].close_pane(pane_index) {
+            let closed = self.tabs.remove(tab_index);
+            if self.active_tab_label.as_ref() == Some(&closed.label) {
+                self.active_tab_label = None;
+            }
+        }
+        true
+    }
+}
+
+/// Drops the entry for the pane at `removed` and moves those of the panes after it up by one.
+fn shift_entries<T>(entries: &mut Vec<(usize, T)>, removed: usize) {
+    entries.retain(|(index, _)| *index != removed);
+    for (index, _) in entries.iter_mut() {
+        if *index > removed {
+            *index -= 1;
         }
     }
 }
@@ -256,6 +392,7 @@ impl SessionScript {
             active_tab_label: None,
             tokens: Vec::new(),
             worktree: None,
+            highest_pane_number: 0,
         });
         self
     }
@@ -389,6 +526,7 @@ impl SessionScript {
             active_tab_label: None,
             tokens: Vec::new(),
             worktree: None,
+            highest_pane_number: 0,
         });
         if focus {
             self.focused_label = Some(label);
@@ -454,6 +592,27 @@ impl SessionScript {
         Some(format!("{workspace_id}:t{number}"))
     }
 
+    /// Closes the pane `pane_id` as `pane.close` does and returns the id of its workspace, or
+    /// `None` when there is no such pane. A workspace left with no panes goes too.
+    pub(crate) fn close_pane(&mut self, pane_id: &str) -> Option<String> {
+        let (workspace_id, number) = pane_id.split_once(":p")?;
+        let number = number.parse().ok()?;
+        let index = self
+            .workspaces
+            .iter()
+            .position(|workspace| format!("w{}", workspace.id) == workspace_id)?;
+        if !self.workspaces[index].close_pane(number) {
+            return None;
+        }
+        if self.workspaces[index].tabs.is_empty() {
+            let closed = self.workspaces.remove(index);
+            if self.focused_label.as_ref() == Some(&closed.label) {
+                self.focused_label = None;
+            }
+        }
+        Some(workspace_id.to_owned())
+    }
+
     fn focused_index(&self) -> Option<usize> {
         match &self.focused_label {
             Some(label) => Some(
@@ -485,12 +644,15 @@ impl SessionScript {
             let workspace_id = format!("w{}", workspace.id);
             let active_tab = workspace.active_tab_index();
             let tab_id_of = |tab_index: usize| format!("{workspace_id}:t{}", tab_index + 1);
-            let mut next_pane_number = 1;
+            let pane_numbers = workspace.pane_numbers();
+            let mut pane_count = 0;
 
             for (tab_index, tab) in workspace.tabs.iter().enumerate() {
                 let tab_id = tab_id_of(tab_index);
-                let pane_ids: Vec<String> = (0..tab.tree.pane_count())
-                    .map(|offset| format!("{workspace_id}:p{}", next_pane_number + offset))
+                let numbers = &pane_numbers[tab_index];
+                let pane_ids: Vec<String> = numbers
+                    .iter()
+                    .map(|number| format!("{workspace_id}:p{number}"))
                     .collect();
                 let is_active = active_tab == Some(tab_index);
                 let tab_focused_pane = &pane_ids[tab.focused_pane];
@@ -508,7 +670,7 @@ impl SessionScript {
                     "agent_status": "unknown",
                 }));
                 for (pane_index, pane_id) in pane_ids.iter().enumerate() {
-                    let terminal_number = next_pane_number + pane_index;
+                    let terminal_number = numbers[pane_index];
                     let mut pane = json!({
                         "pane_id": pane_id,
                         "terminal_id": terminal_id(workspace.id, terminal_number),
@@ -529,6 +691,9 @@ impl SessionScript {
                     });
                     if let Some(cwd) = tab.cwd_at(pane_index) {
                         pane["cwd"] = json!(cwd);
+                    }
+                    if let Some(label) = tab.label_at(pane_index) {
+                        pane["label"] = json!(label);
                     }
                     if let Some(agent) = tab.agent_at(pane_index) {
                         agents.push(agent_info(&pane, agent));
@@ -558,7 +723,7 @@ impl SessionScript {
                     focused_tab_id = json!(tab_id);
                     focused_pane_id = json!(tab_focused_pane);
                 }
-                next_pane_number += pane_ids.len();
+                pane_count += pane_ids.len();
             }
 
             let mut info = json!({
@@ -566,7 +731,7 @@ impl SessionScript {
                 "number": number,
                 "label": workspace.label,
                 "focused": focused == Some(index),
-                "pane_count": next_pane_number - 1,
+                "pane_count": pane_count,
                 "tab_count": workspace.tabs.len(),
                 "active_tab_id": active_tab.map(tab_id_of),
                 "agent_status": "unknown",

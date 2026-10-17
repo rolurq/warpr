@@ -115,6 +115,8 @@ struct Shared {
     subscriptions_to_lose: Mutex<usize>,
     /// The error the next creation request is answered with, if one is armed.
     creation_rejection: Mutex<Option<(String, String)>>,
+    /// The error the next `pane.close` request is answered with, if one is armed.
+    close_rejection: Mutex<Option<(String, String)>>,
 }
 
 impl Shared {
@@ -208,6 +210,30 @@ impl Shared {
         }
         self.emit(event, &result);
         ok(id, result)
+    }
+
+    /// Serves `pane.close`: closes the pane as Herdr would, announces `pane_closed` to
+    /// subscribers and answers `ok`.
+    fn close_pane(&self, id: &Value, params: &Value) -> Value {
+        let Some(pane_id) = params["pane_id"].as_str() else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `pane_id`",
+            );
+        };
+        if let Some((code, message)) = self.close_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let closed = self.script.lock().close_pane(pane_id);
+        let Some(workspace_id) = closed else {
+            return error(id, "pane_not_found", &format!("pane {pane_id} not found"));
+        };
+        self.emit(
+            "pane_closed",
+            &json!({ "type": "pane_closed", "pane_id": pane_id, "workspace_id": workspace_id }),
+        );
+        ok(id, json!({ "type": "ok" }))
     }
 
     /// Serves `worktree.create`: adds the linked worktree as a workspace, announces it to
@@ -325,6 +351,7 @@ impl FakeSession {
                 methods_served: Mutex::new(Vec::new()),
                 subscriptions_to_lose: Mutex::new(0),
                 creation_rejection: Mutex::new(None),
+                close_rejection: Mutex::new(None),
             }),
             listener: Mutex::new(None),
         };
@@ -438,6 +465,12 @@ impl FakeSession {
     /// refuses.
     pub fn reject_next_creation(&self, code: &str, message: &str) {
         *self.shared.creation_rejection.lock() = Some((code.to_owned(), message.to_owned()));
+    }
+
+    /// Answers the next `pane.close` request with the error `code` and `message` instead of
+    /// closing anything, as Herdr does for a request it refuses.
+    pub fn reject_next_close(&self, code: &str, message: &str) {
+        *self.shared.close_rejection.lock() = Some((code.to_owned(), message.to_owned()));
     }
 
     /// How many connections are subscribed to events.
@@ -579,6 +612,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared, connection_id: u64) {
             }
             "workspace.create" | "tab.create" => shared.create(&id, method, &request["params"]),
             "worktree.create" => shared.create_worktree(&id, &request["params"]),
+            "pane.close" => shared.close_pane(&id, &request["params"]),
             "pane.list" => {
                 let panes = shared.script.lock().snapshot()["panes"].clone();
                 ok(&id, json!({ "type": "pane_list", "panes": panes }))

@@ -12,6 +12,7 @@
 mod agents;
 mod attention;
 mod cli;
+mod close;
 mod compat;
 mod create;
 mod desktop;
@@ -46,6 +47,7 @@ use std::time::Duration;
 pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, PresentedAgents};
 pub use attention::{AgentAttention, AttentionChanges};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
+pub use close::close_pane;
 pub use compat::Refusal;
 pub use create::{NewWorktree, create_herdr_tab, create_workspace, create_worktree};
 pub use desktop::{DesktopAction, DesktopNotifications};

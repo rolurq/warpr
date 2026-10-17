@@ -175,6 +175,9 @@ struct PaneInfo {
     pane_id: PaneId,
     #[serde(default)]
     cwd: Option<PathBuf>,
+    /// What `herdr pane rename` sets; Herdr leaves it out of a pane that has no name.
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -199,15 +202,15 @@ impl Snapshot {
             panes,
             ..
         } = self;
-        let mut cwds: HashMap<PaneId, PathBuf> = panes
+        let mut details: HashMap<PaneId, (Option<PathBuf>, Option<String>)> = panes
             .into_iter()
-            .filter_map(|pane| Some((pane.pane_id, pane.cwd?)))
+            .map(|pane| (pane.pane_id, (pane.cwd, pane.label)))
             .collect();
         for pane in layouts
             .iter_mut()
             .flat_map(|layout| &mut layout.layout.panes)
         {
-            pane.cwd = cwds.remove(&pane.id);
+            (pane.cwd, pane.name) = details.remove(&pane.id).unwrap_or_default();
         }
         let mut tabs_by_workspace: HashMap<WorkspaceId, Vec<PresentedHerdrTab>> = HashMap::new();
         for tab in tabs {

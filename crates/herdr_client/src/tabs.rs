@@ -58,6 +58,10 @@ pub struct PresentedPane {
     /// layout carries no `cwd`: it is filled in from the snapshot's pane list.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
+    /// The name given to the pane in Herdr; `None` when it has none. Like `cwd`, it is filled in
+    /// from the snapshot's pane list.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// How Herdr lays out the panes of one Herdr tab. Herdr owns the geometry; nothing here is

@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use herdr_client::{
@@ -7,7 +9,7 @@ use herdr_client::{
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex,
-    MainAxisAlignment, ParentElement as _, Stack, Text,
+    MainAxisAlignment, MainAxisSize, ParentElement as _, Stack, Text,
 };
 use warpui::{
     AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity as _, TypedActionView,
@@ -15,6 +17,9 @@ use warpui::{
 };
 
 use super::directory_git::{DirectoryGitContext, HerdrDirectoryGit, HerdrDirectoryGitEvent};
+use super::pane_chrome::{
+    PANE_BORDER_WIDTH, PaneHeaderMouseStates, can_close_panes, dims_pane, render_pane_header,
+};
 use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
 use super::pane_frames::PaneFrames;
 use super::pane_grid::{PaneGridElement, PaneGridStyle, PaneInputTarget};
@@ -24,6 +29,7 @@ use crate::appearance::Appearance;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view;
 use crate::pane_group::{BackingView, PaneConfiguration, PaneEvent};
+use crate::settings::{PaneSettings, PaneSettingsChangedEvent};
 use crate::util::repo_detection::{RepoDetectionSessionType, detect_possible_git_repo};
 
 const LABEL_FONT_SIZE: f32 = 20.;
@@ -45,6 +51,9 @@ pub enum HerdrWorkspaceViewAction {
     Paste(PaneId),
     /// Asks Herdr to create a Herdr tab in this workspace.
     CreateTab,
+    /// Asks Herdr to close a pane. Nothing is removed here: the pane leaves the view once the
+    /// session stops presenting it. A refused request is shown in the view.
+    ClosePane(PaneId),
 }
 
 /// What the Warp sidebar shows for a Herdr workspace beyond its label.
@@ -73,8 +82,8 @@ pub struct HerdrWorkspaceView {
     /// The pane an agent jump took the user to, shown selected until the user picks another Herdr
     /// tab. Like `selected_tab` it is view state that Herdr never hears of.
     selected_pane: Option<PaneId>,
-    /// Why the last request to create a Herdr tab was refused, until the next one succeeds.
-    creation_error: Option<String>,
+    /// Why the last request this view made to Herdr was refused, until the next one succeeds.
+    request_error: Option<String>,
     pane_configuration: ModelHandle<PaneConfiguration>,
     /// The git repository of the selected pane's directory.
     directory_git: ModelHandle<HerdrDirectoryGit>,
@@ -83,6 +92,8 @@ pub struct HerdrWorkspaceView {
     view_id: EntityId,
     /// The directory last reported to the pane group.
     reported_directory: Option<PathBuf>,
+    /// The mouse state of each pane header, so that hover and clicks survive a redraw.
+    pane_header_states: RefCell<HashMap<PaneId, PaneHeaderMouseStates>>,
 }
 
 impl HerdrWorkspaceView {
@@ -113,17 +124,26 @@ impl HerdrWorkspaceView {
                 ctx.emit(PaneEvent::SidebarDetailsChanged);
             },
         );
+        ctx.subscribe_to_model(&PaneSettings::handle(ctx), |_, _, event, ctx| {
+            if matches!(
+                event,
+                PaneSettingsChangedEvent::ShouldDimInactivePanes { .. }
+            ) {
+                ctx.notify();
+            }
+        });
         let mut view = Self {
             contents,
             selected_tab: None,
             selected_pane: None,
-            creation_error: None,
+            request_error: None,
             pane_configuration,
             directory_git,
             focus_handle: None,
             window_id: ctx.window_id(),
             view_id: ctx.view_id(),
             reported_directory: None,
+            pane_header_states: RefCell::default(),
         };
         view.update_shown_panes(ctx);
         view.sync_sidebar_details(ctx);
@@ -382,25 +402,43 @@ impl HerdrWorkspaceView {
         let Some(layout) = &tab.layout else {
             return Align::new(self.render_workspace_label(appearance)).finish();
         };
-        let frames = layout
-            .frames()
-            .into_iter()
+        let panes = layout.frames();
+        self.pane_header_states
+            .borrow_mut()
+            .retain(|id, _| panes.iter().any(|pane| pane.id == *id));
+        let can_close = can_close_panes(layout);
+        let dim_inactive_panes = *PaneSettings::as_ref(app).should_dim_inactive_panes;
+        let frames = panes
+            .iter()
             .map(|pane| {
-                let is_selected = self.is_selected(&pane);
+                let is_selected = self.is_selected(pane);
+                let is_dimmed = dims_pane(dim_inactive_panes, panes.len(), is_selected);
                 (
                     pane.rect,
-                    self.render_pane_frame(&pane, is_selected, appearance, app),
+                    self.render_pane_frame(
+                        pane,
+                        is_selected,
+                        is_dimmed,
+                        can_close,
+                        appearance,
+                        app,
+                    ),
                 )
             })
             .collect();
         PaneFrames::new(layout.area, frames).finish()
     }
 
-    /// A pane's live output, or its id while Herdr's pane has no contents to show yet.
+    /// A pane as Warp frames its panes: a header, and below it the pane's live output or its id
+    /// while Herdr's pane has no contents to show yet. The header and border are drawn inside the
+    /// frame Herdr's layout gives the pane, and the pane's cell grid is fitted to what they
+    /// leave of it.
     fn render_pane_frame(
         &self,
         pane: &PresentedPane,
         is_selected: bool,
+        is_dimmed: bool,
+        can_close: bool,
         appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
@@ -412,10 +450,9 @@ impl HerdrWorkspaceView {
         let ownership = contents
             .as_ref()
             .and_then(|contents| contents.as_ref(app).ownership().cloned());
-        let border = match (&ownership, is_selected) {
-            (Some(PaneOwnership::Contested(_)), _) => theme.terminal_colors().normal.yellow.into(),
-            (_, true) => theme.accent(),
-            (_, false) => theme.outline(),
+        let border = match &ownership {
+            Some(PaneOwnership::Contested(_)) => theme.terminal_colors().normal.yellow.into(),
+            _ => theme.split_pane_border_color(),
         };
 
         let mut layers = Stack::new();
@@ -453,9 +490,28 @@ impl HerdrWorkspaceView {
                 .finish();
             layers.extend([Align::new(badge).top_right().finish()]);
         }
-        Container::new(layers.finish())
-            .with_border(Border::all(1.).with_border_fill(border))
-            .finish()
+
+        let mouse_states = self
+            .pane_header_states
+            .borrow_mut()
+            .entry(pane.id.clone())
+            .or_default()
+            .clone();
+        let frame = Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(render_pane_header(
+                pane,
+                can_close,
+                &mouse_states,
+                appearance,
+            ))
+            .with_child(Expanded::new(1., layers.finish()).finish());
+        let mut frame = Container::new(frame.finish())
+            .with_border(Border::all(PANE_BORDER_WIDTH).with_border_fill(border));
+        if is_dimmed {
+            frame = frame.with_foreground_overlay(theme.inactive_pane_overlay());
+        }
+        frame.finish()
     }
 
     /// The marker a pane shows when warpr is not simply controlling it.
@@ -579,7 +635,7 @@ impl HerdrWorkspaceView {
         };
         let workspace_id = workspace.workspace_id.clone();
         let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
-            self.creation_error =
+            self.request_error =
                 Some("Could not create a tab: no Herdr session is connected".to_owned());
             ctx.notify();
             return;
@@ -589,7 +645,7 @@ impl HerdrWorkspaceView {
             |me, result, ctx| {
                 match result {
                     Ok(()) => {
-                        me.creation_error = None;
+                        me.request_error = None;
                         me.selected_tab = None;
                         me.selected_pane = None;
                         me.report_viewed_panes(ctx);
@@ -598,7 +654,46 @@ impl HerdrWorkspaceView {
                     }
                     Err(failure) => {
                         log::error!("Could not create a Herdr tab: {failure}");
-                        me.creation_error = Some(format!("Could not create a tab: {failure}"));
+                        me.request_error = Some(format!("Could not create a tab: {failure}"));
+                    }
+                }
+                ctx.notify();
+            },
+        );
+    }
+
+    /// Asks Herdr to close `pane`. Nothing is removed here: the pane leaves the view once the
+    /// session stops presenting it. A refused request is shown in the view.
+    fn close_pane(&mut self, pane: &PaneId, ctx: &mut ViewContext<Self>) {
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.request_error =
+                Some("Could not close the pane: no Herdr session is connected".to_owned());
+            ctx.notify();
+            return;
+        };
+        let pane = pane.clone();
+        ctx.spawn(
+            {
+                let pane = pane.clone();
+                async move { herdr_client::close_pane(&target, &pane) }
+            },
+            move |me, result, ctx| {
+                match result {
+                    Ok(()) => {
+                        me.request_error = None;
+                        if me.selected_pane.as_ref() == Some(&pane) {
+                            me.selected_pane = None;
+                            me.report_viewed_panes(ctx);
+                            me.update_shown_panes(ctx);
+                            me.sync_sidebar_details(ctx);
+                        }
+                    }
+                    Err(failure) => {
+                        log::error!(
+                            "Could not close the Herdr pane {}: {failure}",
+                            pane.as_str()
+                        );
+                        me.request_error = Some(format!("Could not close the pane: {failure}"));
                     }
                 }
                 ctx.notify();
@@ -621,7 +716,7 @@ impl View for HerdrWorkspaceView {
         let workspace = self.render_workspace(app, appearance);
         let Some(notice) = self
             .connection_notice(app)
-            .or_else(|| self.creation_error.clone())
+            .or_else(|| self.request_error.clone())
         else {
             return workspace;
         };
@@ -638,6 +733,7 @@ impl TypedActionView for HerdrWorkspaceView {
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
             HerdrWorkspaceViewAction::CreateTab => self.create_tab(ctx),
+            HerdrWorkspaceViewAction::ClosePane(pane) => self.close_pane(pane, ctx),
             HerdrWorkspaceViewAction::Paste(pane) => {
                 let text = ctx
                     .clipboard()
