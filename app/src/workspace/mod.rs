@@ -47,7 +47,6 @@ use warpui::keymap::{BindingDescription, EditableBinding, FixedBinding};
 use crate::ai::blocklist::NEW_AGENT_PANE_LABEL;
 use crate::channel::{Channel, ChannelState};
 use crate::features::FeatureFlag;
-use crate::herdr::presents_herdr_workspaces;
 use crate::palette::PaletteMode;
 use crate::server::telemetry::{AgentModeEntrypoint, PaletteSource};
 use crate::settings_view::{self, SettingsSection, flags};
@@ -79,12 +78,6 @@ use crate::workspace::view::{
     TOGGLE_RIGHT_PANEL_BINDING_NAME, TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME,
     TOGGLE_VERTICAL_TABS_PANEL_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
-
-/// A binding description that reads `workspace` instead of `tab` in a window presenting Herdr.
-fn herdr_aware(tab: &'static str, workspace: &'static str) -> BindingDescription {
-    BindingDescription::new(tab)
-        .with_dynamic_override(move |ctx| presents_herdr_workspaces(ctx).then(|| workspace.into()))
-}
 
 pub fn init(app: &mut AppContext) {
     app.add_singleton_model(|_| WorkspaceRegistry::new());
@@ -551,7 +544,7 @@ pub fn init(app: &mut AppContext) {
         .with_group(bindings::BindingGroup::Settings.as_str()),
         EditableBinding::new(
             TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME,
-            herdr_aware("Open tab configs menu", "Open workspace configs menu"),
+            "Open workspace configs menu",
             WorkspaceAction::ToggleTabConfigsMenu,
         )
         .with_context_predicate(id!("Workspace"))
@@ -559,7 +552,7 @@ pub fn init(app: &mut AppContext) {
         .with_linux_or_windows_key_binding("ctrl-alt-shift-T"),
         EditableBinding::new(
             "workspace:activate_first_tab",
-            herdr_aware("Switch to 1st tab", "Switch to 1st workspace"),
+            "Switch to 1st workspace",
             WorkspaceAction::ActivateTabByNumber(1),
         )
         .with_context_predicate(id!("Workspace"))
@@ -567,7 +560,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-1"),
         EditableBinding::new(
             "workspace:activate_second_tab",
-            herdr_aware("Switch to 2nd tab", "Switch to 2nd workspace"),
+            "Switch to 2nd workspace",
             WorkspaceAction::ActivateTabByNumber(2),
         )
         .with_context_predicate(id!("Workspace"))
@@ -575,7 +568,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-2"),
         EditableBinding::new(
             "workspace:activate_third_tab",
-            herdr_aware("Switch to 3rd tab", "Switch to 3rd workspace"),
+            "Switch to 3rd workspace",
             WorkspaceAction::ActivateTabByNumber(3),
         )
         .with_context_predicate(id!("Workspace"))
@@ -583,7 +576,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-3"),
         EditableBinding::new(
             "workspace:activate_fourth_tab",
-            herdr_aware("Switch to 4th tab", "Switch to 4th workspace"),
+            "Switch to 4th workspace",
             WorkspaceAction::ActivateTabByNumber(4),
         )
         .with_context_predicate(id!("Workspace"))
@@ -591,7 +584,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-4"),
         EditableBinding::new(
             "workspace:activate_fifth_tab",
-            herdr_aware("Switch to 5th tab", "Switch to 5th workspace"),
+            "Switch to 5th workspace",
             WorkspaceAction::ActivateTabByNumber(5),
         )
         .with_context_predicate(id!("Workspace"))
@@ -599,7 +592,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-5"),
         EditableBinding::new(
             "workspace:activate_sixth_tab",
-            herdr_aware("Switch to 6th tab", "Switch to 6th workspace"),
+            "Switch to 6th workspace",
             WorkspaceAction::ActivateTabByNumber(6),
         )
         .with_context_predicate(id!("Workspace"))
@@ -607,7 +600,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-6"),
         EditableBinding::new(
             "workspace:activate_seventh_tab",
-            herdr_aware("Switch to 7th tab", "Switch to 7th workspace"),
+            "Switch to 7th workspace",
             WorkspaceAction::ActivateTabByNumber(7),
         )
         .with_context_predicate(id!("Workspace"))
@@ -615,7 +608,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-7"),
         EditableBinding::new(
             "workspace:activate_eighth_tab",
-            herdr_aware("Switch to 8th tab", "Switch to 8th workspace"),
+            "Switch to 8th workspace",
             WorkspaceAction::ActivateTabByNumber(8),
         )
         .with_context_predicate(id!("Workspace"))
@@ -623,7 +616,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-8"),
         EditableBinding::new(
             "workspace:activate_last_tab",
-            herdr_aware("Switch to last tab", "Switch to last workspace"),
+            "Switch to last workspace",
             WorkspaceAction::ActivateLastTab,
         )
         .with_context_predicate(id!("Workspace"))
@@ -631,7 +624,7 @@ pub fn init(app: &mut AppContext) {
         .with_key_binding("cmdorctrl-9"),
         EditableBinding::new(
             "workspace:activate_prev_tab",
-            herdr_aware("Activate previous tab", "Activate previous workspace"),
+            "Activate previous workspace",
             WorkspaceAction::ActivatePrevTab,
         )
         .with_context_predicate(
@@ -641,7 +634,7 @@ pub fn init(app: &mut AppContext) {
         .with_linux_or_windows_key_binding("ctrl-pageup"),
         EditableBinding::new(
             "workspace:activate_next_tab",
-            herdr_aware("Activate next tab", "Activate next workspace"),
+            "Activate next workspace",
             WorkspaceAction::ActivateNextTab,
         )
         .with_context_predicate(
@@ -741,9 +734,7 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE) & id!("IsOnline")),
         EditableBinding::new(
             NEW_TAB_BINDING_NAME,
-            BindingDescription::new("Create new tab").with_dynamic_override(|ctx| {
-                presents_herdr_workspaces(ctx).then(|| "Create new workspace".into())
-            }),
+            "Create new workspace",
             WorkspaceAction::AddDefaultTab,
         )
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging"))
@@ -751,9 +742,7 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
         EditableBinding::new(
             NEW_TERMINAL_TAB_BINDING_NAME,
-            BindingDescription::new("New Terminal Tab").with_dynamic_override(|ctx| {
-                presents_herdr_workspaces(ctx).then(|| "New Terminal Workspace".into())
-            }),
+            "New Terminal Workspace",
             WorkspaceAction::AddTerminalTab {
                 hide_homepage: false,
             },
@@ -771,10 +760,7 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(
             id!("Workspace") & id!(flags::IS_ANY_AI_ENABLED) & !id!("Workspace_PaneDragging"),
         )
-        .with_enabled(|| {
-            !FeatureFlag::DisableHostedAgent.is_enabled()
-                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
-        }),
+        .with_enabled(|| !FeatureFlag::DisableHostedAgent.is_enabled()),
         EditableBinding::new(
             NEW_AMBIENT_AGENT_TAB_BINDING_NAME,
             BindingDescription::new("New Cloud Agent Tab"),
@@ -919,13 +905,8 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::CommandPalette),
         EditableBinding::new(
             "workspace:move_tab_left",
-            BindingDescription::new("Move tab left").with_dynamic_override(|ctx| {
-                match (uses_vertical_tabs(ctx), presents_herdr_workspaces(ctx)) {
-                    (true, false) => Some("move tab up".into()),
-                    (true, true) => Some("move workspace up".into()),
-                    (false, true) => Some("Move workspace left".into()),
-                    (false, false) => None,
-                }
+            BindingDescription::new("Move workspace left").with_dynamic_override(|ctx| {
+                uses_vertical_tabs(ctx).then(|| "move workspace up".into())
             }),
             WorkspaceAction::MoveActiveTabLeft,
         )
@@ -939,13 +920,8 @@ pub fn init(app: &mut AppContext) {
         .with_custom_action(CustomAction::MoveTabLeft),
         EditableBinding::new(
             "workspace:move_tab_right",
-            BindingDescription::new("Move tab right").with_dynamic_override(|ctx| {
-                match (uses_vertical_tabs(ctx), presents_herdr_workspaces(ctx)) {
-                    (true, false) => Some("move tab down".into()),
-                    (true, true) => Some("move workspace down".into()),
-                    (false, true) => Some("Move workspace right".into()),
-                    (false, false) => None,
-                }
+            BindingDescription::new("Move workspace right").with_dynamic_override(|ctx| {
+                uses_vertical_tabs(ctx).then(|| "move workspace down".into())
             }),
             WorkspaceAction::MoveActiveTabRight,
         )
@@ -1042,9 +1018,7 @@ pub fn init(app: &mut AppContext) {
             // Reuse the new-session dropdown's action, not a dedicated variant.
             WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
         )
-        .with_enabled(|| {
-            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
-        })
+        .with_enabled(Workspace::user_tab_groups_enabled)
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging")),
         EditableBinding::new(
@@ -1052,9 +1026,7 @@ pub fn init(app: &mut AppContext) {
             "Create tab group from active or selected tab(s)",
             WorkspaceAction::NewTabGroupFromActiveOrSelectedTabs,
         )
-        .with_enabled(|| {
-            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
-        })
+        .with_enabled(Workspace::user_tab_groups_enabled)
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & !id!("Workspace_PaneDragging")),
         // Gated on `Workspace_ActiveOrSelectedTabsInGroup`: offered only when
@@ -1066,9 +1038,7 @@ pub fn init(app: &mut AppContext) {
             "Remove active or selected tab(s) from group",
             WorkspaceAction::RemoveActiveOrSelectedTabsFromGroup,
         )
-        .with_enabled(|| {
-            FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
-        })
+        .with_enabled(Workspace::user_tab_groups_enabled)
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
             id!("Workspace")
@@ -1107,9 +1077,7 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::PinActiveTabGroup,
         )
         .with_enabled(|| {
-            FeatureFlag::PinnedTabs.is_enabled()
-                && FeatureFlag::GroupedTabs.is_enabled()
-                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+            FeatureFlag::PinnedTabs.is_enabled() && Workspace::user_tab_groups_enabled()
         })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
@@ -1124,9 +1092,7 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::UnpinActiveTabGroup,
         )
         .with_enabled(|| {
-            FeatureFlag::PinnedTabs.is_enabled()
-                && FeatureFlag::GroupedTabs.is_enabled()
-                && !FeatureFlag::HerdrWorkspaceTabs.is_enabled()
+            FeatureFlag::PinnedTabs.is_enabled() && Workspace::user_tab_groups_enabled()
         })
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(
@@ -1159,9 +1125,7 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| ContextFlag::CloseWindow.is_enabled()),
         EditableBinding::new(
             "workspace:close_active_tab",
-            BindingDescription::new("Close the current tab").with_dynamic_override(|ctx| {
-                presents_herdr_workspaces(ctx).then(|| "Close the current workspace".into())
-            }),
+            "Close the current workspace",
             WorkspaceAction::CloseActiveTab,
         )
         .with_custom_action(CustomAction::CloseTab)
@@ -1171,9 +1135,7 @@ pub fn init(app: &mut AppContext) {
         ),
         EditableBinding::new(
             "workspace:close_other_tabs",
-            BindingDescription::new("Close other tabs").with_dynamic_override(|ctx| {
-                presents_herdr_workspaces(ctx).then(|| "Close other workspaces".into())
-            }),
+            "Close other workspaces",
             WorkspaceAction::CloseNonActiveTabs,
         )
         .with_custom_action(CustomAction::CloseOtherTabs)
@@ -1181,14 +1143,8 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
             "workspace:close_tabs_right_active_tab",
-            BindingDescription::new("Close tabs to the right").with_dynamic_override(|ctx| match (
-                uses_vertical_tabs(ctx),
-                presents_herdr_workspaces(ctx),
-            ) {
-                (true, false) => Some("close tabs below".into()),
-                (true, true) => Some("close workspaces below".into()),
-                (false, true) => Some("Close workspaces to the right".into()),
-                (false, false) => None,
+            BindingDescription::new("Close workspaces to the right").with_dynamic_override(|ctx| {
+                uses_vertical_tabs(ctx).then(|| "close workspaces below".into())
             }),
             WorkspaceAction::CloseTabsRightActiveTab,
         )

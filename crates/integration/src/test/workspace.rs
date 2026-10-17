@@ -318,7 +318,7 @@ fn add_horizontal_tab_context_metadata_copy_steps(
         )
         .with_step(
             new_step_with_default_assertions("Copy tab title from tab context menu")
-                .with_click_on_saved_position("Copy tab title")
+                .with_click_on_saved_position("Copy workspace title")
                 .add_assertion(assert_clipboard_contains_string(
                     METADATA_TAB_TITLE.to_string(),
                 )),
@@ -345,7 +345,7 @@ fn add_vertical_tab_context_metadata_copy_steps(
         ))
         .with_step(
             new_step_with_default_assertions("Copy tab title from tab context menu")
-                .with_click_on_saved_position("Copy tab title")
+                .with_click_on_saved_position("Copy workspace title")
                 .add_assertion(assert_clipboard_contains_string(
                     METADATA_TAB_TITLE.to_string(),
                 )),

@@ -96,9 +96,7 @@ fn send(content: UserNotification, window_id: WindowId, ctx: &mut AppContext) {
 /// Only warpr's own view changes: Herdr's focus is left alone.
 pub(crate) fn show_notified_agent(pane: &str, ctx: &mut AppContext) {
     ctx.windows().activate_app();
-    if ctx.has_singleton_model::<HerdrSessionModel>() {
-        HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
-            model.jump_to_agent(&PaneId::from(pane), ctx);
-        });
-    }
+    HerdrSessionModel::handle(ctx).update(ctx, |model, ctx| {
+        model.jump_to_agent(&PaneId::from(pane), ctx);
+    });
 }

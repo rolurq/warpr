@@ -28,24 +28,8 @@ use herdr_client::{
 };
 pub use session_picker::HerdrSessionPicker;
 use sessions::SessionSelection;
-use warp_core::features::FeatureFlag;
-use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
+use warpui::{Entity, ModelContext, SingletonEntity};
 pub use workspace_view::{HerdrBarTab, HerdrPaneRow, HerdrWorkspaceView, HerdrWorkspaceViewAction};
-
-/// Whether this window presents a Herdr session instead of Warp's own tabs and agents.
-pub(crate) fn presents_herdr_workspaces(app: &AppContext) -> bool {
-    FeatureFlag::HerdrWorkspaceTabs.is_enabled() && app.has_singleton_model::<HerdrSessionModel>()
-}
-
-/// `herdr` when this window presents a Herdr session, which calls top-level tabs workspaces, and
-/// `warp` otherwise.
-pub(crate) fn wording<'a>(app: &AppContext, warp: &'a str, herdr: &'a str) -> &'a str {
-    if presents_herdr_workspaces(app) {
-        herdr
-    } else {
-        warp
-    }
-}
 
 /// Names the Herdr session to present. Defaults to Herdr's `default` session.
 const SESSION_ENV: &str = "WARPR_HERDR_SESSION";
@@ -107,6 +91,17 @@ impl HerdrSessionModel {
         };
         model.go_live(cli, target, policy, ctx);
         model
+    }
+
+    /// A model presenting a session that never connects.
+    #[cfg(test)]
+    pub(crate) fn never_connected() -> Self {
+        Self {
+            presented: PresentedSession::connecting(),
+            sessions: SessionSelection::new(HerdrCli::new("herdr"), herdr_client::config_dir()),
+            live_session: None,
+            agents: AgentTracking::default(),
+        }
     }
 
     fn failed(failure: ConnectionFailure, sessions: SessionSelection) -> Self {

@@ -1808,17 +1808,12 @@ fn render_new_tab_button(
         let contents = if hover_state.is_hovered() {
             let tooltip = if let Some(sublabel) = tab_configs_keybinding.clone() {
                 ui_builder
-                    .tool_tip_with_sublabel(
-                        crate::herdr::wording(app, "Tab configs", "Workspace configs").to_string(),
-                        sublabel,
-                    )
+                    .tool_tip_with_sublabel("Workspace configs".to_string(), sublabel)
                     .build()
                     .finish()
             } else {
                 ui_builder
-                    .tool_tip(
-                        crate::herdr::wording(app, "Tab configs", "Workspace configs").to_string(),
-                    )
+                    .tool_tip("Workspace configs".to_string())
                     .build()
                     .finish()
             };
@@ -1959,17 +1954,9 @@ fn render_groups(
 
     if workspace.tabs.is_empty() {
         return Container::new(
-            Text::new_inline(
-                if crate::herdr::presents_herdr_workspaces(app) {
-                    "No workspaces open"
-                } else {
-                    "No tabs open"
-                },
-                appearance.ui_font_family(),
-                12.,
-            )
-            .with_color(theme.sub_text_color(theme.background()).into())
-            .finish(),
+            Text::new_inline("No workspaces open", appearance.ui_font_family(), 12.)
+                .with_color(theme.sub_text_color(theme.background()).into())
+                .finish(),
         )
         .with_padding(Padding::uniform(12.))
         .finish();
@@ -2113,11 +2100,7 @@ fn render_groups(
         } else {
             return Container::new(
                 Text::new_inline(
-                    crate::herdr::wording(
-                        app,
-                        "No tabs match your search.",
-                        "No workspaces match your search.",
-                    ),
+                    "No workspaces match your search.",
                     appearance.ui_font_family(),
                     12.,
                 )
@@ -2990,18 +2973,12 @@ fn render_tab_group_header_icon_button(
 
 /// The subtitle counting a group's members. A Herdr workspace group's first member is the
 /// workspace itself and the rest are its worktrees, so only those are counted.
-fn group_subtitle_text(member_count: usize, presents_herdr: bool) -> Option<String> {
-    if presents_herdr {
-        return match member_count.saturating_sub(1) {
-            0 => None,
-            1 => Some("1 worktree".to_string()),
-            worktrees => Some(format!("{worktrees} worktrees")),
-        };
+fn group_subtitle_text(member_count: usize) -> Option<String> {
+    match member_count.saturating_sub(1) {
+        0 => None,
+        1 => Some("1 worktree".to_string()),
+        worktrees => Some(format!("{worktrees} worktrees")),
     }
-    Some(match member_count {
-        1 => "1 tab".to_string(),
-        _ => format!("{member_count} tabs"),
-    })
 }
 
 /// Renders the header row for a tab group: leading icon (chevron when expanded,
@@ -3077,8 +3054,7 @@ fn render_grouped_tabs_header(
                 )
                 .finish()
         };
-    let subtitle_text =
-        group_subtitle_text(member_count, crate::herdr::presents_herdr_workspaces(ctx));
+    let subtitle_text = group_subtitle_text(member_count);
     let subtitle = subtitle_text.map(|text| {
         Text::new_inline(text, font_family, 10.)
             .with_clip(ClipConfig::ellipsis())
@@ -3516,11 +3492,7 @@ fn render_group_header(props: GroupHeaderProps<'_>, app: &AppContext) -> Box<dyn
     let theme = appearance.theme();
     let title = pane_group.display_title(app);
     let title = if title.is_empty() {
-        if crate::herdr::presents_herdr_workspaces(app) {
-            "Untitled workspace".to_string()
-        } else {
-            "Untitled tab".to_string()
-        }
+        "Untitled workspace".to_string()
     } else {
         title
     };
@@ -6342,7 +6314,7 @@ pub(super) fn render_settings_popup(
                 Expanded::new(
                     1.,
                     render_popup_text_segment(
-                        crate::herdr::wording(app, "Tabs", "Workspaces"),
+                        "Workspaces",
                         matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs),
                         state.tabs_segment_mouse_state.clone(),
                         VerticalTabsDisplayGranularity::Tabs,
@@ -6368,7 +6340,7 @@ pub(super) fn render_settings_popup(
 
     let tab_item_header = Container::new(
         Text::new_inline(
-            crate::herdr::wording(app, "Tab item", "Workspace item").to_string(),
+            "Workspace item".to_string(),
             appearance.ui_font_family(),
             SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
         )

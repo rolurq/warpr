@@ -118,23 +118,21 @@ impl HerdrWorkspaceView {
     pub fn new(contents: HerdrWorkspaceContents, ctx: &mut ViewContext<Self>) -> Self {
         let title = contents.title().to_owned();
         let pane_configuration = ctx.add_model(|_ctx| PaneConfiguration::new(&title));
-        if ctx.has_singleton_model::<HerdrSessionModel>() {
-            ctx.subscribe_to_model(
-                &HerdrSessionModel::handle(ctx),
-                |me, _, event, ctx| match event {
-                    HerdrSessionEvent::Presented => me.follow_session(ctx),
-                    HerdrSessionEvent::JumpedToAgent(jump) => me.follow_jump(jump, ctx),
-                    HerdrSessionEvent::SessionsListed | HerdrSessionEvent::AgentsPresented => {}
-                },
-            );
-            if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
-                ctx.add_singleton_model(HerdrPaneContentsRegistry::new);
-            }
-            ctx.subscribe_to_model(
-                &HerdrPaneContentsRegistry::handle(ctx),
-                |_, _, HerdrPaneContentsRegistryEvent::PaneChanged, ctx| ctx.notify(),
-            );
+        ctx.subscribe_to_model(
+            &HerdrSessionModel::handle(ctx),
+            |me, _, event, ctx| match event {
+                HerdrSessionEvent::Presented => me.follow_session(ctx),
+                HerdrSessionEvent::JumpedToAgent(jump) => me.follow_jump(jump, ctx),
+                HerdrSessionEvent::SessionsListed | HerdrSessionEvent::AgentsPresented => {}
+            },
+        );
+        if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
+            ctx.add_singleton_model(HerdrPaneContentsRegistry::new);
         }
+        ctx.subscribe_to_model(
+            &HerdrPaneContentsRegistry::handle(ctx),
+            |_, _, HerdrPaneContentsRegistryEvent::PaneChanged, ctx| ctx.notify(),
+        );
         ctx.subscribe_to_model(&PaneSettings::handle(ctx), |_, _, event, ctx| {
             if matches!(
                 event,
@@ -206,9 +204,6 @@ impl HerdrWorkspaceView {
         let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
             return;
         };
-        if !ctx.has_singleton_model::<HerdrSessionModel>() {
-            return;
-        }
         let workspace_id = workspace.workspace_id.clone();
         let panes = self.shown_panes(ctx);
         let window_id = ctx.window_id();
@@ -274,9 +269,6 @@ impl HerdrWorkspaceView {
     }
 
     fn show_panes(&mut self, panes: Vec<PaneId>, ctx: &mut ViewContext<Self>) {
-        if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
-            return;
-        }
         let view_id = ctx.view_id();
         HerdrPaneContentsRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.set_shown(view_id, panes, ctx);
@@ -399,9 +391,6 @@ impl HerdrWorkspaceView {
         let HerdrWorkspaceContents::Workspace(workspace) = &self.contents else {
             return None;
         };
-        if !app.has_singleton_model::<HerdrSessionModel>() {
-            return None;
-        }
         HerdrSessionModel::as_ref(app)
             .presented()
             .workspace(&workspace.workspace_id)
@@ -514,10 +503,7 @@ impl HerdrWorkspaceView {
         app: &AppContext,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let contents = app
-            .has_singleton_model::<HerdrPaneContentsRegistry>()
-            .then(|| HerdrPaneContentsRegistry::as_ref(app).contents(&pane.id))
-            .flatten();
+        let contents = HerdrPaneContentsRegistry::as_ref(app).contents(&pane.id);
         let ownership = contents
             .as_ref()
             .and_then(|contents| contents.as_ref(app).ownership().cloned());
@@ -667,9 +653,6 @@ impl HerdrWorkspaceView {
     /// What to tell the user while the session is not connected, so that the workspaces shown
     /// are not mistaken for Herdr's current state.
     fn connection_notice(&self, app: &AppContext) -> Option<String> {
-        if !app.has_singleton_model::<HerdrSessionModel>() {
-            return None;
-        }
         match &HerdrSessionModel::as_ref(app).presented().connection {
             ConnectionStatus::Reconnecting(failure) => Some(format!(
                 "Lost the connection to Herdr, reconnecting: {failure}"

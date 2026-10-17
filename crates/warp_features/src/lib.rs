@@ -384,10 +384,6 @@ pub enum FeatureFlag {
     /// A new first-time user experience which prioritizes choosing a coding repository.
     GetStartedTab,
 
-    /// Presents the workspaces of a Herdr session as top-level tabs. warpr is a Herdr client, so
-    /// this is on by default in its builds.
-    HerdrWorkspaceTabs,
-
     /// Enables Projects and Project management
     Projects,
 
@@ -1033,6 +1029,14 @@ pub enum FeatureFlag {
     /// warpr kill switch: when enabled, Warp's servers are never polled for
     /// app updates or changelogs.
     DisableWarpUpdates,
+
+    /// warpr kill switch: when enabled, the user cannot create tab groups or move tabs into or
+    /// out of them. warpr's tabs are Herdr's workspaces, whose groupings Herdr owns.
+    DisableUserTabGroups,
+
+    /// warpr kill switch: when enabled, warpr does not offer to start local shell sessions, which
+    /// belong to Herdr.
+    DisableLocalSessions,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

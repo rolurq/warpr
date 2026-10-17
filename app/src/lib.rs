@@ -1893,9 +1893,7 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(|_| RecordingController::new());
     ctx.add_singleton_model(|_| ExecutionProfileEditorManager::default());
     ctx.add_singleton_model(|_| NetworkLogPaneManager::default());
-    if FeatureFlag::HerdrWorkspaceTabs.is_enabled() {
-        ctx.add_singleton_model(herdr::HerdrSessionModel::new);
-    }
+    ctx.add_singleton_model(herdr::HerdrSessionModel::new);
     ctx.add_singleton_model(|_| pricing::PricingInfoModel::new());
     ctx.add_singleton_model(ai::pricing_promotion::PricingPromotionState::new);
     ctx.add_singleton_model(|ctx| {

@@ -4,7 +4,7 @@ use warpui::platform::WindowStyle;
 
 use super::*;
 use crate::test_util::assert_eventually;
-use crate::workspace::view::tests::initialize_app;
+use crate::workspace::view::tests::initialize_app_without_herdr;
 
 fn open_picker(app: &mut App, fake: &FakeHerdr) -> ViewHandle<HerdrSessionPicker> {
     let cli = herdr_client::HerdrCli::new(fake.binary_path());
@@ -34,7 +34,7 @@ fn action_for(
 #[test]
 fn the_picker_marks_each_session_running_or_stopped() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let mut fake = FakeHerdr::new();
         fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", false)]);
@@ -65,7 +65,7 @@ fn the_picker_marks_each_session_running_or_stopped() {
 #[test]
 fn choosing_a_session_in_the_picker_presents_it() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let mut fake = FakeHerdr::new();
         fake.script_status(&HerdrStatus::compatible());
         fake.script_session_list(&[("default", true), ("work", true)]);

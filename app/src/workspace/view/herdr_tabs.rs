@@ -28,7 +28,6 @@ use crate::herdr::{
     HerdrBarTab, HerdrSessionEvent, HerdrSessionModel, HerdrWorkspaceView, HerdrWorkspaceViewAction,
 };
 use crate::pane_group::PanesLayout;
-use crate::settings::AISettings;
 use crate::util::git::list_local_branches_sync;
 use crate::view_components::DismissibleToast;
 use crate::workspace::WorkspaceAction;
@@ -168,14 +167,9 @@ impl HerdrTabBarState {
 }
 
 impl Workspace {
-    /// Whether the user may create and rearrange tab groups. Herdr windows present Herdr's own
-    /// groupings and own the order, so there the user may not.
-    pub(super) fn user_tab_groups_enabled(app: &AppContext) -> bool {
-        FeatureFlag::GroupedTabs.is_enabled() && !crate::herdr::presents_herdr_workspaces(app)
-    }
-
-    fn presents_herdr_workspaces(ctx: &AppContext) -> bool {
-        crate::herdr::presents_herdr_workspaces(ctx)
+    /// Whether the user may create and rearrange tab groups.
+    pub(crate) fn user_tab_groups_enabled() -> bool {
+        FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::DisableUserTabGroups.is_enabled()
     }
 
     /// The view of the Herdr workspace this window shows.
@@ -191,9 +185,7 @@ impl Workspace {
     /// The Herdr tabs the tab bar lists: those of the workspace this window shows, none while the
     /// agent panel covers the workspaces or the window shows no Herdr workspace.
     pub(super) fn herdr_bar_tabs(&self, ctx: &AppContext) -> Vec<HerdrBarTab> {
-        if !Self::presents_herdr_workspaces(ctx)
-            || self.current_workspace_state.is_agent_management_view_open
-        {
+        if self.current_workspace_state.is_agent_management_view_open {
             return Vec::new();
         }
         self.active_herdr_workspace_view(ctx)
@@ -264,25 +256,12 @@ impl Workspace {
         );
     }
 
-    /// Whether the agent panel can be opened: Herdr's agents when this window presents a Herdr
-    /// session, Warp's own agent management otherwise.
-    pub(super) fn is_agent_panel_available(&self, app: &AppContext) -> bool {
-        FeatureFlag::AgentManagementView.is_enabled()
-            && (self.herdr_agent_panel.is_some() || AISettings::as_ref(app).is_any_ai_enabled(app))
-    }
-
     pub(super) fn agent_management_content(&self) -> Box<dyn Element> {
-        match &self.herdr_agent_panel {
-            Some(panel) => ChildView::new(panel).finish(),
-            None => ChildView::new(&self.agent_management_view).finish(),
-        }
+        ChildView::new(&self.herdr_agent_panel).finish()
     }
 
     pub(super) fn focus_agent_management_view(&self, ctx: &mut ViewContext<Self>) {
-        match &self.herdr_agent_panel {
-            Some(panel) => ctx.focus(panel),
-            None => ctx.focus(&self.agent_management_view),
-        }
+        ctx.focus(&self.herdr_agent_panel);
     }
 
     /// Shows the workspace of `jump`, closing the agent panel. Which Herdr tab and pane to show
@@ -305,9 +284,6 @@ impl Workspace {
     /// panel covers the tabs or the selected tab is not a workspace. Only warpr's own notion:
     /// Herdr is not told.
     pub(super) fn report_shown_herdr_workspace(&self, ctx: &mut ViewContext<Self>) {
-        if !Self::presents_herdr_workspaces(ctx) {
-            return;
-        }
         let selected = self
             .tabs
             .get(self.active_tab_index)
@@ -327,9 +303,6 @@ impl Workspace {
     }
 
     pub(super) fn subscribe_to_herdr_session(ctx: &mut ViewContext<Self>) {
-        if !Self::presents_herdr_workspaces(ctx) {
-            return;
-        }
         ctx.subscribe_to_model(
             &HerdrSessionModel::handle(ctx),
             |me, _, event, ctx| match event {
@@ -365,25 +338,16 @@ impl Workspace {
 
     /// The repositories to offer for a new worktree, with the repository of the workspace the
     /// window shows preselected, or of the one Herdr has focused when the window shows none.
-    /// `None` in windows that do not present a Herdr session.
-    pub(super) fn herdr_new_worktree_repositories(
-        &self,
-        ctx: &AppContext,
-    ) -> Option<HerdrRepositories> {
-        if !Self::presents_herdr_workspaces(ctx) {
-            return None;
-        }
-        let shown_tab = self.tabs.get(self.active_tab_index)?.pane_group.id();
-        let shown =
+    pub(super) fn herdr_new_worktree_repositories(&self, ctx: &AppContext) -> HerdrRepositories {
+        let shown = self.tabs.get(self.active_tab_index).and_then(|tab| {
+            let shown_tab = tab.pane_group.id();
             self.herdr_workspace_tabs(ctx)
                 .into_iter()
                 .find_map(|(pane_group_id, workspace_id)| {
                     (pane_group_id == shown_tab).then_some(workspace_id)
-                });
-        Some(HerdrRepositories::of(
-            HerdrSessionModel::as_ref(ctx).presented(),
-            shown.as_ref(),
-        ))
+                })
+        });
+        HerdrRepositories::of(HerdrSessionModel::as_ref(ctx).presented(), shown.as_ref())
     }
 
     /// Asks Herdr to create a linked worktree of the repository at `repo`, on a new branch from
@@ -448,9 +412,6 @@ impl Workspace {
     /// Herdr is connecting, has no workspaces or is unreachable, so the window is never left
     /// without a tab.
     pub(super) fn present_herdr_workspaces(&mut self, ctx: &mut ViewContext<Self>) {
-        if !Self::presents_herdr_workspaces(ctx) {
-            return;
-        }
         let presented = HerdrSessionModel::as_ref(ctx).presented().clone();
         match &presented.connection {
             ConnectionStatus::Connected if !presented.workspaces.is_empty() => {

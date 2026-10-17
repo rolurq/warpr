@@ -5,8 +5,6 @@ use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use ai::project_context::model::ProjectContextModel;
 use pane_group::{NotebookPane, PaneState, SplitPaneState, TerminalPaneId};
 #[cfg(feature = "local_fs")]
-use repo_metadata::CanonicalizedPath;
-#[cfg(feature = "local_fs")]
 use repo_metadata::RepoMetadataModel;
 use repo_metadata::repositories::DetectedRepositories;
 use repo_metadata::watcher::DirectoryWatcher;
@@ -48,6 +46,7 @@ use crate::cloud_object::model::view::CloudViewModel;
 use crate::context_chips::prompt::Prompt;
 use crate::editor::Event;
 use crate::gpu_state::GPUState;
+use crate::herdr::HerdrSessionModel;
 use crate::menu::MenuAction;
 use crate::network::NetworkStatus;
 use crate::notebooks::editor::keys::NotebookKeybindings;
@@ -99,6 +98,16 @@ pub(crate) fn initialize_app(app: &mut App) {
 }
 
 pub(crate) fn initialize_app_with_team_client(app: &mut App, team_client: Arc<dyn TeamClient>) {
+    initialize_models(app, team_client);
+    app.add_singleton_model(|_| HerdrSessionModel::never_connected());
+}
+
+/// Initializes everything a workspace needs except the Herdr session model.
+pub(crate) fn initialize_app_without_herdr(app: &mut App) {
+    initialize_models(app, Arc::new(MockTeamClient::new()));
+}
+
+fn initialize_models(app: &mut App, team_client: Arc<dyn TeamClient>) {
     initialize_settings_for_tests(app);
 
     // Add the necessary singleton models to the App
@@ -1119,8 +1128,8 @@ fn test_worktree_sidecar_close_via_select_item_executes_from_workspace() {
             workspace.handle_new_session_sidecar_event(&MenuEvent::ItemSelected, ctx);
         });
 
-        workspace.read(&app, |workspace, _| {
-            assert_eq!(workspace.tab_count(), 2);
+        workspace.read(&app, |workspace, ctx| {
+            assert!(workspace.toast_stack.as_ref(ctx).has_toasts());
         });
     });
 }
@@ -1425,8 +1434,8 @@ fn test_worktree_sidecar_search_editor_enter_executes_selection() {
                 });
         });
 
-        workspace.read(&app, |workspace, _| {
-            assert_eq!(workspace.tab_count(), 2);
+        workspace.read(&app, |workspace, ctx| {
+            assert!(workspace.toast_stack.as_ref(ctx).has_toasts());
             assert!(workspace.show_new_session_dropdown_menu.is_none());
         });
     });
@@ -2621,7 +2630,7 @@ fn test_selecting_rename_from_tab_context_menu_preserves_editor_focus() {
         });
 
         menu.update(&mut app, |menu, ctx| {
-            assert!(menu.set_selected_by_name("Rename tab", ctx));
+            assert!(menu.set_selected_by_name("Rename workspace", ctx));
             menu.handle_action(&MenuAction::Enter, ctx);
         });
 
@@ -2671,44 +2680,6 @@ fn test_selecting_rename_from_pane_context_menu_preserves_editor_focus() {
                 Some(locator)
             );
             assert!(workspace.pane_rename_editor.is_focused(ctx));
-        });
-    });
-}
-
-#[test]
-fn test_selecting_rename_from_tab_group_context_menu_preserves_editor_focus() {
-    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
-
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        let workspace = mock_workspace(&mut app);
-        let menu = workspace.update(&mut app, |workspace, ctx| {
-            let group = TabGroup::new();
-            let group_id = group.id;
-            workspace.tab_groups.insert(group_id, group);
-            workspace.tabs[0].group_id = Some(group_id);
-            workspace.toggle_tab_group_right_click_menu(
-                group_id,
-                TabContextMenuAnchor::Pointer(Vector2F::zero()),
-                ctx,
-            );
-            workspace.tab_right_click_menu.clone()
-        });
-
-        menu.update(&mut app, |menu, ctx| {
-            assert!(menu.set_selected_by_name("Rename", ctx));
-            menu.handle_action(&MenuAction::Enter, ctx);
-        });
-
-        workspace.read(&app, |workspace, ctx| {
-            assert!(workspace.show_tab_group_right_click_menu.is_none());
-            assert!(
-                workspace
-                    .current_workspace_state
-                    .is_any_tab_group_being_renamed()
-            );
-            assert!(workspace.tab_group_rename_editor.is_focused(ctx));
         });
     });
 }
@@ -4322,7 +4293,7 @@ fn test_unified_new_session_menu_uses_new_worktree_config_label_and_order() {
             );
             assert_eq!(
                 labels.get(separator_index + 2),
-                Some(&"New tab config".to_string())
+                Some(&"New workspace config".to_string())
             );
         });
     });
@@ -4467,89 +4438,6 @@ fn test_worktree_sidecar_search_editor_proxies_navigation_and_escape() {
                     .buffer_text(ctx)
                     .is_empty()
             );
-        });
-    });
-}
-
-#[cfg(feature = "local_fs")]
-#[test]
-fn test_worktree_sidecar_hides_linked_worktrees_from_repo_list() {
-    let _tab_configs_guard = FeatureFlag::TabConfigs.override_enabled(true);
-
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        let workspace = mock_workspace(&mut app);
-        let temp_root = TempDir::new().expect("failed to create temp dir");
-        let main_repo = temp_root.path().join("main-repo");
-        let linked_worktree = temp_root.path().join("linked-worktree");
-        let external_git_dir = main_repo
-            .join(".git")
-            .join("worktrees")
-            .join("linked-worktree");
-
-        std::fs::create_dir_all(&main_repo).expect("failed to create main repo dir");
-        std::fs::create_dir_all(&linked_worktree).expect("failed to create linked worktree dir");
-        std::fs::create_dir_all(&external_git_dir).expect("failed to create external git dir");
-
-        workspace.update(&mut app, |_, ctx| {
-            PersistedWorkspace::handle(ctx).update(ctx, |persisted, ctx| {
-                persisted.user_added_workspace(main_repo.clone(), ctx);
-                persisted.user_added_workspace(linked_worktree.clone(), ctx);
-            });
-
-            let main_repo_canon =
-                CanonicalizedPath::try_from(main_repo.as_path()).expect("canonical main repo");
-            let linked_worktree_canon = CanonicalizedPath::try_from(linked_worktree.as_path())
-                .expect("canonical linked worktree");
-            let external_git_dir_canon = CanonicalizedPath::try_from(external_git_dir.as_path())
-                .expect("canonical external git dir");
-
-            let main_repo_std: warp_util::standardized_path::StandardizedPath =
-                main_repo_canon.into();
-            let linked_worktree_std: warp_util::standardized_path::StandardizedPath =
-                linked_worktree_canon.into();
-            let external_git_dir_std: warp_util::standardized_path::StandardizedPath =
-                external_git_dir_canon.into();
-
-            DetectedRepositories::handle(ctx).update(ctx, |repos, _ctx| {
-                repos.insert_test_repo_root(main_repo_std.clone());
-                repos.insert_test_repo_root(linked_worktree_std.clone());
-            });
-
-            DirectoryWatcher::handle(ctx).update(ctx, |watcher, ctx| {
-                watcher
-                    .add_directory_with_git_dir(main_repo_std, None, ctx)
-                    .expect("register main repo");
-                watcher
-                    .add_directory_with_git_dir(
-                        linked_worktree_std,
-                        Some(external_git_dir_std),
-                        ctx,
-                    )
-                    .expect("register linked worktree");
-            });
-        });
-
-        open_worktree_sidecar(&workspace, &mut app);
-
-        workspace.read(&app, |workspace, ctx| {
-            let labels = workspace.new_session_sidecar_menu.read(ctx, |menu, _| {
-                menu.items()
-                    .iter()
-                    .filter_map(|item| match item {
-                        MenuItem::Item(fields) => Some(fields.label().to_string()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-            });
-
-            let main_repo_label = main_repo.to_string_lossy().to_string();
-            let linked_worktree_label = linked_worktree.to_string_lossy().to_string();
-
-            assert!(labels.iter().any(|label| label == "Search repos"));
-            assert!(labels.iter().any(|label| label == &main_repo_label));
-            assert!(!labels.iter().any(|label| label == &linked_worktree_label));
         });
     });
 }
