@@ -1,15 +1,21 @@
 use std::collections::HashMap;
 
+use settings::Setting as _;
+use warp_core::features::FeatureFlag;
+use warp_errors::report_if_error;
 use warpui::platform::keyboard::KeyCode;
+use warpui::{App, SingletonEntity as _};
 
 use super::{
     SelectedTabColor, ShortcutModifierKind, TAB_ACTIVATE_BINDING_NAMES,
     TAB_ACTIVATE_LAST_BINDING_NAME, TabShortcutModifierState, next_tab_color,
-    tab_activate_binding_name, tab_group_menu_entry_flags,
+    tab_activate_binding_name, tab_group_menu_entry_flags, uses_vertical_tabs,
 };
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::ui_components::color_dot::TAB_COLOR_OPTIONS;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
+use crate::workspace::tab_settings::TabSettings;
+use crate::workspace::view::tests::initialize_app;
 
 /// Build a `tab_groups` map containing exactly the given group ids.
 fn groups(ids: &[TabGroupId]) -> HashMap<TabGroupId, TabGroup> {
@@ -185,4 +191,50 @@ fn next_tab_color_follows_the_canonical_palette_and_clears_after_the_last_color(
         next_tab_color(Some(AnsiColorIdentifier::White)),
         SelectedTabColor::Color(TAB_COLOR_OPTIONS[0])
     );
+}
+
+fn store_use_vertical_tabs(app: &mut App, value: bool) {
+    app.update(|ctx| {
+        TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+            report_if_error!(settings.use_vertical_tabs.set_value(value, ctx));
+        });
+    });
+}
+
+#[test]
+fn a_stored_horizontal_choice_still_yields_vertical_tabs_while_the_layout_choice_is_off() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(false);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        store_use_vertical_tabs(&mut app, false);
+
+        assert!(app.read(uses_vertical_tabs));
+    });
+}
+
+#[test]
+fn the_stored_choice_decides_the_layout_while_the_layout_choice_is_on() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        store_use_vertical_tabs(&mut app, false);
+        assert!(!app.read(uses_vertical_tabs));
+
+        store_use_vertical_tabs(&mut app, true);
+        assert!(app.read(uses_vertical_tabs));
+    });
+}
+
+#[test]
+fn vertical_tabs_are_never_used_without_the_vertical_tabs_feature() {
+    let _vertical_tabs = FeatureFlag::VerticalTabs.override_enabled(false);
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(false);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        assert!(!app.read(uses_vertical_tabs));
+    });
 }

@@ -5,6 +5,7 @@ use onboarding::{SelectedSettings, UICustomizationSettings};
 use warp_core::features::FeatureFlag;
 use warpui::{App, SingletonEntity};
 
+use super::apply_ui_customization_settings;
 use crate::LaunchMode;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::{
@@ -243,6 +244,41 @@ fn account_first_settings_enable_agent_for_authenticated_users_and_apply_ui_choi
                 assert!(!*CodeSettings::as_ref(ctx).show_global_search);
             });
         }
+    });
+}
+
+fn vertical_ui_customization() -> UICustomizationSettings {
+    UICustomizationSettings {
+        use_vertical_tabs: true,
+        show_conversation_history: false,
+        show_project_explorer: true,
+        show_global_search: false,
+        show_warp_drive: false,
+        show_code_review_button: true,
+    }
+}
+
+#[test]
+fn the_onboarding_layout_choice_is_stored_while_the_layout_choice_is_on() {
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+
+        app.update(|ctx| apply_ui_customization_settings(&vertical_ui_customization(), true, ctx));
+
+        app.read(|ctx| assert!(*TabSettings::as_ref(ctx).use_vertical_tabs));
+    });
+}
+
+#[test]
+fn the_onboarding_layout_choice_leaves_the_stored_setting_alone_while_the_layout_choice_is_off() {
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(false);
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+
+        app.update(|ctx| apply_ui_customization_settings(&vertical_ui_customization(), true, ctx));
+
+        app.read(|ctx| assert!(!*TabSettings::as_ref(ctx).use_vertical_tabs));
     });
 }
 

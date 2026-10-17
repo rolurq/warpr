@@ -76,6 +76,24 @@ fn generates_a_settings_schema() {
 }
 
 #[test]
+fn the_vertical_tabs_layout_setting_is_only_in_the_schema_while_the_layout_choice_is_on() {
+    let layout_setting = |schema: &str| {
+        let schema: serde_json::Value = serde_json::from_str(schema).unwrap();
+        schema["properties"]["appearance"]["properties"]["vertical_tabs"]["properties"]
+            .get("enabled")
+            .cloned()
+    };
+
+    let without_choice = settings_schema_json(|_| false).unwrap();
+    let with_choice =
+        settings_schema_json(|flag| flag == warp_core::features::FeatureFlag::TabLayoutChoice)
+            .unwrap();
+
+    assert_eq!(layout_setting(&without_choice), None);
+    assert!(layout_setting(&with_choice).is_some());
+}
+
+#[test]
 fn surface_annotation_matches_setting_schema_entry_metadata() {
     for entry in inventory::iter::<SettingSchemaEntry> {
         let surfaces = (entry.surfaces_fn)();

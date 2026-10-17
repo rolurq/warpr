@@ -291,6 +291,43 @@ fn account_first_path_uses_agent_ui_defaults() {
 }
 
 #[test]
+fn terminal_intention_uses_vertical_tabs_and_ignores_a_layout_pick_while_the_choice_is_off() {
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(false);
+    App::test((), |mut app| async move {
+        let model = add_test_model(&mut app);
+        model.update(&mut app, |model, ctx| model.set_intention_terminal(ctx));
+
+        model.update(&mut app, |model, ctx| {
+            model.set_use_vertical_tabs(false, ctx)
+        });
+
+        model.read(&app, |model, _| {
+            assert!(model.ui_customization().use_vertical_tabs);
+        });
+    });
+}
+
+#[test]
+fn terminal_intention_defaults_to_horizontal_tabs_that_can_be_picked_while_the_choice_is_on() {
+    let _choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
+    App::test((), |mut app| async move {
+        let model = add_test_model(&mut app);
+        model.update(&mut app, |model, ctx| model.set_intention_terminal(ctx));
+        model.read(&app, |model, _| {
+            assert!(!model.ui_customization().use_vertical_tabs);
+        });
+
+        model.update(&mut app, |model, ctx| {
+            model.set_use_vertical_tabs(true, ctx)
+        });
+
+        model.read(&app, |model, _| {
+            assert!(model.ui_customization().use_vertical_tabs);
+        });
+    });
+}
+
+#[test]
 fn agent_path_routes_through_ai_setup() {
     App::test((), |mut app| async move {
         let model = add_test_model(&mut app);

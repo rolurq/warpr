@@ -93,6 +93,7 @@ use crate::drive::items::WarpDriveItemId;
 use crate::drive::{CloudObjectTypeAndId, OpenWarpDriveObjectArgs};
 use crate::env_vars::EnvVarCollectionType;
 use crate::features::FeatureFlag;
+use crate::herdr::HerdrWorkspaceView;
 use crate::launch_configs::launch_config::{self, PaneMode, PaneTemplateType};
 use crate::notebooks::file::FileNotebookView;
 use crate::palette::PaletteMode;
@@ -5191,7 +5192,9 @@ impl PaneGroup {
             PaneEvent::AppStateChanged => {
                 ctx.emit(Event::AppStateChanged);
             }
-            PaneEvent::SidebarDetailsChanged => ctx.emit(Event::PaneTitleUpdated),
+            PaneEvent::SidebarDetailsChanged | PaneEvent::HerdrTabChanged => {
+                ctx.emit(Event::PaneTitleUpdated)
+            }
             PaneEvent::NewPaneInAIMode { initial_query } => {
                 self.add_terminal_pane_in_agent_mode(initial_query.as_deref(), None, ctx)
             }
@@ -7980,6 +7983,13 @@ impl PaneGroup {
                 .as_ref(ctx)
                 .focused_pane_directory(ctx)
         })
+    }
+
+    /// The view of the Herdr workspace this pane group shows, if it shows one.
+    pub fn herdr_workspace_view(&self, ctx: &AppContext) -> Option<ViewHandle<HerdrWorkspaceView>> {
+        self.panes_of::<HerdrWorkspacePane>()
+            .next()
+            .map(|pane| pane.workspace_view(ctx))
     }
 
     /// Get all terminal CWDs for this pane group.

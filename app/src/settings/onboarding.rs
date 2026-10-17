@@ -7,6 +7,7 @@ use warpui::{AppContext, SingletonEntity as _};
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::{ActionPermission, WriteToPtyPermission};
 use crate::drive::settings::WarpDriveSettings;
+use crate::features::FeatureFlag;
 use crate::settings::ai::DefaultSessionMode;
 use crate::settings::{AISettings, CodeSettings, UsageDisplayUnit};
 use crate::workspace::tab_settings::TabSettings;
@@ -144,11 +145,13 @@ fn apply_ui_customization_settings(
     app: &mut AppContext,
 ) {
     TabSettings::handle(app).update(app, |settings, ctx| {
-        report_if_error!(
-            settings
-                .use_vertical_tabs
-                .set_value(ui.use_vertical_tabs, ctx)
-        );
+        if FeatureFlag::TabLayoutChoice.is_enabled() {
+            report_if_error!(
+                settings
+                    .use_vertical_tabs
+                    .set_value(ui.use_vertical_tabs, ctx)
+            );
+        }
         report_if_error!(
             settings
                 .show_code_review_button

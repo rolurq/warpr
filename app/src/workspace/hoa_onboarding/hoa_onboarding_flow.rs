@@ -25,7 +25,9 @@ use warpui::{
 
 use super::{tab_config_step, welcome_banner};
 use crate::appearance::Appearance;
+use crate::features::FeatureFlag;
 use crate::settings::AISettings;
+use crate::tab::uses_vertical_tabs;
 use crate::tab_configs::session_config::{SessionConfigSelection, SessionType, is_git_repo};
 use crate::tab_configs::session_config_rendering;
 use crate::ui_components::icons::Icon;
@@ -412,31 +414,33 @@ impl HoaOnboardingFlow {
         appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
-        let use_vertical = *TabSettings::as_ref(app).use_vertical_tabs;
-        let checkbox_mouse = self.horizontal_tabs_checkbox_mouse_state.clone();
-        let checkbox_el = callout_checkbox(checkbox_mouse, Some(10.5), appearance)
-            .check(!use_vertical)
-            .build()
-            .with_cursor(Cursor::PointingHand)
-            .on_click(|ctx, _, _| {
-                ctx.dispatch_typed_action(HoaOnboardingAction::ToggleHorizontalTabs);
-            })
+        let checkbox_row = FeatureFlag::TabLayoutChoice.is_enabled().then(|| {
+            let use_vertical = uses_vertical_tabs(app);
+            let checkbox_mouse = self.horizontal_tabs_checkbox_mouse_state.clone();
+            let checkbox_el = callout_checkbox(checkbox_mouse, Some(10.5), appearance)
+                .check(!use_vertical)
+                .build()
+                .with_cursor(Cursor::PointingHand)
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(HoaOnboardingAction::ToggleHorizontalTabs);
+                })
+                .finish();
+
+            let checkbox_label = Text::new_inline(
+                "Switch back to horizontal tabs".to_string(),
+                appearance.ui_font_family(),
+                12.,
+            )
+            .with_color(callout_label_color(appearance))
             .finish();
 
-        let checkbox_label = Text::new_inline(
-            "Switch back to horizontal tabs".to_string(),
-            appearance.ui_font_family(),
-            12.,
-        )
-        .with_color(callout_label_color(appearance))
-        .finish();
-
-        let checkbox_row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(8.)
-            .with_child(checkbox_el)
-            .with_child(checkbox_label)
-            .finish();
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(checkbox_el)
+                .with_child(checkbox_label)
+                .finish()
+        });
 
         let button = if self.truncated_flow {
             &self.dismiss_vtabs_button
@@ -447,7 +451,7 @@ impl HoaOnboardingFlow {
         self.render_callout_content(
             "Introducing vertical tabs - the new default",
             "Vertical tabs show all open agent and terminal panes, grouped by tab. Customize what information you want to see to support your workflow.",
-            Some(checkbox_row),
+            checkbox_row,
             button,
             appearance,
         )
@@ -589,7 +593,7 @@ impl View for HoaOnboardingFlow {
             }
             HoaOnboardingStep::VerticalTabsCallout => {
                 let content = self.render_vertical_tabs_callout(appearance, app);
-                let use_vertical = *TabSettings::as_ref(app).use_vertical_tabs;
+                let use_vertical = uses_vertical_tabs(app);
                 let (arrow_direction, arrow_position) = if use_vertical {
                     (
                         CalloutArrowDirection::Left,
@@ -622,7 +626,7 @@ impl View for HoaOnboardingFlow {
             }
             HoaOnboardingStep::TabConfig => {
                 let tab_content = self.render_tab_config_step(appearance);
-                let use_vertical = *TabSettings::as_ref(app).use_vertical_tabs;
+                let use_vertical = uses_vertical_tabs(app);
                 let (arrow_direction, arrow_position) = if use_vertical {
                     (
                         CalloutArrowDirection::Left,

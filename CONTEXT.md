@@ -13,11 +13,11 @@ A named, persistent Herdr server that warpr connects to. It outlives warpr.
 _Avoid_: connection, profile, instance
 
 **Workspace**:
-Herdr's top-level grouping of tabs and panes. Presented in warpr as a top-level tab.
+Herdr's top-level grouping of tabs and panes. Presented in warpr as an entry in the vertical tabs panel.
 _Avoid_: window, project, Warp tab
 
 **Herdr tab**:
-A grouping of panes inside a workspace. Presented in warpr as an inner strip within the workspace's tab.
+A grouping of panes inside a workspace. Presented in warpr as a tab in the horizontal tab bar, which lists the tabs of the workspace the window shows.
 _Avoid_: tab (unqualified)
 
 **Pane**:

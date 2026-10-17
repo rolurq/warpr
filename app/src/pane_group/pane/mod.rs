@@ -1142,6 +1142,8 @@ pub enum PaneEvent {
     RepoChanged,
     /// What the vertical tabs show about this pane beyond its title changed.
     SidebarDetailsChanged,
+    /// The Herdr tab a Herdr workspace view shows changed.
+    HerdrTabChanged,
     /// A remote server resolved the repo root for a session in this pane.
     RemoteRepoNavigated {
         remote_path: RemotePath,

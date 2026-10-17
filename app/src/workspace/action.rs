@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use herdr_client::HerdrTabId;
 use session_sharing_protocol::common::SessionId;
 use ui_components::lightbox;
 use warp_util::path::LineAndColumnArg;
@@ -164,6 +165,10 @@ pub enum WorkspaceAction {
     },
     TabHoverWidthEnd,
     ToggleTabBarOverflowMenu,
+    /// Shows a Herdr tab of the workspace this window shows, as the tab bar lists them.
+    SelectHerdrTab(HerdrTabId),
+    /// Asks Herdr to create a Herdr tab in the workspace this window shows.
+    CreateHerdrTab,
     ToggleWelcomeTips,
     CloseTab(usize),
     CloseActiveTab,
@@ -1051,6 +1056,8 @@ impl WorkspaceAction {
             | ToggleNewSessionMenu { .. }
             | SelectNewSessionMenuItem(_)
             | ToggleTabBarOverflowMenu
+            | SelectHerdrTab(_)
+            | CreateHerdrTab
             | CheckForUpdate
             | SetA11yVerbosityLevel(_)
             | ToggleNotifications
