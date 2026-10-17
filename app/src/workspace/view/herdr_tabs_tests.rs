@@ -549,6 +549,44 @@ fn dispatch(app: &mut App, workspace: &ViewHandle<Workspace>, action: WorkspaceA
 }
 
 #[test]
+fn close_items_say_workspace_only_in_a_window_presenting_herdr() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let labels = |app: &App| {
+            app.read(|ctx| {
+                (
+                    crate::tab::close_other_tabs_label(ctx),
+                    crate::tab::close_tabs_after_label(true, ctx),
+                    crate::tab::close_tabs_after_label(false, ctx),
+                )
+            })
+        };
+        assert_eq!(
+            labels(&app),
+            (
+                "Close other tabs",
+                "Close Tabs Below",
+                "Close Tabs to the Right"
+            )
+        );
+
+        let fake = fake_with(HerdrStatus::compatible());
+        let _session = fake.start_session("default", workspaces(&["api"]));
+        connect_to(&mut app, &fake, "default");
+
+        assert_eq!(
+            labels(&app),
+            (
+                "Close other workspaces",
+                "Close Workspaces Below",
+                "Close Workspaces to the Right"
+            )
+        );
+    });
+}
+
+#[test]
 fn the_new_tab_action_creates_a_herdr_workspace_that_takes_focus_through_herdrs_state() {
     let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
     App::test((), |mut app| async move {

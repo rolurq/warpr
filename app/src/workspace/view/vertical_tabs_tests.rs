@@ -14,8 +14,8 @@ use super::{
     VerticalTabsSummaryPrimaryLabel, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, group_display_name, group_name_highlight_indices,
-    herdr_compact_subtitle, herdr_row_details_from, matched_group_ids, merge_group_name_matches,
-    non_terminal_search_text_fragments, pane_ids_for_display_granularity,
+    group_subtitle_text, herdr_compact_subtitle, herdr_row_details_from, matched_group_ids,
+    merge_group_name_matches, non_terminal_search_text_fragments, pane_ids_for_display_granularity,
     pane_search_text_fragments, preferred_agent_tab_titles, push_normalized_unique_summary_label,
     search_fragments_contain_query, select_summary_pane_kind_icons,
     should_keep_detail_sidecar_visible_for_mouse_position, should_show_tab_group_header,
@@ -1245,6 +1245,22 @@ fn summary_search_fragments_include_hidden_overflow_values() {
     assert!(search_fragments_contain_query(&fragments, "#789"));
     assert!(search_fragments_contain_query(&fragments, "+2"));
     assert!(search_fragments_contain_query(&fragments, "-3"));
+}
+
+#[test]
+fn herdr_group_subtitle_counts_only_nested_worktrees() {
+    assert_eq!(group_subtitle_text(1, true), None);
+    assert_eq!(group_subtitle_text(2, true), Some("1 worktree".to_string()));
+    assert_eq!(
+        group_subtitle_text(4, true),
+        Some("3 worktrees".to_string())
+    );
+}
+
+#[test]
+fn non_herdr_group_subtitle_counts_tabs() {
+    assert_eq!(group_subtitle_text(1, false), Some("1 tab".to_string()));
+    assert_eq!(group_subtitle_text(3, false), Some("3 tabs".to_string()));
 }
 
 fn tab_group(name: Option<&str>) -> TabGroup {
