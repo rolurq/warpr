@@ -396,6 +396,31 @@ impl SessionScript {
         format!("w{id}")
     }
 
+    /// Adds a linked worktree workspace of the repository whose main checkout is `repo_root`, as
+    /// `worktree.create` does, and returns the id Herdr gives it, or `None` when no workspace is a
+    /// checkout of such a repository. The new workspace becomes the focused one when `focus` is
+    /// set.
+    pub(crate) fn create_worktree(
+        &mut self,
+        repo_root: &str,
+        label: &str,
+        focus: bool,
+    ) -> Option<String> {
+        let repo_key = self
+            .workspaces
+            .iter()
+            .filter_map(|workspace| workspace.worktree.as_ref())
+            .find(|(repo_key, _)| repo_key.trim_end_matches("/.git") == repo_root)
+            .map(|(repo_key, _)| repo_key.clone())?;
+        let id = self.create_workspace(Some(label), focus);
+        let workspace = self
+            .workspaces
+            .last_mut()
+            .expect("the workspace was just added");
+        workspace.worktree = Some((repo_key, true));
+        Some(id)
+    }
+
     /// Adds a Herdr tab with one pane to the workspace `workspace_id`, as `tab.create` does, and
     /// returns the id Herdr gives it, or `None` when there is no such workspace. With `focus` the
     /// tab becomes the workspace's active one and the workspace becomes the focused one.

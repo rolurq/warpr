@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use herdr_client::{AgentJump, ConnectionStatus, PresentedSession, WorkspaceId};
+use herdr_client::{AgentJump, ConnectionStatus, NewWorktree, PresentedSession, WorkspaceId};
 use warp_core::features::FeatureFlag;
+use warp_util::worktree_names::generate_worktree_branch_name;
 use warpui::elements::{ChildView, Element};
 use warpui::{AppContext, EntityId, SingletonEntity as _, ViewContext};
 
@@ -10,11 +12,54 @@ use super::Workspace;
 use crate::app_state::{
     HerdrWorkspaceContents, HerdrWorkspaceSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot,
 };
+use crate::herdr::repository_root::repository_root;
 use crate::herdr::{HerdrSessionEvent, HerdrSessionModel};
 use crate::pane_group::PanesLayout;
 use crate::settings::AISettings;
+use crate::util::git::list_local_branches_sync;
 use crate::view_components::DismissibleToast;
 use crate::workspace::tab_group::TabGroup;
+
+/// The repositories of the session's workspaces.
+pub(super) struct HerdrRepositories {
+    /// Each repository of the session's workspaces once, as the root of its main checkout.
+    pub(super) roots: Vec<PathBuf>,
+    pub(super) preselected: Option<PathBuf>,
+}
+
+impl HerdrRepositories {
+    /// Herdr reports the repository of a workspace only once a worktree of it exists, so a
+    /// workspace without that is looked up from its directory.
+    fn of(presented: &PresentedSession, shown: Option<&WorkspaceId>) -> Self {
+        let root_of = |workspace: &WorkspaceId| {
+            presented
+                .repository_of(workspace)
+                .map(|repository| repository.root)
+                .or_else(|| repository_root(presented.workspace(workspace)?.directory()?))
+        };
+        let preselected = shown
+            .into_iter()
+            .chain(presented.focused_workspace.as_ref())
+            .find_map(root_of);
+        let mut roots: Vec<PathBuf> = presented
+            .repositories()
+            .into_iter()
+            .map(|repository| repository.root)
+            .collect();
+        for workspace in presented
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.worktree.is_none())
+        {
+            if let Some(root) = root_of(&workspace.id)
+                && !roots.contains(&root)
+            {
+                roots.push(root);
+            }
+        }
+        Self { roots, preselected }
+    }
+}
 
 impl Workspace {
     /// Whether the user may create and rearrange tab groups. Herdr windows present Herdr's own
@@ -23,7 +68,7 @@ impl Workspace {
         FeatureFlag::GroupedTabs.is_enabled() && !crate::herdr::presents_herdr_workspaces(app)
     }
 
-    fn presents_herdr_workspaces(ctx: &ViewContext<Self>) -> bool {
+    fn presents_herdr_workspaces(ctx: &AppContext) -> bool {
         crate::herdr::presents_herdr_workspaces(ctx)
     }
 
@@ -120,6 +165,74 @@ impl Workspace {
                 if let Err(failure) = result {
                     log::error!("Could not create a Herdr workspace: {failure}");
                     me.show_herdr_error(&format!("Could not create a workspace: {failure}"), ctx);
+                }
+            },
+        );
+    }
+
+    /// The repositories to offer for a new worktree, with the repository of the workspace the
+    /// window shows preselected, or of the one Herdr has focused when the window shows none.
+    /// `None` in windows that do not present a Herdr session.
+    pub(super) fn herdr_new_worktree_repositories(
+        &self,
+        ctx: &AppContext,
+    ) -> Option<HerdrRepositories> {
+        if !Self::presents_herdr_workspaces(ctx) {
+            return None;
+        }
+        let shown_tab = self.tabs.get(self.active_tab_index)?.pane_group.id();
+        let shown =
+            self.herdr_workspace_tabs(ctx)
+                .into_iter()
+                .find_map(|(pane_group_id, workspace_id)| {
+                    (pane_group_id == shown_tab).then_some(workspace_id)
+                });
+        Some(HerdrRepositories::of(
+            HerdrSessionModel::as_ref(ctx).presented(),
+            shown.as_ref(),
+        ))
+    }
+
+    /// Asks Herdr to create a linked worktree of the repository at `repo`, on a new branch from
+    /// `base`, or from Herdr's default when `None`. The branch is named `branch_name`, or
+    /// generated when `None`. Nothing is added
+    /// here: the worktree workspace appears nested under its repository's, and focused, when the
+    /// session presents it. A refused request is shown to the user.
+    pub(super) fn create_herdr_worktree(
+        &mut self,
+        repo: &str,
+        base: Option<&str>,
+        branch_name: Option<&str>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.show_herdr_error(
+                "Could not create a worktree: no Herdr session is connected",
+                ctx,
+            );
+            return;
+        };
+        let branch = match branch_name {
+            Some(name) => name.to_owned(),
+            None => {
+                let branches = list_local_branches_sync(Path::new(repo));
+                let branches: HashSet<_> = branches.iter().map(String::as_str).collect();
+                generate_worktree_branch_name(&branches)
+            }
+        };
+        let worktree = NewWorktree {
+            repo: PathBuf::from(repo),
+            branch,
+            base: base.map(str::to_owned),
+            path: None,
+            label: None,
+        };
+        ctx.spawn(
+            async move { herdr_client::create_worktree(&target, &worktree) },
+            |me, result, ctx| {
+                if let Err(failure) = result {
+                    log::error!("Could not create a Herdr worktree: {failure}");
+                    me.show_herdr_error(&format!("Could not create a worktree: {failure}"), ctx);
                 }
             },
         );
@@ -264,10 +377,7 @@ impl Workspace {
     }
 
     /// The tabs that show Herdr contents, in tab order, with what each shows.
-    fn herdr_tab_contents(
-        &self,
-        ctx: &ViewContext<Self>,
-    ) -> Vec<(EntityId, HerdrWorkspaceContents)> {
+    fn herdr_tab_contents(&self, ctx: &AppContext) -> Vec<(EntityId, HerdrWorkspaceContents)> {
         self.tabs
             .iter()
             .filter_map(|tab| {
@@ -284,7 +394,7 @@ impl Workspace {
     }
 
     /// The tabs that stand for Herdr workspaces, in tab order, with the workspace each stands for.
-    fn herdr_workspace_tabs(&self, ctx: &ViewContext<Self>) -> Vec<(EntityId, WorkspaceId)> {
+    fn herdr_workspace_tabs(&self, ctx: &AppContext) -> Vec<(EntityId, WorkspaceId)> {
         self.herdr_tab_contents(ctx)
             .into_iter()
             .filter_map(|(pane_group_id, contents)| match contents {

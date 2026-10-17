@@ -19,7 +19,7 @@ const DEFAULT_DROPDOWN_WIDTH: f32 = 380.;
 /// Label for the sticky "Add new repo..." footer at the bottom of the picker.
 const ADD_NEW_REPO_LABEL: &str = "+ Add new repo...";
 
-/// A filterable dropdown listing known repos (from `PersistedWorkspace`), with a
+/// A filterable dropdown listing repos, with a
 /// sticky "+ Add new repo..." footer that is always visible even when scrolling.
 ///
 /// Emits:
@@ -31,6 +31,19 @@ pub struct RepoPicker {
     selected: Option<String>,
     /// Mouse state for the sticky "Add new repo..." footer row.
     add_repo_mouse_state: MouseStateHandle,
+    source: RepoSource,
+}
+
+/// Where a [`RepoPicker`] gets the repos it lists.
+enum RepoSource {
+    /// The projects registered in `PersistedWorkspace`.
+    Registered,
+    Herdr {
+        /// The repositories of the Herdr session's workspaces.
+        repos: Vec<PathBuf>,
+        /// Repos the user added through the folder picker, listed after `repos`.
+        added: Vec<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,15 +66,40 @@ impl RepoPicker {
         Self::new_with_style(default_value, None, ctx)
     }
 
+    /// Creates a picker listing `repos`, the repositories Herdr knows, instead of the registered
+    /// projects.
+    pub fn new_for_herdr(
+        default_value: Option<String>,
+        repos: Vec<PathBuf>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
+        let source = RepoSource::Herdr {
+            repos,
+            added: Vec::new(),
+        };
+        Self::build(default_value, None, source, ctx)
+    }
+
     pub fn new_with_style(
         default_value: Option<String>,
         style: Option<PickerStyle>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
+        Self::build(default_value, style, RepoSource::Registered, ctx)
+    }
+
+    fn build(
+        default_value: Option<String>,
+        style: Option<PickerStyle>,
+        source: RepoSource,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
         // Subscribe to PersistedWorkspace so the list refreshes when the user
         // adds a repo via the folder picker.
         ctx.subscribe_to_model(&PersistedWorkspace::handle(ctx), |me, _, event, ctx| {
-            if let PersistedWorkspaceEvent::WorkspaceAdded { path } = event {
+            if let PersistedWorkspaceEvent::WorkspaceAdded { path } = event
+                && matches!(me.source, RepoSource::Registered)
+            {
                 let path_str = path.to_string_lossy().to_string();
                 me.refresh_items(Some(&path_str), ctx);
             }
@@ -86,6 +124,7 @@ impl RepoPicker {
             dropdown,
             selected: None,
             add_repo_mouse_state: Default::default(),
+            source,
         };
 
         // Attach the sticky footer. It stays visible while scrolling because it is
@@ -136,15 +175,35 @@ impl RepoPicker {
         picker
     }
 
-    /// Refreshes the dropdown list from `PersistedWorkspace` and optionally
-    /// pre-selects a specific path.
+    /// Refreshes the dropdown list and optionally pre-selects a specific path.
     pub fn refresh_and_select(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
+        if let RepoSource::Herdr { repos, added } = &mut self.source
+            && !repos.contains(&path)
+            && !added.contains(&path)
+        {
+            added.push(path.clone());
+        }
         let path_str = path.to_string_lossy().to_string();
         self.refresh_items(Some(&path_str), ctx);
     }
 
+    /// The repo paths the picker offers, in order, skipping paths that no longer exist.
+    pub(crate) fn listed_paths(&self, ctx: &AppContext) -> Vec<String> {
+        let paths: Vec<PathBuf> = match &self.source {
+            RepoSource::Registered => PersistedWorkspace::as_ref(ctx)
+                .workspaces()
+                .map(|ws| ws.path.clone())
+                .collect(),
+            RepoSource::Herdr { repos, added } => repos.iter().chain(added).cloned().collect(),
+        };
+        paths
+            .into_iter()
+            .filter(|path| path.exists())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    }
+
     fn refresh_items(&mut self, select_path: Option<&str>, ctx: &mut ViewContext<Self>) {
-        // workspaces() already returns entries sorted by most-recently-touched.
         // "+ Add new repo..." is a sticky footer (not a list item) so it is
         // not included here.
         //
@@ -155,11 +214,10 @@ impl RepoPicker {
         // The action carries the *raw* absolute path so consumers reading
         // `RepoPickerEvent::Selected` keep getting a real filesystem path.
         let home = dirs::home_dir().map(|p| p.display().to_string());
-        let items: Vec<DropdownItem<RepoPickerAction>> = PersistedWorkspace::as_ref(ctx)
-            .workspaces()
-            .filter(|ws| ws.path.exists())
-            .map(|ws| {
-                let path_str = ws.path.to_string_lossy().into_owned();
+        let items: Vec<DropdownItem<RepoPickerAction>> = self
+            .listed_paths(ctx)
+            .into_iter()
+            .map(|path_str| {
                 let display = user_friendly_path(&path_str, home.as_deref()).into_owned();
                 DropdownItem::new(display, RepoPickerAction::Select(path_str.clone()))
                     .with_clip_config(ClipConfig::start())

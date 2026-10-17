@@ -1,15 +1,18 @@
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use herdr_client::{HerdrCli, ReconnectPolicy, Refusal, SessionName, SessionTarget};
-use herdr_fake::{FakeHerdr, FakeSession, HerdrStatus, SessionScript};
+use herdr_fake::{FakeHerdr, FakeSession, HerdrStatus, PaneTree, SessionScript, TabScript};
 use serde_json::json;
 use warp_core::features::FeatureFlag;
 use warpui::{App, EntityId, TypedActionView as _, ViewHandle};
 
 use super::*;
 use crate::tab::NewSessionMenuItem;
+use crate::tab_configs::NewWorktreeModalEvent;
 use crate::test_util::assert_eventually;
 use crate::workspace::WorkspaceAction;
+use crate::workspace::view::NewSessionSidecarSelection;
 use crate::workspace::view::tests::{initialize_app, mock_workspace};
 
 fn fake_with(status: HerdrStatus) -> FakeHerdr {
@@ -644,11 +647,197 @@ fn a_refused_workspace_creation_shows_an_error_and_adds_no_tab() {
     });
 }
 
+/// A session whose workspaces are in repositories under `root`, which exist on disk: `lib` and
+/// `app` are main checkouts Herdr reports, `app-feature` is linked to `app`, and `notes` is in a
+/// repository only its directory shows.
+fn repository_script(root: &Path) -> (SessionScript, PathBuf, PathBuf) {
+    let app_root = root.join("app");
+    let lib_root = root.join("lib");
+    let notes_dir = root.join("notes/src");
+    for dir in [&app_root, &lib_root, &notes_dir, &root.join("notes/.git")] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let app_key = format!("{}/.git", app_root.display());
+    let lib_key = format!("{}/.git", lib_root.display());
+    let notes = TabScript::new("1", PaneTree::pane()).cwd(0, &notes_dir.to_string_lossy());
+    let script = SessionScript::new()
+        .workspace_with_tabs("notes", [notes])
+        .workspace("lib")
+        .workspace("app")
+        .workspace("app-feature")
+        .workspace_worktree("lib", &lib_key, false)
+        .workspace_worktree("app", &app_key, false)
+        .workspace_worktree("app-feature", &app_key, true)
+        .focused("app");
+    (script, app_root, lib_root)
+}
+
+fn picked_repos(app: &App, workspace: &ViewHandle<Workspace>) -> (Vec<String>, Option<String>) {
+    workspace.read(app, |workspace, ctx| {
+        let body = workspace
+            .new_worktree_modal
+            .view
+            .as_ref(ctx)
+            .body()
+            .as_ref(ctx);
+        body.picked_repos(ctx)
+    })
+}
+
+#[test]
+fn the_new_worktree_modal_lists_each_repository_of_the_session_and_preselects_the_shown_one() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let temp = tempfile::tempdir().unwrap();
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let (script, app_root, lib_root) = repository_script(temp.path());
+        let _session = fake.start_session("default", script);
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["notes", "lib", "app", "app-feature"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let notes_root = temp.path().join("notes");
+        let listed =
+            [&lib_root, &app_root, &notes_root].map(|root| root.to_string_lossy().into_owned());
+
+        dispatch(&mut app, &workspace, WorkspaceAction::OpenNewWorktreeModal);
+        assert_eq!(
+            picked_repos(&app, &workspace),
+            (listed.to_vec(), Some(listed[1].clone()))
+        );
+
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(1, ctx));
+        dispatch(&mut app, &workspace, WorkspaceAction::OpenNewWorktreeModal);
+        assert_eq!(
+            picked_repos(&app, &workspace),
+            (listed.to_vec(), Some(listed[0].clone()))
+        );
+
+        workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(0, ctx));
+        dispatch(&mut app, &workspace, WorkspaceAction::OpenNewWorktreeModal);
+        assert_eq!(
+            picked_repos(&app, &workspace),
+            (listed.to_vec(), Some(listed[2].clone()))
+        );
+    });
+}
+
+fn submit_worktree(app: &mut App, workspace: &ViewHandle<Workspace>, repo: &Path) {
+    let event = NewWorktreeModalEvent::Submit {
+        repo: repo.to_string_lossy().into_owned(),
+        branch: "main".to_owned(),
+        worktree_branch_name: Some("feature".to_owned()),
+    };
+    workspace.update(app, |workspace, ctx| {
+        workspace.handle_new_worktree_modal_body_event(&event, ctx);
+    });
+}
+
+#[test]
+fn confirming_a_new_worktree_creates_it_in_herdr_and_presents_it_through_herdrs_state() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let temp = tempfile::tempdir().unwrap();
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let (script, app_root, _) = repository_script(temp.path());
+        let session = fake.start_session("default", script);
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace).len() == 4,
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        submit_worktree(&mut app, &workspace, &app_root);
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace)
+                == ["notes", "lib", "app", "app-feature", "feature"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        assert_eventually!(
+            600 => active_tab_title(&app, &workspace) == "feature",
+            "active tab was {:?}", active_tab_title(&app, &workspace)
+        );
+        let methods = session.served_methods();
+        assert!(methods.contains(&"worktree.create".to_owned()));
+        assert!(!methods.contains(&"workspace.create".to_owned()));
+    });
+}
+
+#[test]
+fn a_refused_worktree_creation_shows_an_error_and_adds_nothing() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let temp = tempfile::tempdir().unwrap();
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let (script, app_root, _) = repository_script(temp.path());
+        let session = fake.start_session("default", script);
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace).len() == 4,
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        session.reject_next_creation("worktree_exists", "branch feature is already checked out");
+
+        submit_worktree(&mut app, &workspace, &app_root);
+
+        assert_eventually!(600 => has_toasts(&app, &workspace), "no error was shown");
+        assert_eq!(
+            tab_titles(&app, &workspace),
+            ["notes", "lib", "app", "app-feature"]
+        );
+    });
+}
+
+#[test]
+fn the_new_worktree_menu_lists_the_sessions_repositories_and_creates_through_herdr() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let temp = tempfile::tempdir().unwrap();
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let (script, app_root, lib_root) = repository_script(temp.path());
+        let session = fake.start_session("default", script);
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace).len() == 4,
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        let listed = workspace.read(&app, |workspace, ctx| workspace.worktree_sidecar_repos(ctx));
+        assert_eq!(
+            listed,
+            [lib_root, app_root.clone(), temp.path().join("notes")]
+        );
+
+        let selection = NewSessionSidecarSelection::OpenWorktreeRepo {
+            repo_path: app_root.to_string_lossy().into_owned(),
+        };
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.execute_new_session_sidecar_selection(selection, ctx);
+        });
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace).len() == 5,
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let methods = session.served_methods();
+        assert!(methods.contains(&"worktree.create".to_owned()));
+        assert!(!methods.contains(&"workspace.create".to_owned()));
+    });
+}
+
 #[cfg(feature = "local_tty")]
 #[test]
 fn adding_a_tab_with_a_shell_creates_a_herdr_workspace_instead_of_a_local_tab() {
-    use std::path::PathBuf;
-
     use crate::server::telemetry::AddTabWithShellSource;
     use crate::terminal::available_shells::AvailableShell;
     use crate::terminal::shell::ShellType;

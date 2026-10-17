@@ -47,7 +47,7 @@ pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, Presented
 pub use attention::{AgentAttention, AttentionChanges};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use compat::Refusal;
-pub use create::{create_herdr_tab, create_workspace};
+pub use create::{NewWorktree, create_herdr_tab, create_workspace, create_worktree};
 pub use desktop::{DesktopAction, DesktopNotifications};
 pub use live::LiveSession;
 pub use live_agents::LiveAgents;
@@ -69,7 +69,7 @@ pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarge
 pub use sessions::{ListedSession, SessionState, launch_session, list_sessions, open_session};
 pub use tabs::{CellRect, HerdrTabId, PaneId, PaneLayout, PresentedHerdrTab, PresentedPane};
 pub use viewing::{ViewedPanes, ViewerId};
-pub use worktree::PresentedWorktree;
+pub use worktree::{PresentedRepository, PresentedWorktree};
 
 /// How long each `herdr status` run in the compatibility check may take; it matches the socket
 /// client's timeout.
