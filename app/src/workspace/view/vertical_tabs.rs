@@ -2860,6 +2860,22 @@ fn render_tab_group_header_icon_button(
     .finish()
 }
 
+/// The subtitle counting a group's members. A Herdr workspace group's first member is the
+/// workspace itself and the rest are its worktrees, so only those are counted.
+fn group_subtitle_text(member_count: usize, presents_herdr: bool) -> Option<String> {
+    if presents_herdr {
+        return match member_count.saturating_sub(1) {
+            0 => None,
+            1 => Some("1 worktree".to_string()),
+            worktrees => Some(format!("{worktrees} worktrees")),
+        };
+    }
+    Some(match member_count {
+        1 => "1 tab".to_string(),
+        _ => format!("{member_count} tabs"),
+    })
+}
+
 /// Renders the header row for a tab group: leading icon (chevron when expanded,
 /// member icon collage when collapsed), title + "N tabs", and (on hover) kebab
 /// + close buttons. Single-clicking outside the per-button regions toggles
@@ -2933,22 +2949,20 @@ fn render_grouped_tabs_header(
                 )
                 .finish()
         };
-    let subtitle_text = match (member_count, crate::herdr::presents_herdr_workspaces(ctx)) {
-        (1, false) => "1 tab".to_string(),
-        (1, true) => "1 workspace".to_string(),
-        (_, false) => format!("{member_count} tabs"),
-        (_, true) => format!("{member_count} workspaces"),
-    };
-    let subtitle = Text::new_inline(subtitle_text, font_family, 10.)
-        .with_clip(ClipConfig::ellipsis())
-        .with_color(sub_text_color.into())
-        .finish();
+    let subtitle_text =
+        group_subtitle_text(member_count, crate::herdr::presents_herdr_workspaces(ctx));
+    let subtitle = subtitle_text.map(|text| {
+        Text::new_inline(text, font_family, 10.)
+            .with_clip(ClipConfig::ellipsis())
+            .with_color(sub_text_color.into())
+            .finish()
+    });
     let text_column: Box<dyn Element> = Flex::column()
         .with_main_axis_size(MainAxisSize::Min)
         .with_cross_axis_alignment(CrossAxisAlignment::Start)
         .with_spacing(1.)
         .with_child(title_element)
-        .with_child(subtitle)
+        .with_children(subtitle)
         .finish();
 
     let action_buttons = if show_action_buttons {

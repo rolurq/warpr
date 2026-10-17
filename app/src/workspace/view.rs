@@ -8190,7 +8190,7 @@ impl Workspace {
 
         let terminal_colors = Appearance::as_ref(ctx).theme().terminal_colors().normal;
         let menu_items =
-            self.tab_group_menu_items(group_id, uses_vertical_tabs(ctx), terminal_colors);
+            self.tab_group_menu_items(group_id, uses_vertical_tabs(ctx), terminal_colors, ctx);
         ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
             context_menu.set_items(menu_items, view_ctx);
         });
@@ -10321,6 +10321,7 @@ impl Workspace {
         group_id: TabGroupId,
         is_vertical: bool,
         terminal_colors: AnsiColors,
+        ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         let Some((first, last)) = group_member_index_range(&self.tabs, group_id) else {
             return vec![];
@@ -10365,22 +10366,27 @@ impl Workspace {
 
         let close_section = {
             let mut items = vec![
-                MenuItemFields::new("Close all tabs in group")
-                    .with_on_select_action(WorkspaceAction::CloseTabGroup(group_id))
-                    .into_item(),
+                MenuItemFields::new(crate::herdr::wording(
+                    ctx,
+                    "Close all tabs in group",
+                    "Close all workspaces in group",
+                ))
+                .with_on_select_action(WorkspaceAction::CloseTabGroup(group_id))
+                .into_item(),
             ];
             if has_tabs_outside {
                 items.push(
-                    MenuItemFields::new("Close other tabs")
+                    MenuItemFields::new(crate::tab::close_other_tabs_label(ctx))
                         .with_on_select_action(WorkspaceAction::CloseTabsOutsideGroup(group_id))
                         .into_item(),
                 );
             }
             if has_tabs_above {
-                let label = if is_vertical {
-                    "Close tabs above"
-                } else {
-                    "Close tabs to the left"
+                let label = match (is_vertical, crate::herdr::presents_herdr_workspaces(ctx)) {
+                    (true, false) => "Close tabs above",
+                    (true, true) => "Close workspaces above",
+                    (false, false) => "Close tabs to the left",
+                    (false, true) => "Close workspaces to the left",
                 };
                 items.push(
                     MenuItemFields::new(label)
@@ -10389,10 +10395,11 @@ impl Workspace {
                 );
             }
             if has_tabs_below {
-                let label = if is_vertical {
-                    "Close tabs below"
-                } else {
-                    "Close tabs to the right"
+                let label = match (is_vertical, crate::herdr::presents_herdr_workspaces(ctx)) {
+                    (true, false) => "Close tabs below",
+                    (true, true) => "Close workspaces below",
+                    (false, false) => "Close tabs to the right",
+                    (false, true) => "Close workspaces to the right",
                 };
                 items.push(
                     MenuItemFields::new(label)
