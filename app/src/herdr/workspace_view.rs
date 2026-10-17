@@ -791,6 +791,10 @@ impl BackingView for HerdrWorkspaceView {
         self.report_viewed_panes(ctx);
     }
 
+    fn should_render_header(&self, _app: &AppContext) -> bool {
+        false
+    }
+
     fn render_header_content(
         &self,
         _ctx: &view::HeaderRenderContext<'_>,
