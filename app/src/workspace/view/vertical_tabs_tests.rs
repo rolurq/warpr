@@ -14,8 +14,9 @@ use super::{
     VerticalTabsSummaryPrimaryLabel, branch_label_display, coalesce_summary_branch_entries,
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, group_display_name, group_name_highlight_indices,
-    group_subtitle_text, herdr_compact_subtitle, herdr_row_details_from, matched_group_ids,
-    merge_group_name_matches, non_terminal_search_text_fragments, pane_ids_for_display_granularity,
+    group_subtitle_text, herdr_agent_line, herdr_compact_subtitle, herdr_pane_compact_subtitle,
+    herdr_row_details_from, matched_group_ids, merge_group_name_matches,
+    non_terminal_search_text_fragments, pane_ids_for_display_granularity,
     pane_search_text_fragments, preferred_agent_tab_titles, push_normalized_unique_summary_label,
     search_fragments_contain_query, select_summary_pane_kind_icons,
     should_keep_detail_sidecar_visible_for_mouse_position, should_show_tab_group_header,
@@ -1587,6 +1588,85 @@ fn herdr_compact_subtitle_follows_the_setting_like_a_terminal_row() {
     );
     assert_eq!(
         herdr_compact_subtitle(&in_repo, VerticalTabsCompactSubtitle::Command),
+        None
+    );
+}
+
+fn herdr_agent(
+    name: Option<&str>,
+    kind: Option<&str>,
+    state: herdr_client::AgentState,
+) -> herdr_client::PresentedAgent {
+    herdr_client::PresentedAgent {
+        pane: herdr_client::PaneId::from("w1:p1"),
+        workspace: herdr_client::WorkspaceId::from("w1"),
+        herdr_tab: herdr_client::HerdrTabId::from("w1:t1"),
+        kind: kind.map(str::to_string),
+        name: name.map(str::to_string),
+        state,
+    }
+}
+
+#[test]
+fn herdr_agent_line_names_the_agent_then_its_kind_then_its_state() {
+    use herdr_client::AgentState;
+
+    assert_eq!(
+        herdr_agent_line(&herdr_agent(
+            Some("builder"),
+            Some("claude"),
+            AgentState::Working
+        )),
+        "builder · claude · working"
+    );
+    assert_eq!(
+        herdr_agent_line(&herdr_agent(None, Some("codex"), AgentState::Idle)),
+        "codex · idle"
+    );
+    assert_eq!(
+        herdr_agent_line(&herdr_agent(None, None, AgentState::Blocked)),
+        "blocked"
+    );
+}
+
+#[test]
+fn herdr_agent_line_does_not_repeat_a_name_that_is_its_kind() {
+    assert_eq!(
+        herdr_agent_line(&herdr_agent(
+            Some("claude"),
+            Some("claude"),
+            herdr_client::AgentState::Done
+        )),
+        "claude · done"
+    );
+}
+
+#[test]
+fn herdr_pane_compact_subtitle_is_the_agent_when_there_is_one_else_follows_the_setting() {
+    let in_repo = herdr_row_details_from(
+        Some(Path::new("/home/me/api")),
+        Some(herdr_git(None)),
+        Some("/home/me"),
+    );
+
+    assert_eq!(
+        herdr_pane_compact_subtitle(
+            &in_repo,
+            Some("claude · working"),
+            VerticalTabsCompactSubtitle::Branch
+        ),
+        Some(("claude · working".to_string(), false))
+    );
+    assert_eq!(
+        herdr_pane_compact_subtitle(&in_repo, None, VerticalTabsCompactSubtitle::Branch),
+        Some(("feature/sidebar".to_string(), true))
+    );
+    assert_eq!(
+        herdr_pane_compact_subtitle(
+            &HerdrRowDetails::default(),
+            None,
+            VerticalTabsCompactSubtitle::Branch
+        ),
         None
     );
 }

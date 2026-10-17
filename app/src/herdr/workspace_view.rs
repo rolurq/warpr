@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use herdr_client::{
     AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput, PaneOwnership,
-    PresentedHerdrTab, PresentedPane, PresentedWorkspace,
+    PresentedAgent, PresentedHerdrTab, PresentedPane, PresentedWorkspace,
 };
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warpui::elements::{
@@ -18,7 +18,8 @@ use warpui::{
 
 use super::directory_git::{DirectoryGitContext, HerdrDirectoryGit, HerdrDirectoryGitEvent};
 use super::pane_chrome::{
-    PANE_BORDER_WIDTH, PaneHeaderMouseStates, can_close_panes, dims_pane, render_pane_header,
+    PANE_BORDER_WIDTH, PaneHeaderMouseStates, can_close_panes, dims_pane, pane_title,
+    render_pane_header,
 };
 use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
 use super::pane_frames::PaneFrames;
@@ -64,6 +65,21 @@ pub struct HerdrSidebarDetails<'a> {
     pub git: Option<DirectoryGitContext>,
 }
 
+/// A pane of the Herdr tab a workspace's view shows, as the vertical tabs list it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HerdrPaneRow {
+    pub herdr_tab: HerdrTabId,
+    pub pane: PaneId,
+    pub title: String,
+    /// The working directory Herdr reports for the pane.
+    pub directory: Option<PathBuf>,
+    /// The git repository holding `directory`; `None` outside one.
+    pub git: Option<DirectoryGitContext>,
+    /// The agent Herdr recognizes in the pane.
+    pub agent: Option<PresentedAgent>,
+    pub is_selected: bool,
+}
+
 /// A Herdr tab as the window's tab bar lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HerdrBarTab {
@@ -85,8 +101,10 @@ pub struct HerdrWorkspaceView {
     /// Why the last request this view made to Herdr was refused, until the next one succeeds.
     request_error: Option<String>,
     pane_configuration: ModelHandle<PaneConfiguration>,
-    /// The git repository of the selected pane's directory.
-    directory_git: ModelHandle<HerdrDirectoryGit>,
+    /// The git repository of each directory a shown pane works in.
+    directory_git: HashMap<PathBuf, ModelHandle<HerdrDirectoryGit>>,
+    /// The pane rows last reported to the pane group.
+    reported_pane_rows: Vec<HerdrPaneRow>,
     focus_handle: Option<PaneFocusHandle>,
     window_id: WindowId,
     view_id: EntityId,
@@ -117,13 +135,6 @@ impl HerdrWorkspaceView {
                 |_, _, HerdrPaneContentsRegistryEvent::PaneChanged, ctx| ctx.notify(),
             );
         }
-        let directory_git = ctx.add_model(|_| HerdrDirectoryGit::new());
-        ctx.subscribe_to_model(
-            &directory_git,
-            |_, _, HerdrDirectoryGitEvent::Changed, ctx| {
-                ctx.emit(PaneEvent::SidebarDetailsChanged);
-            },
-        );
         ctx.subscribe_to_model(&PaneSettings::handle(ctx), |_, _, event, ctx| {
             if matches!(
                 event,
@@ -138,7 +149,8 @@ impl HerdrWorkspaceView {
             selected_pane: None,
             request_error: None,
             pane_configuration,
-            directory_git,
+            directory_git: HashMap::new(),
+            reported_pane_rows: Vec::new(),
             focus_handle: None,
             window_id: ctx.window_id(),
             view_id: ctx.view_id(),
@@ -305,20 +317,79 @@ impl HerdrWorkspaceView {
     /// What the Warp sidebar shows for this workspace beyond its label: the selected pane's
     /// directory and the git repository that directory is in.
     pub fn sidebar_details<'a>(&self, app: &'a AppContext) -> HerdrSidebarDetails<'a> {
+        let directory = self.focused_pane_directory(app);
         HerdrSidebarDetails {
-            directory: self.focused_pane_directory(app),
-            git: self.directory_git.as_ref(app).context(app),
+            directory,
+            git: directory.and_then(|directory| self.directory_git_context(directory, app)),
         }
     }
 
-    /// Points the git context at the selected pane's directory and tells the pane group when
-    /// what the sidebar shows changed.
+    fn directory_git_context(
+        &self,
+        directory: &Path,
+        app: &AppContext,
+    ) -> Option<DirectoryGitContext> {
+        self.directory_git.get(directory)?.as_ref(app).context(app)
+    }
+
+    /// The panes of the Herdr tab this view shows, in Herdr's order, as the vertical tabs list
+    /// them: only those on screen, so a zoomed Herdr tab has one row. Empty while no Herdr tab is
+    /// shown or it has no layout yet.
+    pub fn pane_rows(&self, app: &AppContext) -> Vec<HerdrPaneRow> {
+        let Some(tab) = self
+            .presented_workspace(app)
+            .and_then(|workspace| workspace.selected_tab(self.selected_tab.as_ref()))
+        else {
+            return Vec::new();
+        };
+        let Some(layout) = &tab.layout else {
+            return Vec::new();
+        };
+        let agents = HerdrSessionModel::as_ref(app).agents();
+        layout
+            .frames()
+            .into_iter()
+            .map(|pane| HerdrPaneRow {
+                herdr_tab: tab.id.clone(),
+                title: pane_title(&pane),
+                git: pane
+                    .cwd
+                    .as_deref()
+                    .and_then(|directory| self.directory_git_context(directory, app)),
+                agent: agents.agent(&pane.id).cloned(),
+                is_selected: self.is_selected(&pane),
+                directory: pane.cwd,
+                pane: pane.id,
+            })
+            .collect()
+    }
+
+    /// Follows the git repository of the directory of each pane on screen, and tells the pane
+    /// group when what the vertical tabs list for this workspace changed.
     fn sync_sidebar_details(&mut self, ctx: &mut ViewContext<Self>) {
-        let directory = self.focused_pane_directory(ctx).map(Path::to_path_buf);
-        let changed = self
-            .directory_git
-            .update(ctx, |git, ctx| git.set_directory(directory, ctx));
-        if changed {
+        let directories: HashSet<PathBuf> = self
+            .pane_rows(ctx)
+            .into_iter()
+            .filter_map(|row| row.directory)
+            .collect();
+        self.directory_git
+            .retain(|directory, _| directories.contains(directory));
+        for directory in directories {
+            if self.directory_git.contains_key(&directory) {
+                continue;
+            }
+            let git = ctx.add_model(|_| HerdrDirectoryGit::new());
+            ctx.subscribe_to_model(&git, |_, _, HerdrDirectoryGitEvent::Changed, ctx| {
+                ctx.emit(PaneEvent::SidebarDetailsChanged);
+            });
+            git.update(ctx, |git, ctx| {
+                git.set_directory(Some(directory.clone()), ctx)
+            });
+            self.directory_git.insert(directory, git);
+        }
+        let rows = self.pane_rows(ctx);
+        if rows != self.reported_pane_rows {
+            self.reported_pane_rows = rows;
             ctx.emit(PaneEvent::SidebarDetailsChanged);
         }
     }

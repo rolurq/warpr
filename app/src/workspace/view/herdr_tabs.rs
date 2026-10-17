@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use herdr_client::{
-    AgentJump, ConnectionStatus, HerdrTabId, NewWorktree, PresentedSession, WorkspaceId,
+    AgentJump, ConnectionStatus, HerdrTabId, NewWorktree, PaneId as HerdrPaneId, PresentedSession,
+    WorkspaceId,
 };
 use warp_core::features::FeatureFlag;
 use warp_util::worktree_names::generate_worktree_branch_name;
@@ -230,6 +231,39 @@ impl Workspace {
         view.update(ctx, |view, ctx| view.handle_action(&action, ctx));
     }
 
+    /// Shows the workspace whose tab is `pane_group_id`, closing the agent panel, with its Herdr
+    /// tab `herdr_tab` shown and `pane` selected. Only warpr's own view changes: Herdr is not
+    /// told.
+    pub(super) fn select_herdr_pane(
+        &mut self,
+        pane_group_id: EntityId,
+        herdr_tab: &HerdrTabId,
+        pane: &HerdrPaneId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(index) = self.tab_index_for_pane_group(pane_group_id) else {
+            return;
+        };
+        self.set_is_agent_management_view_open(false, ctx);
+        self.activate_tab(index, ctx);
+        let shows_other_tab = self.active_herdr_workspace_view(ctx).is_some_and(|view| {
+            view.as_ref(ctx)
+                .bar_tabs(ctx)
+                .iter()
+                .any(|tab| tab.is_shown && tab.id != *herdr_tab)
+        });
+        if shows_other_tab {
+            self.forward_to_herdr_workspace_view(
+                HerdrWorkspaceViewAction::SelectTab(herdr_tab.clone()),
+                ctx,
+            );
+        }
+        self.forward_to_herdr_workspace_view(
+            HerdrWorkspaceViewAction::SelectPane(pane.clone()),
+            ctx,
+        );
+    }
+
     /// Whether the agent panel can be opened: Herdr's agents when this window presents a Herdr
     /// session, Warp's own agent management otherwise.
     pub(super) fn is_agent_panel_available(&self, app: &AppContext) -> bool {
@@ -301,7 +335,8 @@ impl Workspace {
             |me, _, event, ctx| match event {
                 HerdrSessionEvent::Presented => me.present_herdr_workspaces(ctx),
                 HerdrSessionEvent::JumpedToAgent(jump) => me.jump_to_herdr_agent(jump, ctx),
-                HerdrSessionEvent::SessionsListed | HerdrSessionEvent::AgentsPresented => {}
+                HerdrSessionEvent::AgentsPresented => ctx.notify(),
+                HerdrSessionEvent::SessionsListed => {}
             },
         );
     }

@@ -850,3 +850,245 @@ fn each_pane_header_shows_the_name_herdr_gives_the_pane_else_the_folder_of_its_d
         assert!(!words.contains(&"web".to_owned()), "{words:?}");
     });
 }
+
+/// Workspace `api` (`w1`): `server` has one pane, `logs` three (the second named, the last
+/// without a directory, an agent in the second), `zoomed` three with the last zoomed.
+fn session_with_agents_and_directories(fake: &FakeHerdr) -> FakeSession {
+    fake.start_session("default", scripted_rows(split_layout()))
+}
+
+fn scripted_rows(logs_layout: PaneTree) -> SessionScript {
+    SessionScript::new().workspace_with_tabs(
+        "api",
+        [
+            TabScript::new("server", PaneTree::pane()).cwd(0, "/srv/api"),
+            TabScript::new("logs", logs_layout)
+                .cwd(0, "/srv/logs/a")
+                .cwd(1, "/srv/logs/b")
+                .pane_label(1, "build")
+                .without_cwd(2)
+                .agent(
+                    1,
+                    herdr_fake::AgentScript::new("claude", herdr_fake::AgentState::Working)
+                        .named("builder"),
+                ),
+            TabScript::new("zoomed", split_layout())
+                .cwd(0, "/srv/zoomed/a")
+                .cwd(1, "/srv/zoomed/b")
+                .cwd(2, "/srv/zoomed/c")
+                .focused_pane(2)
+                .zoomed(),
+        ],
+    )
+}
+
+fn four_panes() -> PaneTree {
+    PaneTree::split(
+        SplitDirection::Right,
+        0.5,
+        PaneTree::split(
+            SplitDirection::Down,
+            0.5,
+            PaneTree::pane(),
+            PaneTree::pane(),
+        ),
+        PaneTree::split(
+            SplitDirection::Down,
+            0.5,
+            PaneTree::pane(),
+            PaneTree::pane(),
+        ),
+    )
+}
+
+/// The rows as `(pane, title, directory, is_selected)`.
+fn pane_rows(
+    app: &App,
+    view: &ViewHandle<HerdrWorkspaceView>,
+) -> Vec<(String, String, Option<PathBuf>, bool)> {
+    view.read(app, |view, ctx| {
+        view.pane_rows(ctx)
+            .into_iter()
+            .map(|row| {
+                (
+                    row.pane.as_str().to_owned(),
+                    row.title,
+                    row.directory,
+                    row.is_selected,
+                )
+            })
+            .collect()
+    })
+}
+
+fn row_of(
+    pane: &str,
+    title: &str,
+    directory: Option<&str>,
+    is_selected: bool,
+) -> (String, String, Option<PathBuf>, bool) {
+    (
+        pane.to_owned(),
+        title.to_owned(),
+        directory.map(PathBuf::from),
+        is_selected,
+    )
+}
+
+#[test]
+fn the_rows_are_the_panes_of_the_shown_herdr_tab_with_the_directory_herdr_reports_for_each() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_agents_and_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        assert_eq!(
+            pane_rows(&app, &view),
+            [row_of("w1:p1", "api", Some("/srv/api"), true)]
+        );
+
+        select(&mut app, &view, "w1:t2");
+        assert_eq!(
+            pane_rows(&app, &view),
+            [
+                row_of("w1:p2", "a", Some("/srv/logs/a"), true),
+                row_of("w1:p3", "build", Some("/srv/logs/b"), false),
+                row_of("w1:p4", "w1:p4", None, false),
+            ],
+            "a pane without a directory is still a row, titled by its id"
+        );
+    });
+}
+
+#[test]
+fn a_zoomed_herdr_tab_has_a_row_only_for_the_pane_it_shows() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_agents_and_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        select(&mut app, &view, "w1:t3");
+
+        assert_eq!(
+            pane_rows(&app, &view),
+            [row_of("w1:p7", "c", Some("/srv/zoomed/c"), true)]
+        );
+    });
+}
+
+#[test]
+fn picking_a_pane_moves_the_selected_row_and_leaves_the_pane_herdr_has_focused() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_agents_and_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        select_pane(&mut app, &view, "w1:p4");
+
+        let selected: Vec<_> = pane_rows(&app, &view)
+            .into_iter()
+            .filter(|row| row.3)
+            .map(|row| row.0)
+            .collect();
+        assert_eq!(selected, ["w1:p4"]);
+        let herdr_focused = HerdrSessionModel::handle(&app).read(&app, |model, _| {
+            model.presented().workspaces[0]
+                .herdr_tabs
+                .iter()
+                .find(|tab| tab.id == HerdrTabId::from("w1:t2"))
+                .and_then(|tab| tab.layout.as_ref())
+                .map(|layout| layout.focused_pane.clone())
+        });
+        assert_eq!(herdr_focused, Some(PaneId::from("w1:p2")));
+    });
+}
+
+#[test]
+fn a_row_carries_the_agent_herdr_recognizes_in_its_pane() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = session_with_agents_and_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        let agent_of = |app: &App, pane: &str| {
+            view.read(app, |view, ctx| {
+                view.pane_rows(ctx)
+                    .into_iter()
+                    .find(|row| row.pane.as_str() == pane)
+                    .and_then(|row| row.agent)
+                    .map(|agent| (agent.name, agent.kind, agent.state))
+            })
+        };
+        assert_eventually!(
+            600 => agent_of(&app, "w1:p3").is_some(),
+            "the agents never arrived"
+        );
+        assert_eq!(
+            agent_of(&app, "w1:p3"),
+            Some((
+                Some("builder".to_owned()),
+                Some("claude".to_owned()),
+                herdr_client::AgentState::Working
+            ))
+        );
+        assert_eq!(agent_of(&app, "w1:p2"), None);
+    });
+}
+
+#[test]
+fn splitting_a_pane_adds_a_row_when_herdr_reports_it() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = session_with_agents_and_directories(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        assert_eq!(pane_rows(&app, &view).len(), 3);
+        let changes = count_sidebar_changes(&mut app, &view);
+
+        session.set_script(scripted_rows(four_panes()));
+        session.emit_event("pane_updated", serde_json::json!({}));
+
+        assert_eventually!(
+            600 => pane_rows(&app, &view).len() == 4,
+            "rows were {:?}", pane_rows(&app, &view)
+        );
+        assert_eq!(
+            changes.get(),
+            1,
+            "the vertical tabs list a row for the new pane"
+        );
+    });
+}
+
+#[test]
+fn the_sidebar_is_told_when_the_selected_pane_changes_even_within_one_directory() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = fake.start_session(
+            "default",
+            SessionScript::new().workspace_with_tabs(
+                "api",
+                [TabScript::new("t", split_layout())
+                    .cwd(0, "/srv/api")
+                    .cwd(1, "/srv/api")
+                    .cwd(2, "/srv/api")],
+            ),
+        );
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        let changes = count_sidebar_changes(&mut app, &view);
+
+        select_pane(&mut app, &view, "w1:p2");
+        assert_eq!(changes.get(), 1, "another pane, the same directory");
+
+        select_pane(&mut app, &view, "w1:p2");
+        assert_eq!(changes.get(), 1, "the same pane again");
+    });
+}
