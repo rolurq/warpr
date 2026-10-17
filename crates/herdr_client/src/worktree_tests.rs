@@ -1,4 +1,6 @@
-use herdr_fake::{FakeHerdr, HerdrStatus, SessionScript};
+use std::path::{Path, PathBuf};
+
+use herdr_fake::{FakeHerdr, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript};
 
 use crate::{HerdrCli, PresentedSession, SessionName, SessionTarget, WorkspaceId, present_session};
 
@@ -33,6 +35,88 @@ fn linked_worktrees_belong_to_the_main_checkout_of_their_repository() {
     assert_eq!(parent_of(&session, "w1"), None);
     assert_eq!(parent_of(&session, "w2").as_deref(), Some("w1"));
     assert_eq!(parent_of(&session, "w3").as_deref(), Some("w1"));
+}
+
+#[test]
+fn a_workspaces_directory_is_the_cwd_of_the_focused_pane_of_its_active_tab() {
+    let two_panes = PaneTree::split(
+        SplitDirection::Right,
+        0.5,
+        PaneTree::pane(),
+        PaneTree::pane(),
+    );
+    let session = present(
+        SessionScript::new()
+            .workspace_with_tabs(
+                "api",
+                [TabScript::new("1", two_panes)
+                    .cwd(0, "/src/api")
+                    .cwd(1, "/src/api/docs")
+                    .focused_pane(1)],
+            )
+            .workspace_with_tabs(
+                "empty",
+                [TabScript::new("1", PaneTree::pane()).without_cwd(0)],
+            ),
+    );
+
+    let directory = |workspace: &str| {
+        session
+            .workspace(&WorkspaceId::from(workspace))
+            .and_then(|workspace| workspace.directory().map(Path::to_path_buf))
+    };
+
+    assert_eq!(directory("w1"), Some(PathBuf::from("/src/api/docs")));
+    assert_eq!(directory("w2"), None);
+}
+
+#[test]
+fn repositories_lists_each_repository_once_with_its_root_in_herdrs_order() {
+    let session = present(
+        SessionScript::new()
+            .workspace("app")
+            .workspace("feature")
+            .workspace("lib")
+            .workspace("scratch")
+            .workspace_worktree("app", REPO, false)
+            .workspace_worktree("feature", REPO, true)
+            .workspace_worktree("lib", "/src/lib/.git", false),
+    );
+
+    let repositories: Vec<_> = session
+        .repositories()
+        .into_iter()
+        .map(|repository| (repository.repo_key, repository.root))
+        .collect();
+
+    assert_eq!(
+        repositories,
+        [
+            (REPO.to_owned(), PathBuf::from("/src/app")),
+            ("/src/lib/.git".to_owned(), PathBuf::from("/src/lib")),
+        ]
+    );
+}
+
+#[test]
+fn the_repository_of_a_workspace_is_its_checkouts_repository() {
+    let session = present(
+        SessionScript::new()
+            .workspace("app")
+            .workspace("feature")
+            .workspace("scratch")
+            .workspace_worktree("app", REPO, false)
+            .workspace_worktree("feature", REPO, true),
+    );
+
+    let root_of = |workspace: &str| {
+        session
+            .repository_of(&WorkspaceId::from(workspace))
+            .map(|repository| repository.root)
+    };
+
+    assert_eq!(root_of("w2"), Some(PathBuf::from("/src/app")));
+    assert_eq!(root_of("w3"), None);
 }
 
 #[test]

@@ -894,3 +894,29 @@ fn a_workspace_and_a_herdr_tab_created_through_the_client_are_presented_by_the_l
             && workspace.active_herdr_tab == Some(workspace.herdr_tabs[1].id.clone())
     });
 }
+
+#[test]
+fn a_worktree_created_through_the_client_is_presented_nested_by_the_live_session() {
+    let fake = fake();
+    let script = workspaces(&["app"]).workspace_worktree("app", "/src/app/.git", false);
+    let _session = fake.start_session("default", script);
+    let observed = observe(&fake, ReconnectPolicy::default());
+    observed.wait_for_labels(&["app"]);
+
+    let request = crate::NewWorktree {
+        repo: "/src/app".into(),
+        branch: "feature".to_owned(),
+        base: "main".to_owned(),
+        path: None,
+        label: None,
+    };
+    crate::create_worktree(&target(&fake), &request).expect("worktree created");
+
+    let presented = observed.wait_for("the nested, focused worktree", |presented| {
+        labels(presented) == ["app", "feature"]
+            && presented.worktree_parent(&presented.workspaces[1].id)
+                == Some(&presented.workspaces[0].id)
+            && presented.focused_workspace_index() == Some(1)
+    });
+    assert_eq!(presented, authoritative(&fake));
+}

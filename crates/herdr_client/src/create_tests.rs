@@ -81,6 +81,79 @@ fn a_rejected_workspace_creation_reports_herdrs_error_and_adds_nothing() {
     assert_eq!(harness.presented().workspaces.len(), 1);
 }
 
+const REPO: &str = "/src/app/.git";
+
+fn worktree_request(repo: &str) -> NewWorktree {
+    NewWorktree {
+        repo: PathBuf::from(repo),
+        branch: "feature".to_owned(),
+        base: "main".to_owned(),
+        path: None,
+        label: None,
+    }
+}
+
+#[test]
+fn a_created_worktree_is_a_focused_linked_workspace_nested_under_its_repository() {
+    let harness = Harness::new();
+    let _session = harness.start(
+        SessionScript::new()
+            .workspace("app")
+            .workspace_worktree("app", REPO, false),
+    );
+
+    create_worktree(&harness.target, &worktree_request("/src/app")).expect("created");
+
+    let session = harness.presented();
+    assert_eq!(session.workspaces.len(), 2);
+    let created = &session.workspaces[1];
+    assert_eq!(created.label, "feature");
+    assert_eq!(
+        created
+            .worktree
+            .as_ref()
+            .map(|w| (w.repo_key.as_str(), w.is_linked)),
+        Some((REPO, true))
+    );
+    assert_eq!(
+        session.worktree_parent(&created.id),
+        Some(&WorkspaceId::from("w1"))
+    );
+    assert_eq!(session.focused_workspace, Some(created.id.clone()));
+}
+
+#[test]
+fn a_rejected_worktree_creation_reports_herdrs_error_and_adds_nothing() {
+    let harness = Harness::new();
+    let session = harness.start(
+        SessionScript::new()
+            .workspace("app")
+            .workspace_worktree("app", REPO, false),
+    );
+    session.reject_next_creation("worktree_exists", "branch feature already has a worktree");
+
+    let failure =
+        create_worktree(&harness.target, &worktree_request("/src/app")).expect_err("rejected");
+
+    assert!(matches!(
+        &failure,
+        ConnectionFailure::Rejected { code, .. } if code == "worktree_exists"
+    ));
+    assert_eq!(harness.presented().workspaces.len(), 1);
+}
+
+#[test]
+fn a_worktree_for_a_directory_outside_any_known_repository_is_rejected() {
+    let harness = Harness::new();
+    let _session = harness.start(SessionScript::new().workspace("app"));
+
+    let failure =
+        create_worktree(&harness.target, &worktree_request("/elsewhere")).expect_err("rejected");
+
+    assert!(matches!(failure, ConnectionFailure::Rejected { .. }));
+    assert_eq!(harness.presented().workspaces.len(), 1);
+}
+
 #[test]
 fn a_tab_for_a_workspace_herdr_does_not_have_is_rejected() {
     let harness = Harness::new();

@@ -13,6 +13,7 @@ mod pane_frames;
 mod pane_grid;
 mod pane_input;
 mod pane_terminal;
+pub(crate) mod repository_root;
 mod session_picker;
 mod sessions;
 mod workspace_view;

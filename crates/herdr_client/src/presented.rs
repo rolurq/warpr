@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -49,6 +49,19 @@ impl PresentedWorkspace {
             .and_then(with_id)
             .or_else(|| self.active_herdr_tab.as_ref().and_then(with_id))
             .or_else(|| self.herdr_tabs.first())
+    }
+
+    /// The directory the workspace is in: the working directory Herdr reports for the focused
+    /// pane of the workspace's active Herdr tab. `None` when Herdr reports no layout or no
+    /// working directory for it.
+    pub fn directory(&self) -> Option<&Path> {
+        let layout = self.selected_tab(None)?.layout.as_ref()?;
+        layout
+            .panes
+            .iter()
+            .find(|pane| pane.focused)?
+            .cwd
+            .as_deref()
     }
 }
 

@@ -125,7 +125,7 @@ pub enum NewWorktreeModalAction {
 
 impl NewWorktreeModal {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let repo_picker = Self::build_repo_picker(None, ctx);
+        let repo_picker = Self::build_repo_picker(None, None, ctx);
         let branch_picker = Self::build_branch_picker(None, ctx);
         let worktree_name_editor = Self::build_worktree_name_editor(ctx);
 
@@ -145,9 +145,13 @@ impl NewWorktreeModal {
 
     fn build_repo_picker(
         default: Option<String>,
+        herdr_repos: Option<Vec<PathBuf>>,
         ctx: &mut ViewContext<Self>,
     ) -> ViewHandle<RepoPicker> {
-        let picker = ctx.add_typed_action_view(|ctx| RepoPicker::new(default, ctx));
+        let picker = ctx.add_typed_action_view(|ctx| match herdr_repos {
+            Some(repos) => RepoPicker::new_for_herdr(default, repos, ctx),
+            None => RepoPicker::new(default, ctx),
+        });
         ctx.subscribe_to_view(&picker, |me, _, event, ctx| match event {
             RepoPickerEvent::Selected(value) => {
                 me.selected_repo = Some(value.clone());
@@ -193,7 +197,15 @@ impl NewWorktreeModal {
     }
 
     /// Called by the workspace before making the modal visible.
-    pub fn on_open(&mut self, cwd: Option<PathBuf>, ctx: &mut ViewContext<Self>) {
+    ///
+    /// `herdr_repos` are the repositories of the Herdr session the window presents; `None` lists
+    /// the registered projects. `cwd` is the repo to preselect.
+    pub fn on_open(
+        &mut self,
+        cwd: Option<PathBuf>,
+        herdr_repos: Option<Vec<PathBuf>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
         self.autogenerate_branch_name = true;
         self.selected_repo = None;
         self.selected_branch = None;
@@ -201,20 +213,20 @@ impl NewWorktreeModal {
             e.clear_buffer_and_reset_undo_stack(ctx);
         });
 
-        // Prefer the active session's cwd; fall back to the first known
-        // workspace so that both pickers start populated even when no
-        // terminal session is active yet.
-        let effective_cwd = cwd.or_else(|| {
-            PersistedWorkspace::as_ref(ctx)
+        // Prefer the given repo; fall back to the first known one so that both pickers start
+        // populated even when none is given.
+        let effective_cwd = cwd.or_else(|| match &herdr_repos {
+            Some(repos) => repos.first().cloned(),
+            None => PersistedWorkspace::as_ref(ctx)
                 .workspaces()
                 .next()
-                .map(|ws| ws.path.clone())
+                .map(|ws| ws.path.clone()),
         });
 
         let default_repo = effective_cwd
             .as_ref()
             .map(|p| p.to_string_lossy().to_string());
-        self.repo_picker = Self::build_repo_picker(default_repo, ctx);
+        self.repo_picker = Self::build_repo_picker(default_repo, herdr_repos, ctx);
         self.branch_picker = Self::build_branch_picker(effective_cwd, ctx);
 
         ctx.focus(&self.repo_picker);
@@ -242,6 +254,13 @@ impl NewWorktreeModal {
             picker.refetch_branches(path, ctx);
         });
         ctx.notify();
+    }
+
+    /// The repos the picker lists and the one it has selected.
+    #[cfg(test)]
+    pub(crate) fn picked_repos(&self, ctx: &AppContext) -> (Vec<String>, Option<String>) {
+        let picker = self.repo_picker.as_ref(ctx);
+        (picker.listed_paths(ctx), picker.selected_value(ctx))
     }
 
     fn try_submit(&mut self, ctx: &mut ViewContext<Self>) {

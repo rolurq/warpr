@@ -210,6 +210,48 @@ impl Shared {
         ok(id, result)
     }
 
+    /// Serves `worktree.create`: adds the linked worktree as a workspace, announces it to
+    /// subscribers and answers with it. Like Herdr, it refuses a directory that is not in a
+    /// repository.
+    fn create_worktree(&self, id: &Value, params: &Value) -> Value {
+        if let Some((code, message)) = self.creation_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let (Some(cwd), Some(branch)) = (params["cwd"].as_str(), params["branch"].as_str()) else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `cwd` or `branch`",
+            );
+        };
+        let label = params["label"].as_str().unwrap_or(branch);
+        let focus = params["focus"].as_bool().unwrap_or(false);
+        let mut script = self.script.lock();
+        let Some(workspace_id) = script.create_worktree(cwd, label, focus) else {
+            return error(
+                id,
+                "worktree_open_failed",
+                "Herdr worktree actions require a path inside a Git work tree",
+            );
+        };
+        let workspace = script.snapshot()["workspaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["workspace_id"] == workspace_id.as_str())
+            .cloned()
+            .unwrap_or(Value::Null);
+        drop(script);
+
+        let result = json!({
+            "type": "worktree_created",
+            "worktree": workspace["worktree"],
+            "workspace": workspace,
+        });
+        self.emit("worktree_created", &result);
+        ok(id, result)
+    }
+
     /// Validates `events.subscribe` params as Herdr does: every entry must be a known type, pane
     /// scoped types must name a pane, and that pane must exist.
     fn parse_subscriptions(
@@ -391,8 +433,9 @@ impl FakeSession {
         *self.shared.subscriptions_to_lose.lock() = times;
     }
 
-    /// Answers the next `workspace.create` or `tab.create` request with the error `code` and
-    /// `message` instead of creating anything, as Herdr does for a request it refuses.
+    /// Answers the next `workspace.create`, `tab.create` or `worktree.create` request with the
+    /// error `code` and `message` instead of creating anything, as Herdr does for a request it
+    /// refuses.
     pub fn reject_next_creation(&self, code: &str, message: &str) {
         *self.shared.creation_rejection.lock() = Some((code.to_owned(), message.to_owned()));
     }
@@ -535,6 +578,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared, connection_id: u64) {
                 response
             }
             "workspace.create" | "tab.create" => shared.create(&id, method, &request["params"]),
+            "worktree.create" => shared.create_worktree(&id, &request["params"]),
             "pane.list" => {
                 let panes = shared.script.lock().snapshot()["panes"].clone();
                 ok(&id, json!({ "type": "pane_list", "panes": panes }))

@@ -11253,7 +11253,16 @@ impl Workspace {
                 branch,
                 worktree_branch_name,
             } => {
-                self.handle_new_worktree_submit(repo, branch, worktree_branch_name.as_deref(), ctx);
+                if crate::herdr::presents_herdr_workspaces(ctx) {
+                    self.create_herdr_worktree(repo, branch, worktree_branch_name.as_deref(), ctx);
+                } else {
+                    self.handle_new_worktree_submit(
+                        repo,
+                        branch,
+                        worktree_branch_name.as_deref(),
+                        ctx,
+                    );
+                }
                 self.close_new_worktree_modal(ctx);
             }
             NewWorktreeModalEvent::PickNewRepo => {
@@ -24543,13 +24552,17 @@ impl TypedActionView for Workspace {
                 self.open_tab_config(tab_config.clone(), ctx);
             }
             OpenNewWorktreeModal => {
-                let cwd = self
-                    .active_session_view(ctx)
-                    .and_then(|view| view.as_ref(ctx).pwd())
-                    .map(PathBuf::from);
+                let herdr_repos = self.herdr_new_worktree_repositories(ctx);
+                let cwd = match &herdr_repos {
+                    Some(repos) => repos.preselected.clone(),
+                    None => self
+                        .active_session_view(ctx)
+                        .and_then(|view| view.as_ref(ctx).pwd())
+                        .map(PathBuf::from),
+                };
                 self.new_worktree_modal.view.update(ctx, |modal, ctx| {
                     modal.body().update(ctx, |body, ctx| {
-                        body.on_open(cwd, ctx);
+                        body.on_open(cwd, herdr_repos.map(|repos| repos.roots), ctx);
                     });
                 });
                 self.new_worktree_modal.open();
