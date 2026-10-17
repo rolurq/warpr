@@ -64,8 +64,6 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
 #[cfg(feature = "local_fs")]
 use repo_metadata::RemoteRepositoryIdentifier;
-#[cfg(feature = "local_fs")]
-use repo_metadata::repositories::DetectedRepositories;
 #[cfg(all(target_os = "macos", feature = "crash_reporting"))]
 use sentry::protocol::{Attachment, AttachmentType};
 use serde_json;
@@ -342,10 +340,10 @@ use crate::server::network_log_pane_manager::NetworkLogPaneManager;
 use crate::server::server_api::ai::AIClient;
 use crate::server::server_api::{ServerApi, ServerApiProvider, ServerTime};
 use crate::server::telemetry::{
-    AddTabWithShellSource, AnonymousUserSignupEntrypoint, CloseTarget, EnvVarTelemetryMetadata,
-    FileTreeSource, KnowledgePaneEntrypoint, LaunchConfigUiLocation,
-    MCPServerCollectionPaneEntrypoint, NotificationsTurnedOnSource, OpenedWarpAISource,
-    PaletteSource, SharingDialogSource, TabRenameEvent, TierLimitHitEvent, WarpDriveSource,
+    AnonymousUserSignupEntrypoint, CloseTarget, EnvVarTelemetryMetadata, FileTreeSource,
+    KnowledgePaneEntrypoint, LaunchConfigUiLocation, MCPServerCollectionPaneEntrypoint,
+    NotificationsTurnedOnSource, OpenedWarpAISource, PaletteSource, SharingDialogSource,
+    TabRenameEvent, TierLimitHitEvent, WarpDriveSource,
 };
 use crate::session_management::{SessionNavigationData, SessionSource, TabNavigationData};
 use crate::settings::cloud_preferences::CloudPreferencesSettings;
@@ -459,8 +457,7 @@ use crate::user_config::{WarpConfig, WarpConfigUpdateEvent};
 #[cfg(feature = "local_fs")]
 use crate::user_config::{
     ensure_default_worktree_config, find_unused_tab_config_path, find_unused_toml_path,
-    find_unused_worktree_config_path, materialize_default_worktree_config, sanitize_toml_base_name,
-    tab_configs_dir,
+    materialize_default_worktree_config, sanitize_toml_base_name, tab_configs_dir,
 };
 use crate::util::bindings::{
     keybinding_name_to_display_string, keybinding_name_to_keystroke, trigger_to_keystroke,
@@ -1070,8 +1067,7 @@ pub struct Workspace {
     server_api: Arc<ServerApi>,
     auth_state: Arc<AuthState>,
     server_time: Option<Arc<ServerTime>>,
-    /// Present while this window mirrors a Herdr session.
-    herdr_session_picker: Option<ViewHandle<crate::herdr::HerdrSessionPicker>>,
+    herdr_session_picker: ViewHandle<crate::herdr::HerdrSessionPicker>,
     herdr_tab_bar: herdr_tabs::HerdrTabBarState,
     tab_bar_overflow_menu: ViewHandle<Menu<WorkspaceAction>>,
     show_tab_bar_overflow_menu: bool,
@@ -1207,9 +1203,8 @@ pub struct Workspace {
     right_panel_view: ViewHandle<RightPanelView>,
     working_directories_model: ModelHandle<pane_group::WorkingDirectoriesModel>,
     agent_management_view: ViewHandle<AgentManagementView>,
-    /// The agent panel that stands in for `agent_management_view` while the window presents a
-    /// Herdr session.
-    herdr_agent_panel: Option<ViewHandle<HerdrAgentPanelView>>,
+    /// The agent panel shown in place of `agent_management_view`.
+    herdr_agent_panel: ViewHandle<HerdrAgentPanelView>,
     notification_mailbox_view: Option<ViewHandle<NotificationMailboxView>>,
     notification_toast_stack: Option<ViewHandle<AgentNotificationToastStack>>,
     lightbox_view: Option<ViewHandle<LightboxView>>,
@@ -1441,10 +1436,7 @@ impl Workspace {
             EditorView::single_line(options, ctx)
         });
         editor.update(ctx, |editor, ctx| {
-            editor.set_placeholder_text(
-                crate::herdr::wording(ctx, "Search tabs...", "Search workspaces..."),
-                ctx,
-            );
+            editor.set_placeholder_text("Search workspaces...", ctx);
         });
         ctx.subscribe_to_view(&editor, |me, editor_view, event, ctx| match event {
             EditorEvent::Edited(_) => {
@@ -3168,8 +3160,7 @@ impl Workspace {
         ctx.subscribe_to_view(&agent_management_view, |me, _, event, ctx| {
             me.handle_agent_management_view_event(event, ctx);
         });
-        let herdr_agent_panel = crate::herdr::presents_herdr_workspaces(ctx)
-            .then(|| ctx.add_typed_action_view(HerdrAgentPanelView::new));
+        let herdr_agent_panel = ctx.add_typed_action_view(HerdrAgentPanelView::new);
 
         let notification_mailbox_view = if FeatureFlag::HOANotifications.is_enabled() {
             let view = ctx.add_typed_action_view(NotificationMailboxView::new);
@@ -3483,9 +3474,7 @@ impl Workspace {
             auth_state: AuthStateProvider::as_ref(ctx).get().clone(),
             server_time,
             herdr_tab_bar: Default::default(),
-            herdr_session_picker: (FeatureFlag::HerdrWorkspaceTabs.is_enabled()
-                && ctx.has_singleton_model::<crate::herdr::HerdrSessionModel>())
-            .then(|| ctx.add_typed_action_view(crate::herdr::HerdrSessionPicker::new)),
+            herdr_session_picker: ctx.add_typed_action_view(crate::herdr::HerdrSessionPicker::new),
             tab_bar_overflow_menu,
             show_tab_bar_overflow_menu: false,
             tab_right_click_menu,
@@ -7041,7 +7030,7 @@ impl Workspace {
                             let item = MenuItemFields::new(shell_name)
                                 .with_on_select_action(WorkspaceAction::AddTabWithShell {
                                     shell: shell.clone(),
-                                    source: AddTabWithShellSource::ShellSelectorMenu,
+                                    source: crate::server::telemetry::AddTabWithShellSource::ShellSelectorMenu,
                                 })
                                 .with_icon(icon);
                             menu_items.push(item.into_item());
@@ -7148,22 +7137,18 @@ impl Workspace {
 
             // 6. New tab config — V0: opens the TOML template.
             menu_items.push(
-                MenuItemFields::new(crate::herdr::wording(
-                    ctx,
-                    "New tab config",
-                    "New workspace config",
-                ))
-                .with_on_select_action(WorkspaceAction::SelectNewSessionMenuItem(
-                    NewSessionMenuItem::CreateNewTabConfig,
-                ))
-                .with_icon(icons::Icon::Plus)
-                .into_item(),
+                MenuItemFields::new("New workspace config")
+                    .with_on_select_action(WorkspaceAction::SelectNewSessionMenuItem(
+                        NewSessionMenuItem::CreateNewTabConfig,
+                    ))
+                    .with_icon(icons::Icon::Plus)
+                    .into_item(),
             );
         }
 
         // 7. Separator + New tab group entry. Gated on the Grouped Tabs flag.
         // TODO(johnturcoo) add group actions.
-        if Self::user_tab_groups_enabled(ctx) {
+        if Self::user_tab_groups_enabled() {
             menu_items.push(MenuItem::Separator);
             menu_items.push(
                 MenuItemFields::new("New tab group")
@@ -7330,7 +7315,7 @@ impl Workspace {
             #[cfg(not(feature = "local_fs"))]
             NewSessionMenuItem::CreateNewTabConfig => {}
             NewSessionMenuItem::CreateNewTabGroup => {
-                if Self::user_tab_groups_enabled(ctx) {
+                if Self::user_tab_groups_enabled() {
                     self.create_new_tab_group(ctx);
                 }
             }
@@ -7619,7 +7604,7 @@ impl Workspace {
     /// * If the tab was effectively pinned, clamp past the pinned region so
     ///   the new (unpinned) group doesn't land inside the pinned area.
     fn new_tab_group_from_tab(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
@@ -7673,7 +7658,7 @@ impl Workspace {
         group_id: TabGroupId,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
@@ -7707,7 +7692,7 @@ impl Workspace {
     /// the group's last remaining member, or further if the group was pinned
     /// (the removed tab is now unpinned and must clear the pinned region).
     fn remove_tab_from_group(&mut self, tab_index: usize, ctx: &mut ViewContext<Self>) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         let Some(tab) = self.tabs.get(tab_index) else {
@@ -7738,7 +7723,7 @@ impl Workspace {
     }
 
     fn ungroup_tabs(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
-        if !Self::user_tab_groups_enabled(ctx) || !self.tab_groups.contains_key(&group_id) {
+        if !Self::user_tab_groups_enabled() || !self.tab_groups.contains_key(&group_id) {
             return;
         }
         // Capture the group's contiguous member range and pinned state
@@ -7783,7 +7768,7 @@ impl Workspace {
     /// tab is created top-level (or in another group), so we pull it to the end
     /// of this group's run.
     fn new_tab_in_group(&mut self, group_id: TabGroupId, ctx: &mut ViewContext<Self>) {
-        if !Self::user_tab_groups_enabled(ctx) || !self.tab_groups.contains_key(&group_id) {
+        if !Self::user_tab_groups_enabled() || !self.tab_groups.contains_key(&group_id) {
             return;
         }
 
@@ -7862,7 +7847,7 @@ impl Workspace {
         direction: TabMovement,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         if !self.can_move_tab_group(group_id, direction) {
@@ -8184,8 +8169,7 @@ impl Workspace {
         }
 
         let terminal_colors = Appearance::as_ref(ctx).theme().terminal_colors().normal;
-        let menu_items =
-            self.tab_group_menu_items(group_id, uses_vertical_tabs(ctx), terminal_colors, ctx);
+        let menu_items = self.tab_group_menu_items(group_id, terminal_colors);
         ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
             context_menu.set_items(menu_items, view_ctx);
         });
@@ -9675,21 +9659,6 @@ impl Workspace {
         }
         self.current_workspace_state.is_agent_management_view_open = is_open;
         self.report_shown_herdr_workspace(ctx);
-        // Warp's conversations model polls its hosted backend while the view is registered, which
-        // a Herdr window must never trigger.
-        if self.herdr_agent_panel.is_none() {
-            let window_id = self.window_id;
-            let view_id = self.agent_management_view.id();
-            let team_context_resolver =
-                UserWorkspaces::team_context_resolver(self.agent_management_view.downgrade());
-            AgentConversationsModel::handle(ctx).update(ctx, move |model, ctx| {
-                if is_open {
-                    model.register_view_open(window_id, view_id, team_context_resolver, ctx);
-                } else {
-                    model.register_view_closed(window_id, view_id, ctx);
-                }
-            });
-        }
 
         // Notify panels about the agent management view state change so they can
         // update their top border visibility accordingly.
@@ -10218,11 +10187,7 @@ impl Workspace {
     ) {
         match selection {
             NewSessionSidecarSelection::OpenWorktreeRepo { repo_path } => {
-                if crate::herdr::presents_herdr_workspaces(ctx) {
-                    self.create_herdr_worktree(&repo_path, None, None, ctx);
-                } else {
-                    self.open_worktree_in_repo(repo_path, ctx);
-                }
+                self.create_herdr_worktree(&repo_path, None, None, ctx);
             }
         }
     }
@@ -10313,165 +10278,24 @@ impl Workspace {
         }
     }
 
-    /// Move/close directional labels read "up/down/above/below" in vertical
-    /// tabs and "left/right" in horizontal tabs; actions are unchanged.
+    /// The context menu of a Herdr workspace group, which lets the user pick the group's color.
     fn tab_group_menu_items(
         &self,
         group_id: TabGroupId,
-        is_vertical: bool,
         terminal_colors: AnsiColors,
-        ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
-        let Some((first, last)) = group_member_index_range(&self.tabs, group_id) else {
+        if group_member_index_range(&self.tabs, group_id).is_none() {
             return vec![];
-        };
-        let has_tabs_above = first > 0;
-        let has_tabs_below = last + 1 < self.tabs.len();
-        let has_tabs_outside = (last - first + 1) < self.tabs.len();
-        // Move entries are hidden when the move would cross the
-        // pinned/unpinned boundary, or go beyond the tab list bounds
-        // so the user never sees an option that would be a no-op.
-        let can_move_up = has_tabs_above && self.can_move_tab_group(group_id, TabMovement::Left);
-        let can_move_down = has_tabs_below && self.can_move_tab_group(group_id, TabMovement::Right);
-
-        let move_section = {
-            let mut items = vec![];
-            if can_move_up {
-                let label = if is_vertical {
-                    "Move group up"
-                } else {
-                    "Move group left"
-                };
-                items.push(
-                    MenuItemFields::new(label)
-                        .with_on_select_action(WorkspaceAction::MoveTabGroupUp(group_id))
-                        .into_item(),
-                );
-            }
-            if can_move_down {
-                let label = if is_vertical {
-                    "Move group down"
-                } else {
-                    "Move group right"
-                };
-                items.push(
-                    MenuItemFields::new(label)
-                        .with_on_select_action(WorkspaceAction::MoveTabGroupDown(group_id))
-                        .into_item(),
-                );
-            }
-            items
-        };
-
-        let close_section = {
-            let mut items = vec![
-                MenuItemFields::new(crate::herdr::wording(
-                    ctx,
-                    "Close all tabs in group",
-                    "Close all workspaces in group",
-                ))
-                .with_on_select_action(WorkspaceAction::CloseTabGroup(group_id))
-                .into_item(),
-            ];
-            if has_tabs_outside {
-                items.push(
-                    MenuItemFields::new(crate::tab::close_other_tabs_label(ctx))
-                        .with_on_select_action(WorkspaceAction::CloseTabsOutsideGroup(group_id))
-                        .into_item(),
-                );
-            }
-            if has_tabs_above {
-                let label = match (is_vertical, crate::herdr::presents_herdr_workspaces(ctx)) {
-                    (true, false) => "Close tabs above",
-                    (true, true) => "Close workspaces above",
-                    (false, false) => "Close tabs to the left",
-                    (false, true) => "Close workspaces to the left",
-                };
-                items.push(
-                    MenuItemFields::new(label)
-                        .with_on_select_action(WorkspaceAction::CloseTabsAboveGroup(group_id))
-                        .into_item(),
-                );
-            }
-            if has_tabs_below {
-                let label = match (is_vertical, crate::herdr::presents_herdr_workspaces(ctx)) {
-                    (true, false) => "Close tabs below",
-                    (true, true) => "Close workspaces below",
-                    (false, false) => "Close tabs to the right",
-                    (false, true) => "Close workspaces to the right",
-                };
-                items.push(
-                    MenuItemFields::new(label)
-                        .with_on_select_action(WorkspaceAction::CloseTabsBelowGroup(group_id))
-                        .into_item(),
-                );
-            }
-            items
-        };
-
-        let pin_section = if FeatureFlag::PinnedTabs.is_enabled() {
-            let (label, action) = if self.tab_groups.get(&group_id).is_some_and(|g| g.pinned) {
-                ("Unpin group", WorkspaceAction::UnpinTabGroup(group_id))
-            } else {
-                ("Pin group", WorkspaceAction::PinTabGroup(group_id))
-            };
-            vec![
-                MenuItemFields::new(label)
-                    .with_on_select_action(action)
-                    .into_item(),
-            ]
-        } else {
-            vec![]
-        };
-
-        // Color picker: same dot-based selector as individual tabs.
-        let color_section = {
-            // Resolve the group's currently selected color for highlighting the active dot.
-            let effective_color = self
-                .tab_groups
-                .get(&group_id)
-                .and_then(|g| g.color.resolve(None));
-            color_picker_menu_items(
-                effective_color,
-                terminal_colors,
-                ColorPickerTarget::Group { group_id },
-            )
-        };
-
-        let mut menu_items = vec![];
-        let sections = if self.herdr_agent_panel.is_some() {
-            vec![color_section]
-        } else {
-            vec![
-                pin_section,
-                vec![
-                    MenuItemFields::new("Ungroup tabs")
-                        .with_on_select_action(WorkspaceAction::UngroupTabs(group_id))
-                        .into_item(),
-                    MenuItemFields::new("New tab in group")
-                        .with_on_select_action(WorkspaceAction::NewTabInGroup(group_id))
-                        .into_item(),
-                ],
-                move_section,
-                vec![
-                    MenuItemFields::new("Rename")
-                        .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
-                        .into_item(),
-                ],
-                close_section,
-                color_section,
-            ]
-        };
-        for section_items in sections {
-            if section_items.is_empty() {
-                continue;
-            }
-            if !menu_items.is_empty() {
-                menu_items.push(MenuItem::Separator);
-            }
-            menu_items.extend(section_items);
         }
-        menu_items
+        let effective_color = self
+            .tab_groups
+            .get(&group_id)
+            .and_then(|g| g.color.resolve(None));
+        color_picker_menu_items(
+            effective_color,
+            terminal_colors,
+            ColorPickerTarget::Group { group_id },
+        )
     }
 
     /// Opens the sidecar when "Move to group" is hovered, hides it otherwise.
@@ -10662,52 +10486,16 @@ impl Workspace {
         }
     }
 
-    fn should_include_worktree_sidecar_repo(repo_path: &Path, ctx: &AppContext) -> bool {
-        #[cfg(not(feature = "local_fs"))]
-        {
-            let _ = (repo_path, ctx);
-            true
-        }
-
-        #[cfg(feature = "local_fs")]
-        {
-            // This performs one repo-metadata lookup per persisted workspace while the
-            // sidecar items are rebuilt. That's acceptable for now given the expected
-            // repo counts here, and it keeps linked-worktree filtering scoped to the
-            // only UI that currently needs it.
-            let Some(repository) =
-                DetectedRepositories::as_ref(ctx).get_local_watched_repo_for_path(repo_path, ctx)
-            else {
-                return true;
-            };
-            // Linked worktrees (and submodules) have an external gitdir; exclude
-            // them so only primary repository checkouts appear in the list.
-
-            repository.as_ref(ctx).external_git_directory().is_none()
-        }
-    }
-
-    /// The repos the new-worktree sidecar offers: in a window presenting a Herdr session, the
-    /// session's repositories followed by those the user added; otherwise the registered
-    /// primary checkouts.
+    /// The repos the new-worktree sidecar offers: the session's repositories followed by those
+    /// the user added.
     fn worktree_sidecar_repos(&self, ctx: &AppContext) -> Vec<PathBuf> {
-        let registered = PersistedWorkspace::as_ref(ctx)
-            .workspaces()
-            .map(|workspace| workspace.path.clone());
-        match self.herdr_new_worktree_repositories(ctx) {
-            Some(herdr) => {
-                let mut repos = herdr.roots;
-                for path in registered {
-                    if !repos.contains(&path) {
-                        repos.push(path);
-                    }
-                }
-                repos
+        let mut repos = self.herdr_new_worktree_repositories(ctx).roots;
+        for workspace in PersistedWorkspace::as_ref(ctx).workspaces() {
+            if !repos.contains(&workspace.path) {
+                repos.push(workspace.path.clone());
             }
-            None => registered
-                .filter(|path| Self::should_include_worktree_sidecar_repo(path, ctx))
-                .collect(),
         }
+        repos
     }
 
     fn build_worktree_sidecar_items(
@@ -11034,7 +10822,7 @@ impl Workspace {
                 );
             }
             // Items that don't get any sidecar.
-            "New tab config" => {
+            "New workspace config" => {
                 self.tab_config_action_sidecar_item = None;
                 if self.show_new_session_sidecar {
                     self.show_new_session_sidecar = false;
@@ -11273,21 +11061,12 @@ impl Workspace {
                 branch,
                 worktree_branch_name,
             } => {
-                if crate::herdr::presents_herdr_workspaces(ctx) {
-                    self.create_herdr_worktree(
-                        repo,
-                        Some(branch),
-                        worktree_branch_name.as_deref(),
-                        ctx,
-                    );
-                } else {
-                    self.handle_new_worktree_submit(
-                        repo,
-                        branch,
-                        worktree_branch_name.as_deref(),
-                        ctx,
-                    );
-                }
+                self.create_herdr_worktree(
+                    repo,
+                    Some(branch),
+                    worktree_branch_name.as_deref(),
+                    ctx,
+                );
                 self.close_new_worktree_modal(ctx);
             }
             NewWorktreeModalEvent::PickNewRepo => {
@@ -11331,109 +11110,6 @@ impl Workspace {
         Some(warp_util::worktree_names::generate_worktree_branch_name(
             &branch_refs,
         ))
-    }
-
-    /// Generates a worktree tab config TOML, writes it to `~/.warp/tab_configs/`,
-    /// and opens the resulting config as a new tab.
-    ///
-    /// When `worktree_branch_name` is `None` (autogenerate), the TOML stores
-    /// commands with `{autogenerated_branch_name}` template variables that get
-    /// substituted with a fresh name on every open.
-    /// When `Some(name)` (manual naming), the commands are baked in and a
-    /// `worktree_branch_name` param is added so re-opens show the params modal.
-    #[cfg(feature = "local_fs")]
-    fn handle_new_worktree_submit(
-        &mut self,
-        repo: &str,
-        base_branch: &str,
-        worktree_branch_name: Option<&str>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let repo_display_name = Path::new(repo)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| repo.to_string());
-        let config_name = match worktree_branch_name {
-            Some(name) if !name.is_empty() => {
-                format!("New worktree: {repo_display_name}, {name}")
-            }
-            _ if !base_branch.is_empty() => {
-                format!("New worktree: {repo_display_name}, {base_branch}")
-            }
-            _ => format!("New worktree: {repo_display_name}"),
-        };
-
-        let filename_hint = if let Some(name) = worktree_branch_name {
-            name.to_string()
-        } else {
-            let branches = crate::util::git::list_local_branches_sync(Path::new(repo));
-            let branch_refs: HashSet<&str> = branches.iter().map(|s| s.as_str()).collect();
-            warp_util::worktree_names::generate_worktree_branch_name(&branch_refs)
-        };
-
-        let toml_content = crate::tab_configs::build_worktree_config_toml(
-            &config_name,
-            repo,
-            base_branch,
-            worktree_branch_name,
-        );
-
-        let dir = tab_configs_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            log::warn!("Failed to create tab_configs dir: {e:?}");
-            return;
-        }
-
-        let path = find_unused_worktree_config_path(&dir, &filename_hint);
-        if let Err(e) = std::fs::write(&path, &toml_content) {
-            log::warn!("Failed to write worktree tab config: {e:?}");
-            return;
-        }
-
-        match toml::from_str::<crate::tab_configs::TabConfig>(&toml_content) {
-            Ok(tab_config) => {
-                let naming_mode = if worktree_branch_name.is_some() {
-                    WorktreeBranchNamingMode::Manual
-                } else {
-                    WorktreeBranchNamingMode::Auto
-                };
-                if let Some(name) = worktree_branch_name {
-                    // First open with manual name — bypass the params modal.
-                    let mut param_values = HashMap::new();
-                    param_values.insert("worktree_branch_name".to_string(), name.to_string());
-                    self.open_tab_config_with_params(tab_config, param_values, None, ctx);
-                } else {
-                    // Autogenerate — open with the name we just generated.
-                    let param_values = tab_config.default_param_values();
-                    self.open_tab_config_with_params(
-                        tab_config,
-                        param_values,
-                        Some(&filename_hint),
-                        ctx,
-                    );
-                }
-                send_telemetry_from_ctx!(
-                    TabConfigsTelemetryEvent::NewWorktreeConfigOpened {
-                        source: NewWorktreeConfigOpenSource::NewWorktreeModal,
-                        naming_mode,
-                    },
-                    ctx
-                );
-            }
-            Err(e) => {
-                log::warn!("Failed to parse generated worktree config: {e:?}");
-            }
-        }
-    }
-
-    #[cfg(not(feature = "local_fs"))]
-    fn handle_new_worktree_submit(
-        &mut self,
-        _repo: &str,
-        _base_branch: &str,
-        _worktree_branch_name: Option<&str>,
-        _ctx: &mut ViewContext<Self>,
-    ) {
     }
 
     fn open_repo_picker_for_new_worktree_modal(&mut self, ctx: &mut ViewContext<Self>) {
@@ -13033,31 +12709,6 @@ impl Workspace {
             PanesLayout::AmbientAgent,
             Arc::new(HashMap::new()),
             None,
-            ctx,
-        );
-        ctx.notify();
-    }
-
-    // Adds a tab with a specific shell, only meant to be dispatched directly by actions.
-    fn add_tab_with_shell(
-        &mut self,
-        shell: AvailableShell,
-        source: AddTabWithShellSource,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AddTabWithShell {
-                source,
-                shell: shell.telemetry_value()
-            },
-            ctx
-        );
-        self.add_new_session_tab_with_default_mode(
-            NewSessionSource::Tab,
-            Some(ctx.window_id()),
-            Some(shell),
-            None,
-            false,
             ctx,
         );
         ctx.notify();
@@ -21757,13 +21408,11 @@ impl Workspace {
             );
         }
 
-        if let Some(picker) = &self.herdr_session_picker {
-            target.add_child(
-                Container::new(ChildView::new(picker).finish())
-                    .with_margin_left(TAB_BAR_PADDING_LEFT)
-                    .finish(),
-            );
-        }
+        target.add_child(
+            Container::new(ChildView::new(&self.herdr_session_picker).finish())
+                .with_margin_left(TAB_BAR_PADDING_LEFT)
+                .finish(),
+        );
 
         let is_online = NetworkStatus::as_ref(ctx).is_online();
 
@@ -21950,16 +21599,10 @@ impl Workspace {
         const BUTTON_WIDTH: f32 = 24. + SIDE_MENU_WIDTH;
         const BUTTON_LEFT_MARGIN: f32 = 4.;
 
-        let new_tab_tool_tip_label_text = if crate::herdr::presents_herdr_workspaces(ctx) {
-            "New Workspace"
-        } else {
-            "New Tab"
-        }
-        .to_string();
+        let new_tab_tool_tip_label_text = "New Workspace".to_string();
         let new_tab_tool_tip_sublabel_text =
             keybinding_name_to_display_string(NEW_TAB_BINDING_NAME, ctx);
-        let tab_configs_tool_tip_label_text =
-            crate::herdr::wording(ctx, "Tab configs", "Workspace configs").to_string();
+        let tab_configs_tool_tip_label_text = "Workspace configs".to_string();
         let tab_configs_tool_tip_sublabel_text =
             keybinding_name_to_display_string(TOGGLE_TAB_CONFIGS_MENU_BINDING_NAME, ctx);
         let appearance = Appearance::as_ref(ctx);
@@ -24494,62 +24137,8 @@ impl TypedActionView for Workspace {
                     self.unpin_tab_group(group_id, ctx);
                 }
             }
-            AddDefaultTab | AddTerminalTab { .. } | AddTabWithShell { .. }
-                if crate::herdr::presents_herdr_workspaces(ctx) =>
-            {
+            AddDefaultTab | AddTerminalTab { .. } | AddTabWithShell { .. } => {
                 self.create_herdr_workspace(ctx)
-            }
-            AddDefaultTab => {
-                let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
-                match effective_mode {
-                    DefaultSessionMode::TabConfig => {
-                        let ai_settings = AISettings::as_ref(ctx);
-                        if let Some(config) = ai_settings.resolved_default_tab_config(ctx) {
-                            self.open_tab_config(config, ctx);
-                        } else {
-                            // Config missing or deleted — clear and fall through to Terminal.
-                            AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                                report_if_error!(
-                                    settings
-                                        .default_session_mode_internal
-                                        .set_value(DefaultSessionMode::Terminal, ctx)
-                                );
-                                report_if_error!(
-                                    settings
-                                        .default_tab_config_path
-                                        .set_value(String::new(), ctx)
-                                );
-                            });
-                            self.add_terminal_tab(false, ctx);
-                        }
-                    }
-                    DefaultSessionMode::CloudAgent => {
-                        self.add_ambient_agent_tab(ctx);
-                    }
-                    DefaultSessionMode::DockerSandbox => {
-                        self.add_docker_sandbox_tab(ctx);
-                    }
-                    // Terminal and Agent are handled by the existing path
-                    // (add_terminal_tab applies DefaultSessionMode::Agent internally).
-                    DefaultSessionMode::Terminal | DefaultSessionMode::Agent => {
-                        self.add_terminal_tab(false, ctx);
-                    }
-                }
-            }
-            AddTerminalTab { hide_homepage } => {
-                self.add_new_session_tab_internal_with_default_session_mode_behavior(
-                    NewSessionSource::Tab,
-                    Some(window_id),
-                    None,
-                    None,
-                    *hide_homepage,
-                    DefaultSessionModeBehavior::Ignore,
-                    ctx,
-                );
-                ctx.notify();
-            }
-            AddTabWithShell { shell, source } => {
-                self.add_tab_with_shell(shell.clone(), *source, ctx)
             }
             AddGetStartedTab => self.add_get_started_tab(ctx),
             AddAmbientAgentTab => self.add_ambient_agent_tab(ctx),
@@ -24585,16 +24174,10 @@ impl TypedActionView for Workspace {
             }
             OpenNewWorktreeModal => {
                 let herdr_repos = self.herdr_new_worktree_repositories(ctx);
-                let cwd = match &herdr_repos {
-                    Some(repos) => repos.preselected.clone(),
-                    None => self
-                        .active_session_view(ctx)
-                        .and_then(|view| view.as_ref(ctx).pwd())
-                        .map(PathBuf::from),
-                };
+                let cwd = herdr_repos.preselected.clone();
                 self.new_worktree_modal.view.update(ctx, |modal, ctx| {
                     modal.body().update(ctx, |body, ctx| {
-                        body.on_open(cwd, herdr_repos.map(|repos| repos.roots), ctx);
+                        body.on_open(cwd, Some(herdr_repos.roots), ctx);
                     });
                 });
                 self.new_worktree_modal.open();
@@ -25356,7 +24939,7 @@ impl TypedActionView for Workspace {
                 ctx.notify();
             }
             ToggleAgentManagementView => {
-                if self.is_agent_panel_available(ctx) {
+                if FeatureFlag::AgentManagementView.is_enabled() {
                     let is_open = !self.current_workspace_state.is_agent_management_view_open;
                     self.set_is_agent_management_view_open(is_open, ctx);
 
@@ -25375,7 +24958,7 @@ impl TypedActionView for Workspace {
                 }
             }
             OpenAgentManagementView => {
-                if self.is_agent_panel_available(ctx) {
+                if FeatureFlag::AgentManagementView.is_enabled() {
                     self.set_is_agent_management_view_open(true, ctx);
                     self.focus_agent_management_view(ctx);
                     ctx.notify();

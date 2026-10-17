@@ -228,7 +228,7 @@ impl Workspace {
         &mut self,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         if self.selected_tab_indices().len() >= 2 {
@@ -246,7 +246,7 @@ impl Workspace {
         &mut self,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         if self.selected_tab_indices().len() >= 2 {
@@ -263,7 +263,7 @@ impl Workspace {
     /// group, the block is placed just past that group's last remaining
     /// member so the existing group stays contiguous instead of being split.
     pub(super) fn new_tab_group_from_selected_tabs(&mut self, ctx: &mut ViewContext<Self>) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         let selected_indices = self.selected_tab_indices();
@@ -370,7 +370,7 @@ impl Workspace {
         group_id: TabGroupId,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !Self::user_tab_groups_enabled(ctx) || !self.tab_groups.contains_key(&group_id) {
+        if !Self::user_tab_groups_enabled() || !self.tab_groups.contains_key(&group_id) {
             return;
         }
         let selected_indices = self.selected_tab_indices();
@@ -448,7 +448,7 @@ impl Workspace {
     /// from; if the group ends up empty it's pruned and the removed block
     /// anchors at the original position instead.
     pub(super) fn remove_selected_tabs_from_group(&mut self, ctx: &mut ViewContext<Self>) {
-        if !Self::user_tab_groups_enabled(ctx) {
+        if !Self::user_tab_groups_enabled() {
             return;
         }
         let Some(group_id) = self.selection_shared_group() else {

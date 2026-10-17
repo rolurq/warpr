@@ -7,3 +7,4 @@ warpr owns no terminals, layout or agents. Workspaces, Herdr tabs, panes and age
 - Warp's block model depends on shell hooks injected when Warp spawns the PTY. Herdr owns the PTY, so panes have no blocks until a later change injects the hook through Herdr's pane environment.
 - The first slice is a read-only mirror; creating, splitting and closing panes and prompting agents come after.
 - Switching sessions is a UI action (a session picker listing every Herdr session), not a setting. warpr never stops a session on quit.
+- The flag rule above is about upstream code. warpr's own branching on whether a window is Herdr-backed does not exist; see ADR-0005.

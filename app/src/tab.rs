@@ -35,7 +35,6 @@ use crate::appearance::Appearance;
 /// the rendering and management of tabs in general.
 use crate::editor::EditorView;
 use crate::features::FeatureFlag;
-use crate::herdr::{presents_herdr_workspaces, wording};
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::menu::{MenuAction, MenuItem, MenuItemFields};
 use crate::pane_group::{PaneGroup, PaneId};
@@ -62,18 +61,17 @@ use crate::workspace::{
 };
 
 /// Label of the menu item and binding that closes every tab but the one acted on.
-pub(crate) fn close_other_tabs_label(app: &AppContext) -> &'static str {
-    wording(app, "Close other tabs", "Close other workspaces")
+pub(crate) fn close_other_tabs_label() -> &'static str {
+    "Close other workspaces"
 }
 
 /// Label of the menu item that closes the tabs after the one acted on, which lie below it in
 /// vertical tabs and to its right otherwise.
-pub(crate) fn close_tabs_after_label(vertical: bool, app: &AppContext) -> &'static str {
-    match (vertical, presents_herdr_workspaces(app)) {
-        (true, false) => "Close Tabs Below",
-        (true, true) => "Close Workspaces Below",
-        (false, false) => "Close Tabs to the Right",
-        (false, true) => "Close Workspaces to the Right",
+pub(crate) fn close_tabs_after_label(vertical: bool) -> &'static str {
+    if vertical {
+        "Close Workspaces Below"
+    } else {
+        "Close Workspaces to the Right"
     }
 }
 
@@ -472,7 +470,7 @@ impl TabData {
         let mut menu_items = vec![];
 
         for section_items in [
-            self.pin_menu_items(index, ctx),
+            self.pin_menu_items(index),
             self.tab_group_menu_items(index, tab_groups, is_only_member_of_group),
             self.session_sharing_menu_items(index, ctx),
             self.copy_metadata_menu_items(pane_name_target, ctx),
@@ -607,11 +605,7 @@ impl TabData {
         let mut menu_items = vec![];
         let tab_title = Self::copyable_metadata_value(Some(pane_group.display_title(ctx)));
         if !uses_vertical_tabs(ctx) {
-            Self::push_copy_metadata_menu_item(
-                &mut menu_items,
-                wording(ctx, "Copy tab title", "Copy workspace title"),
-                tab_title,
-            );
+            Self::push_copy_metadata_menu_item(&mut menu_items, "Copy workspace title", tab_title);
             return menu_items;
         }
 
@@ -642,11 +636,7 @@ impl TabData {
                     pane_group.terminal_view_from_pane_id(target.locator.pane_id, ctx)
                 })
                 .or_else(|| pane_group.focused_session_view(ctx));
-            (
-                wording(ctx, "Copy tab title", "Copy workspace title"),
-                tab_title,
-                terminal_view,
-            )
+            ("Copy workspace title", tab_title, terminal_view)
         };
 
         if let Some(terminal_view) = terminal_view {
@@ -714,7 +704,7 @@ impl TabData {
             // TODO add option to show the keybinding once we figure out a nice API to retrieve
             // the actual keybinding (based on the user's preferences etc.)
             menu_items.append(&mut vec![
-                MenuItemFields::new(wording(ctx, "Rename tab", "Rename workspace"))
+                MenuItemFields::new("Rename workspace")
                     .with_on_select_action(WorkspaceAction::RenameTab(index))
                     .into_item(),
             ]);
@@ -723,7 +713,7 @@ impl TabData {
             let title = self.pane_group.as_ref(ctx).custom_title(ctx);
             if title.is_some() {
                 menu_items.push(
-                    MenuItemFields::new(wording(ctx, "Reset tab name", "Reset workspace name"))
+                    MenuItemFields::new("Reset workspace name")
                         .with_on_select_action(WorkspaceAction::ResetTabName(index))
                         .into_item(),
                 );
@@ -737,11 +727,10 @@ impl TabData {
         // move would cross the pinned/unpinned boundary, group boundary or tab list bounds.
         if can_move_right {
             menu_items.push(
-                MenuItemFields::new(match (uses_vertical_tabs, presents_herdr_workspaces(ctx)) {
-                    (true, false) => "Move Tab Down",
-                    (true, true) => "Move Workspace Down",
-                    (false, false) => "Move Tab Right",
-                    (false, true) => "Move Workspace Right",
+                MenuItemFields::new(if uses_vertical_tabs {
+                    "Move Workspace Down"
+                } else {
+                    "Move Workspace Right"
                 })
                 .with_on_select_action(WorkspaceAction::MoveTabRight(index))
                 .into_item(),
@@ -749,11 +738,10 @@ impl TabData {
         }
         if can_move_left {
             menu_items.push(
-                MenuItemFields::new(match (uses_vertical_tabs, presents_herdr_workspaces(ctx)) {
-                    (true, false) => "Move Tab Up",
-                    (true, true) => "Move Workspace Up",
-                    (false, false) => "Move Tab Left",
-                    (false, true) => "Move Workspace Left",
+                MenuItemFields::new(if uses_vertical_tabs {
+                    "Move Workspace Up"
+                } else {
+                    "Move Workspace Left"
                 })
                 .with_on_select_action(WorkspaceAction::MoveTabLeft(index))
                 .into_item(),
@@ -806,14 +794,14 @@ impl TabData {
 
         if ContextFlag::CloseWindow.is_enabled() || tabs_len != 1 {
             menu_items.push(
-                MenuItemFields::new(wording(ctx, "Close tab", "Close workspace"))
+                MenuItemFields::new("Close workspace")
                     .with_on_select_action(WorkspaceAction::CloseTab(index))
                     .into_item(),
             );
         }
         if tabs_len > 1 {
             menu_items.push(
-                MenuItemFields::new(close_other_tabs_label(ctx))
+                MenuItemFields::new(close_other_tabs_label())
                     .with_on_select_action(WorkspaceAction::CloseOtherTabs(index))
                     .into_item(),
             );
@@ -821,7 +809,7 @@ impl TabData {
         let not_last_tab = index != tabs_len - 1;
         if not_last_tab {
             menu_items.push(
-                MenuItemFields::new(close_tabs_after_label(uses_vertical_tabs, ctx))
+                MenuItemFields::new(close_tabs_after_label(uses_vertical_tabs))
                     .with_on_select_action(WorkspaceAction::CloseTabsRight(index))
                     .into_item(),
             );
@@ -841,21 +829,15 @@ impl TabData {
     }
 
     /// Pin/unpin entry for the per-tab right-click menu.
-    fn pin_menu_items(&self, index: usize, ctx: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
+    fn pin_menu_items(&self, index: usize) -> Vec<MenuItem<WorkspaceAction>> {
         if !FeatureFlag::PinnedTabs.is_enabled() {
             return vec![];
         }
 
         let (label, action) = if self.pinned {
-            (
-                wording(ctx, "Unpin tab", "Unpin workspace"),
-                WorkspaceAction::UnpinTab(index),
-            )
+            ("Unpin workspace", WorkspaceAction::UnpinTab(index))
         } else {
-            (
-                wording(ctx, "Pin tab", "Pin workspace"),
-                WorkspaceAction::PinTab(index),
-            )
+            ("Pin workspace", WorkspaceAction::PinTab(index))
         };
         vec![
             MenuItemFields::new(label)

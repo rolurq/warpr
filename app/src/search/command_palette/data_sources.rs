@@ -53,7 +53,7 @@ impl DataSourceStore {
 
         let new_session_data_source = (FeatureFlag::ShellSelector.is_enabled()
             && cfg!(feature = "local_tty")
-            && !crate::herdr::presents_herdr_workspaces(ctx))
+            && !FeatureFlag::DisableLocalSessions.is_enabled())
         .then(|| ctx.add_model(|ctx| NewSessionDataSource::new(binding_source, ctx)));
 
         let all_conversation_data_source: ModelHandle<conversations::DataSource> =

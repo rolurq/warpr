@@ -1249,19 +1249,10 @@ fn summary_search_fragments_include_hidden_overflow_values() {
 }
 
 #[test]
-fn herdr_group_subtitle_counts_only_nested_worktrees() {
-    assert_eq!(group_subtitle_text(1, true), None);
-    assert_eq!(group_subtitle_text(2, true), Some("1 worktree".to_string()));
-    assert_eq!(
-        group_subtitle_text(4, true),
-        Some("3 worktrees".to_string())
-    );
-}
-
-#[test]
-fn non_herdr_group_subtitle_counts_tabs() {
-    assert_eq!(group_subtitle_text(1, false), Some("1 tab".to_string()));
-    assert_eq!(group_subtitle_text(3, false), Some("3 tabs".to_string()));
+fn group_subtitle_counts_only_nested_worktrees() {
+    assert_eq!(group_subtitle_text(1), None);
+    assert_eq!(group_subtitle_text(2), Some("1 worktree".to_string()));
+    assert_eq!(group_subtitle_text(4), Some("3 worktrees".to_string()));
 }
 
 fn tab_group(name: Option<&str>) -> TabGroup {

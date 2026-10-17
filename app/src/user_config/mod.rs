@@ -401,27 +401,6 @@ pub(crate) fn sanitize_toml_base_name(base_name: &str) -> String {
     }
 }
 
-/// Returns a path for a new worktree tab config that does not yet exist in `dir`.
-/// Uses the branch name to create a descriptive filename like `worktree_my-branch.toml`.
-///
-/// The caller is expected to pass a branch name that has already been validated
-/// (alphanumeric, hyphens, underscores only) so no sanitization is performed here.
-#[cfg(feature = "local_fs")]
-pub(crate) fn find_unused_worktree_config_path(dir: &Path, branch_name: &str) -> PathBuf {
-    let base = dir.join(format!("worktree_{branch_name}.toml"));
-    if !base.exists() {
-        return base;
-    }
-    let mut n = 1u32;
-    loop {
-        let candidate = dir.join(format!("worktree_{branch_name}_{n}.toml"));
-        if !candidate.exists() {
-            return candidate;
-        }
-        n = n.saturating_add(1);
-    }
-}
-
 impl Entity for WarpConfig {
     type Event = WarpConfigUpdateEvent;
 }

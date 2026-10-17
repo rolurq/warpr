@@ -4,7 +4,7 @@ use warpui::platform::WindowStyle;
 
 use super::*;
 use crate::test_util::assert_eventually;
-use crate::workspace::view::tests::initialize_app;
+use crate::workspace::view::tests::initialize_app_without_herdr as initialize_app;
 
 fn open_picker(app: &mut App, fake: &FakeHerdr) -> ViewHandle<HerdrSessionPicker> {
     let cli = herdr_client::HerdrCli::new(fake.binary_path());
