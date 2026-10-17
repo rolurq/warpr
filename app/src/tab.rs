@@ -268,8 +268,6 @@ fn tab_group_menu_entry_flags(
 
 /// True when the tab list is shown in the vertical tabs panel: always while the vertical tabs
 /// feature is on, unless [`FeatureFlag::TabLayoutChoice`] lets the user pick the horizontal bar.
-/// Exposed so binding-description overrides in `workspace/mod.rs` and context-menu builders here
-/// can share a single predicate.
 pub fn uses_vertical_tabs(ctx: &AppContext) -> bool {
     FeatureFlag::VerticalTabs.is_enabled()
         && (!FeatureFlag::TabLayoutChoice.is_enabled()

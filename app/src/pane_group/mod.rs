@@ -5192,7 +5192,9 @@ impl PaneGroup {
             PaneEvent::AppStateChanged => {
                 ctx.emit(Event::AppStateChanged);
             }
-            PaneEvent::SidebarDetailsChanged => ctx.emit(Event::PaneTitleUpdated),
+            PaneEvent::SidebarDetailsChanged | PaneEvent::HerdrTabChanged => {
+                ctx.emit(Event::PaneTitleUpdated)
+            }
             PaneEvent::NewPaneInAIMode { initial_query } => {
                 self.add_terminal_pane_in_agent_mode(initial_query.as_deref(), None, ctx)
             }

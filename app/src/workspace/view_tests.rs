@@ -3960,6 +3960,9 @@ fn test_a_persisted_horizontal_choice_still_opens_the_vertical_tabs_panel_while_
                 VERTICAL_TABS_PANEL_POSITION_ID
             );
         });
+        app.read(|ctx| {
+            assert!(HeaderToolbarItemKind::TabsPanel.is_supported(ctx));
+        });
     });
 }
 
@@ -4268,6 +4271,7 @@ fn test_open_tab_config_with_params_uses_explicit_title_template() {
 #[test]
 fn test_toggle_tab_configs_menu_does_not_change_vertical_tabs_panel_in_horizontal_mode() {
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    let _layout_choice = FeatureFlag::TabLayoutChoice.override_enabled(true);
 
     App::test((), |mut app| async move {
         initialize_app(&mut app);

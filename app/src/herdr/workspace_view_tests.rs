@@ -310,7 +310,7 @@ fn api_with_tokens(tokens: &[(&str, &str)]) -> SessionScript {
 }
 
 #[test]
-fn the_metadata_tokens_herdr_shows_appear_above_the_herdr_tabs_and_follow_their_changes() {
+fn the_metadata_tokens_herdr_shows_appear_above_the_panes_and_follow_their_changes() {
     App::test((), |mut app| async move {
         let fake = compatible_fake();
         let session = fake.start_session("default", api_with_tokens(&[("vcs", "main")]));
@@ -402,7 +402,7 @@ fn create_tab(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>) {
 }
 
 #[test]
-fn the_plus_button_creates_a_herdr_tab_in_this_workspace_and_shows_it_through_herdrs_state() {
+fn creating_a_herdr_tab_in_this_workspace_shows_it_through_herdrs_state() {
     App::test((), |mut app| async move {
         let fake = compatible_fake();
         let session = api_session(&fake);
@@ -416,6 +416,14 @@ fn the_plus_button_creates_a_herdr_tab_in_this_workspace_and_shows_it_through_he
             600 => rendered_text(&app, &view) == "w1:p8",
             "rendered text was {:?}", rendered_text(&app, &view)
         );
+        let shown: Vec<_> = view.read(&app, |view, ctx| {
+            view.bar_tabs(ctx)
+                .into_iter()
+                .filter(|tab| tab.is_shown)
+                .map(|tab| tab.label)
+                .collect()
+        });
+        assert_eq!(shown, ["4"]);
         assert_eq!(
             session
                 .served_methods()
@@ -428,7 +436,7 @@ fn the_plus_button_creates_a_herdr_tab_in_this_workspace_and_shows_it_through_he
 }
 
 #[test]
-fn a_refused_tab_creation_shows_the_error_and_leaves_the_strip_and_selection_alone() {
+fn a_refused_tab_creation_shows_the_error_and_leaves_the_selection_alone() {
     App::test((), |mut app| async move {
         let fake = compatible_fake();
         let session = api_session(&fake);
@@ -572,6 +580,39 @@ fn each_workspace_view_has_the_directory_of_its_own_workspace() {
 
         assert_eq!(directory(&app, &api), Some(PathBuf::from("/srv/api")));
         assert_eq!(directory(&app, &web), Some(PathBuf::from("/srv/web")));
+    });
+}
+
+fn count_tab_changes(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>) -> Rc<Cell<usize>> {
+    let changes = Rc::new(Cell::new(0));
+    app.update(|ctx| {
+        let changes = changes.clone();
+        ctx.subscribe_to_view(view, move |_, event, _| {
+            if matches!(event, PaneEvent::HerdrTabChanged) {
+                changes.set(changes.get() + 1);
+            }
+        });
+    });
+    changes
+}
+
+#[test]
+fn the_view_tells_its_pane_group_when_the_shown_herdr_tab_changes_so_the_bar_redraws() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        let changes = count_tab_changes(&mut app, &view);
+
+        select(&mut app, &view, "w1:t2");
+        assert_eq!(changes.get(), 1);
+
+        select_pane(&mut app, &view, "w1:p3");
+        assert_eq!(changes.get(), 1, "picking a pane leaves the bar as it is");
+
+        create_tab(&mut app, &view);
+        assert_eventually!(600 => changes.get() == 2, "changes {}", changes.get());
     });
 }
 

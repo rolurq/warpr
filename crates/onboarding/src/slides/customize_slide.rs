@@ -686,7 +686,7 @@ impl OnboardingSlide for CustomizeUISlide {
                 Some(SettingCard::TabStyling)
             }
             Some(SettingCard::CodeReview) => Some(SettingCard::ToolsPanel),
-            _ => self.selected_setting,
+            Some(SettingCard::TabStyling | SettingCard::ToolsPanel) | None => self.selected_setting,
         };
         ctx.notify();
     }
@@ -697,7 +697,7 @@ impl OnboardingSlide for CustomizeUISlide {
             Some(SettingCard::ToolsPanel) => Some(SettingCard::CodeReview),
             None if FeatureFlag::TabLayoutChoice.is_enabled() => Some(SettingCard::TabStyling),
             None => Some(SettingCard::ToolsPanel),
-            other => other,
+            Some(SettingCard::CodeReview) => self.selected_setting,
         };
         ctx.notify();
     }

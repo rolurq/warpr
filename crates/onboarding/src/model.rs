@@ -31,7 +31,8 @@ impl UICustomizationSettings {
         }
     }
 
-    /// Defaults for terminal mode (all features disabled).
+    /// Defaults for terminal mode (all features disabled). Tabs are horizontal only while
+    /// [`FeatureFlag::TabLayoutChoice`] lets the user pick that layout.
     pub fn terminal_defaults() -> Self {
         Self {
             use_vertical_tabs: !FeatureFlag::TabLayoutChoice.is_enabled(),

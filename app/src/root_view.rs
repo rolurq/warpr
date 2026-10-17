@@ -9,7 +9,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use onboarding::{
     AgentOnboardingEvent, AgentOnboardingView, OfferVariant, OnboardingEvent, OnboardingIntention,
-    SelectedSettings,
+    SelectedSettings, UICustomizationSettings,
 };
 use parking_lot::Mutex;
 use pathfinder_geometry::rect::RectF;
@@ -2719,7 +2719,10 @@ impl RootView {
                                 ui_customization
                                     .as_ref()
                                     .map(|c| c.use_vertical_tabs)
-                                    .unwrap_or(!FeatureFlag::TabLayoutChoice.is_enabled()),
+                                    .unwrap_or(
+                                        UICustomizationSettings::terminal_defaults()
+                                            .use_vertical_tabs,
+                                    ),
                                 OnboardingIntention::Terminal,
                                 false,
                             ),

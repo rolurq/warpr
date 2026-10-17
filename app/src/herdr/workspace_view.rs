@@ -28,8 +28,8 @@ use crate::util::repo_detection::{RepoDetectionSessionType, detect_possible_git_
 
 const LABEL_FONT_SIZE: f32 = 20.;
 const DETAIL_FONT_SIZE: f32 = 12.;
-const TAB_HORIZONTAL_PADDING: f32 = 12.;
-const TAB_VERTICAL_PADDING: f32 = 6.;
+const ROW_HORIZONTAL_PADDING: f32 = 12.;
+const ROW_VERTICAL_PADDING: f32 = 6.;
 const REFUSAL_MESSAGE_FONT_SIZE: f32 = 14.;
 const REFUSAL_MESSAGE_MAX_WIDTH: f32 = 560.;
 
@@ -151,6 +151,7 @@ impl HerdrWorkspaceView {
         self.report_viewed_panes(ctx);
         self.update_shown_panes(ctx);
         self.sync_sidebar_details(ctx);
+        ctx.emit(PaneEvent::HerdrTabChanged);
         ctx.notify();
     }
 
@@ -316,8 +317,8 @@ impl HerdrWorkspaceView {
     }
 
     /// The Herdr tabs of this workspace in Herdr's order, marking the one this view shows.
-    pub fn bar_tabs(&self, app: &AppContext) -> Vec<HerdrBarTab> {
-        let Some(workspace) = self.presented_workspace(app) else {
+    pub fn bar_tabs(&self, ctx: &AppContext) -> Vec<HerdrBarTab> {
+        let Some(workspace) = self.presented_workspace(ctx) else {
             return Vec::new();
         };
         let shown = workspace
@@ -447,7 +448,7 @@ impl HerdrWorkspaceView {
                 .with_color(theme.sub_text_color(theme.surface_1()).into())
                 .finish();
             let badge = Container::new(notice)
-                .with_horizontal_padding(TAB_HORIZONTAL_PADDING / 2.)
+                .with_horizontal_padding(ROW_HORIZONTAL_PADDING / 2.)
                 .with_background(theme.surface_1())
                 .finish();
             layers.extend([Align::new(badge).top_right().finish()]);
@@ -509,8 +510,8 @@ impl HerdrWorkspaceView {
             .finish();
         Some(
             Container::new(text)
-                .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
-                .with_vertical_padding(TAB_VERTICAL_PADDING)
+                .with_horizontal_padding(ROW_HORIZONTAL_PADDING)
+                .with_vertical_padding(ROW_VERTICAL_PADDING)
                 .with_background(theme.surface_1())
                 .finish(),
         )
@@ -562,8 +563,8 @@ impl HerdrWorkspaceView {
             .with_color(theme.sub_text_color(theme.surface_1()).into())
             .finish();
         Container::new(text)
-            .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
-            .with_vertical_padding(TAB_VERTICAL_PADDING)
+            .with_horizontal_padding(ROW_HORIZONTAL_PADDING)
+            .with_vertical_padding(ROW_VERTICAL_PADDING)
             .with_background(theme.surface_1())
             .finish()
     }
@@ -593,6 +594,7 @@ impl HerdrWorkspaceView {
                         me.selected_pane = None;
                         me.report_viewed_panes(ctx);
                         me.update_shown_panes(ctx);
+                        ctx.emit(PaneEvent::HerdrTabChanged);
                     }
                     Err(failure) => {
                         log::error!("Could not create a Herdr tab: {failure}");
@@ -664,6 +666,7 @@ impl TypedActionView for HerdrWorkspaceView {
                 self.report_viewed_panes(ctx);
                 self.update_shown_panes(ctx);
                 self.sync_sidebar_details(ctx);
+                ctx.emit(PaneEvent::HerdrTabChanged);
                 ctx.notify();
             }
         }

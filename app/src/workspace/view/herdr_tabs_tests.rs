@@ -1334,7 +1334,7 @@ mod tab_bar {
     }
 
     #[test]
-    fn a_refused_tab_creation_leaves_the_bar_alone() {
+    fn a_refused_herdr_tab_creation_leaves_the_bar_alone() {
         let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
         App::test((), |mut app| async move {
             let fake = fake_with(HerdrStatus::compatible());

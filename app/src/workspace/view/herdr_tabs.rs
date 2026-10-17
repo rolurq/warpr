@@ -13,7 +13,9 @@ use warpui::elements::{
     MouseStateHandle, ParentElement as _, Text,
 };
 use warpui::platform::Cursor;
-use warpui::{AppContext, EntityId, SingletonEntity as _, TypedActionView as _, ViewContext};
+use warpui::{
+    AppContext, EntityId, SingletonEntity as _, TypedActionView as _, ViewContext, ViewHandle,
+};
 
 use super::Workspace;
 use crate::app_state::{
@@ -21,7 +23,9 @@ use crate::app_state::{
 };
 use crate::appearance::Appearance;
 use crate::herdr::repository_root::repository_root;
-use crate::herdr::{HerdrBarTab, HerdrSessionEvent, HerdrSessionModel, HerdrWorkspaceViewAction};
+use crate::herdr::{
+    HerdrBarTab, HerdrSessionEvent, HerdrSessionModel, HerdrWorkspaceView, HerdrWorkspaceViewAction,
+};
 use crate::pane_group::PanesLayout;
 use crate::settings::AISettings;
 use crate::util::git::list_local_branches_sync;
@@ -173,6 +177,16 @@ impl Workspace {
         crate::herdr::presents_herdr_workspaces(ctx)
     }
 
+    /// The view of the Herdr workspace this window shows.
+    fn active_herdr_workspace_view(
+        &self,
+        ctx: &AppContext,
+    ) -> Option<ViewHandle<HerdrWorkspaceView>> {
+        self.active_tab_pane_group()
+            .as_ref(ctx)
+            .herdr_workspace_view(ctx)
+    }
+
     /// The Herdr tabs the tab bar lists: those of the workspace this window shows, none while the
     /// agent panel covers the workspaces or the window shows no Herdr workspace.
     pub(super) fn herdr_bar_tabs(&self, ctx: &AppContext) -> Vec<HerdrBarTab> {
@@ -181,9 +195,7 @@ impl Workspace {
         {
             return Vec::new();
         }
-        self.active_tab_pane_group()
-            .as_ref(ctx)
-            .herdr_workspace_view(ctx)
+        self.active_herdr_workspace_view(ctx)
             .map(|view| view.as_ref(ctx).bar_tabs(ctx))
             .unwrap_or_default()
     }
@@ -200,6 +212,8 @@ impl Workspace {
             return None;
         }
         let strip = self.herdr_tab_bar.render(&tabs, appearance);
+        // Twice the weight of the header's search bar slot, so the tabs get most of the room the
+        // toolbar buttons and the right-hand controls leave.
         Some(Expanded::new(2., Clipped::new(Align::new(strip).left().finish()).finish()).finish())
     }
 
@@ -210,15 +224,10 @@ impl Workspace {
         action: HerdrWorkspaceViewAction,
         ctx: &mut ViewContext<Self>,
     ) {
-        let Some(view) = self
-            .active_tab_pane_group()
-            .as_ref(ctx)
-            .herdr_workspace_view(ctx)
-        else {
+        let Some(view) = self.active_herdr_workspace_view(ctx) else {
             return;
         };
         view.update(ctx, |view, ctx| view.handle_action(&action, ctx));
-        ctx.notify();
     }
 
     /// Whether the agent panel can be opened: Herdr's agents when this window presents a Herdr
