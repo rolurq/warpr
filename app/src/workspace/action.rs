@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use herdr_client::HerdrTabId;
+use herdr_client::{HerdrTabId, PaneId as HerdrPaneId};
 use session_sharing_protocol::common::SessionId;
 use ui_components::lightbox;
 use warp_util::path::LineAndColumnArg;
@@ -167,6 +167,13 @@ pub enum WorkspaceAction {
     ToggleTabBarOverflowMenu,
     /// Shows a Herdr tab of the workspace this window shows, as the tab bar lists them.
     SelectHerdrTab(HerdrTabId),
+    /// Shows a Herdr workspace and its Herdr tab and selects one of that tab's panes, as the
+    /// vertical tabs list them. Herdr's own focus is left alone.
+    SelectHerdrPane {
+        pane_group_id: EntityId,
+        herdr_tab: HerdrTabId,
+        pane: HerdrPaneId,
+    },
     /// Asks Herdr to create a Herdr tab in the workspace this window shows.
     CreateHerdrTab,
     ToggleWelcomeTips,
@@ -1057,6 +1064,7 @@ impl WorkspaceAction {
             | SelectNewSessionMenuItem(_)
             | ToggleTabBarOverflowMenu
             | SelectHerdrTab(_)
+            | SelectHerdrPane { .. }
             | CreateHerdrTab
             | CheckForUpdate
             | SetA11yVerbosityLevel(_)

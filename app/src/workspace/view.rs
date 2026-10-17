@@ -24412,6 +24412,11 @@ impl TypedActionView for Workspace {
                 HerdrWorkspaceViewAction::SelectTab(tab_id.clone()),
                 ctx,
             ),
+            SelectHerdrPane {
+                pane_group_id,
+                herdr_tab,
+                pane,
+            } => self.select_herdr_pane(*pane_group_id, herdr_tab, pane, ctx),
             CreateHerdrTab => {
                 self.forward_to_herdr_workspace_view(HerdrWorkspaceViewAction::CreateTab, ctx)
             }

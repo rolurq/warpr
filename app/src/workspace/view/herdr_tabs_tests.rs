@@ -1239,7 +1239,10 @@ mod tab_bar {
             .collect()
     }
 
-    async fn open_workspace_window(app: &mut App, fake: &FakeHerdr) -> ViewHandle<Workspace> {
+    pub(super) async fn open_workspace_window(
+        app: &mut App,
+        fake: &FakeHerdr,
+    ) -> ViewHandle<Workspace> {
         initialize_app(app);
         connect_to(app, fake, "default");
         let workspace = mock_workspace(app);
@@ -1384,6 +1387,289 @@ mod tab_bar {
             let workspace = mock_workspace(&mut app);
 
             assert!(bar_tabs(&app, &workspace).is_empty());
+        });
+    }
+}
+
+mod pane_rows {
+    use herdr_client::PaneId;
+    use herdr_fake::SplitDirection;
+
+    use super::tab_bar::open_workspace_window;
+    use super::*;
+
+    /// `api` (`w1`) has the Herdr tab `logs` with three panes; `web` (`w2`) has `site` with one.
+    fn two_workspaces() -> SessionScript {
+        SessionScript::new()
+            .workspace_with_tabs(
+                "api",
+                [TabScript::new(
+                    "logs",
+                    PaneTree::split(
+                        SplitDirection::Right,
+                        0.5,
+                        PaneTree::pane(),
+                        PaneTree::split(
+                            SplitDirection::Down,
+                            0.5,
+                            PaneTree::pane(),
+                            PaneTree::pane(),
+                        ),
+                    ),
+                )],
+            )
+            .workspace_with_tabs("web", [TabScript::new("site", PaneTree::pane())])
+    }
+
+    fn pane_group_of(app: &App, workspace: &ViewHandle<Workspace>, workspace_id: &str) -> EntityId {
+        workspace.read(app, |workspace, ctx| {
+            workspace
+                .herdr_workspace_tabs(ctx)
+                .into_iter()
+                .find(|(_, id)| id.as_str() == workspace_id)
+                .map(|(pane_group_id, _)| pane_group_id)
+                .expect("the workspace has a tab")
+        })
+    }
+
+    /// The panes of `workspace_id`'s shown Herdr tab with whether each is selected.
+    fn rows(
+        app: &App,
+        workspace: &ViewHandle<Workspace>,
+        workspace_id: &str,
+    ) -> Vec<(String, bool)> {
+        let pane_group_id = pane_group_of(app, workspace, workspace_id);
+        workspace.read(app, |workspace, ctx| {
+            let index = workspace
+                .tab_index_for_pane_group(pane_group_id)
+                .expect("the tab exists");
+            workspace.tabs[index]
+                .pane_group
+                .as_ref(ctx)
+                .herdr_workspace_view(ctx)
+                .expect("a Herdr workspace view")
+                .as_ref(ctx)
+                .pane_rows(ctx)
+                .into_iter()
+                .map(|row| (row.pane.as_str().to_owned(), row.is_selected))
+                .collect()
+        })
+    }
+
+    fn select_pane_row(
+        app: &mut App,
+        workspace: &ViewHandle<Workspace>,
+        workspace_id: &str,
+        pane: &str,
+    ) {
+        let pane_group_id = pane_group_of(app, workspace, workspace_id);
+        let herdr_tab = workspace.read(app, |workspace, ctx| {
+            let index = workspace.tab_index_for_pane_group(pane_group_id).unwrap();
+            workspace.tabs[index]
+                .pane_group
+                .as_ref(ctx)
+                .herdr_workspace_view(ctx)
+                .unwrap()
+                .as_ref(ctx)
+                .pane_rows(ctx)
+                .first()
+                .map(|row| row.herdr_tab.clone())
+                .expect("a row")
+        });
+        dispatch(
+            app,
+            workspace,
+            WorkspaceAction::SelectHerdrPane {
+                pane_group_id,
+                herdr_tab,
+                pane: PaneId::from(pane),
+            },
+        );
+    }
+
+    fn active_tab_title(app: &App, workspace: &ViewHandle<Workspace>) -> String {
+        workspace.read(app, |workspace, ctx| {
+            workspace
+                .active_tab_pane_group()
+                .as_ref(ctx)
+                .display_title(ctx)
+        })
+    }
+
+    /// Whether Herdr was asked to move its focus.
+    fn moved_focus(session: &FakeSession) -> bool {
+        session
+            .served_methods()
+            .iter()
+            .any(|method| method.ends_with(".focus") || method.ends_with(".focused"))
+    }
+
+    #[test]
+    fn selecting_a_pane_row_selects_that_pane_of_its_workspace_without_asking_herdr_to_move_focus()
+    {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            assert_eq!(
+                rows(&app, &workspace, "w1"),
+                [
+                    ("w1:p1".to_owned(), true),
+                    ("w1:p2".to_owned(), false),
+                    ("w1:p3".to_owned(), false)
+                ]
+            );
+
+            select_pane_row(&mut app, &workspace, "w1", "w1:p3");
+
+            assert_eq!(
+                rows(&app, &workspace, "w1"),
+                [
+                    ("w1:p1".to_owned(), false),
+                    ("w1:p2".to_owned(), false),
+                    ("w1:p3".to_owned(), true)
+                ]
+            );
+            assert!(!moved_focus(&session), "{:?}", session.served_methods());
+        });
+    }
+
+    #[test]
+    fn selecting_a_pane_row_of_another_workspace_shows_that_workspace() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            assert_eq!(active_tab_title(&app, &workspace), "api");
+
+            select_pane_row(&mut app, &workspace, "w2", "w2:p1");
+
+            assert_eq!(active_tab_title(&app, &workspace), "web");
+            assert_eq!(rows(&app, &workspace, "w2"), [("w2:p1".to_owned(), true)]);
+            assert!(!moved_focus(&session), "{:?}", session.served_methods());
+        });
+    }
+
+    #[test]
+    fn selecting_a_pane_row_closes_the_agent_panel_that_covered_the_workspaces() {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            workspace.update(&mut app, |workspace, _| {
+                workspace
+                    .current_workspace_state
+                    .is_agent_management_view_open = true;
+            });
+
+            select_pane_row(&mut app, &workspace, "w1", "w1:p2");
+
+            assert!(workspace.read(&app, |workspace, _| {
+                !workspace
+                    .current_workspace_state
+                    .is_agent_management_view_open
+            }));
+        });
+    }
+}
+
+mod vertical_tabs_rows {
+    use herdr_fake::{AgentScript, AgentState, SplitDirection};
+
+    use super::tab_bar::open_workspace_window;
+    use super::*;
+    use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
+    use crate::workspace::view::vertical_tabs::render_tab_group_for_drag_ghost;
+
+    /// `api` (`w1`) has the Herdr tab `logs` with three panes, the second with an agent and the
+    /// last without a directory; `web` (`w2`) has `site` with one.
+    fn two_workspaces() -> SessionScript {
+        SessionScript::new()
+            .workspace_with_tabs(
+                "api",
+                [TabScript::new(
+                    "logs",
+                    PaneTree::split(
+                        SplitDirection::Right,
+                        0.5,
+                        PaneTree::pane(),
+                        PaneTree::split(
+                            SplitDirection::Down,
+                            0.5,
+                            PaneTree::pane(),
+                            PaneTree::pane(),
+                        ),
+                    ),
+                )
+                .pane_label(0, "editor")
+                .pane_label(1, "build")
+                .cwd(0, "/srv/api")
+                .cwd(1, "/srv/api/worker")
+                .without_cwd(2)
+                .agent(
+                    1,
+                    AgentScript::new("claude", AgentState::Working).named("builder"),
+                )],
+            )
+            .workspace_with_tabs(
+                "web",
+                [TabScript::new("site", PaneTree::pane()).pane_label(0, "frontend")],
+            )
+    }
+
+    fn set_granularity(
+        app: &mut App,
+        workspace: &ViewHandle<Workspace>,
+        granularity: VerticalTabsDisplayGranularity,
+    ) {
+        dispatch(
+            app,
+            workspace,
+            WorkspaceAction::SetVerticalTabsDisplayGranularity(granularity),
+        );
+    }
+
+    /// The text of the rows the vertical tabs list for the tab at `tab_index`.
+    fn tab_text(app: &App, workspace: &ViewHandle<Workspace>, tab_index: usize) -> String {
+        workspace.read(app, |workspace, ctx| {
+            render_tab_group_for_drag_ghost(workspace, tab_index, ctx)
+                .debug_text_content()
+                .unwrap_or_default()
+        })
+    }
+
+    #[test]
+    fn panes_view_lists_the_panes_of_each_workspaces_shown_herdr_tab_and_workspaces_view_does_not()
+    {
+        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let _session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            set_granularity(&mut app, &workspace, VerticalTabsDisplayGranularity::Panes);
+            assert_eventually!(
+                600 => tab_text(&app, &workspace, 0).contains("builder · claude · working"),
+                "the rows were {:?}", tab_text(&app, &workspace, 0)
+            );
+
+            let api = tab_text(&app, &workspace, 0);
+            for expected in ["api", "editor", "build", "/srv/api", "w1:p3"] {
+                assert!(api.contains(expected), "{expected} missing from {api:?}");
+            }
+            let web = tab_text(&app, &workspace, 1);
+            for expected in ["web", "frontend"] {
+                assert!(web.contains(expected), "{expected} missing from {web:?}");
+            }
+
+            set_granularity(&mut app, &workspace, VerticalTabsDisplayGranularity::Tabs);
+            let api = tab_text(&app, &workspace, 0);
+            assert!(api.contains("api"), "{api:?}");
+            for hidden in ["editor", "build", "w1:p3", "claude"] {
+                assert!(!api.contains(hidden), "{hidden} shown in {api:?}");
+            }
         });
     }
 }

@@ -774,6 +774,11 @@ impl Element for Draggable {
             }
         }
     }
+
+    #[cfg(any(test, feature = "test-util"))]
+    fn debug_text_content(&self) -> Option<String> {
+        self.child.debug_text_content()
+    }
 }
 
 fn dispatch_callback(

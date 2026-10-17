@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use herdr_client::{HerdrTabId, PaneId as HerdrPaneId, PresentedAgent};
 use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
@@ -50,7 +51,7 @@ use crate::context_chips::github_pr_display_text_from_url;
 use crate::drive::DriveObjectType;
 use crate::drive::cloud_object_styling::warp_drive_icon_color;
 use crate::editor::EditorView;
-use crate::herdr::DirectoryGitContext;
+use crate::herdr::{DirectoryGitContext, HerdrPaneRow};
 use crate::pane_group::pane::IPaneType;
 use crate::pane_group::{
     CodePane, HerdrWorkspacePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane,
@@ -384,7 +385,11 @@ fn render_pane_row_element(
             props.display_granularity,
         )
     });
-    let row_position_id = vtab_pane_row_position_id(props.pane_group_id, props.pane_id);
+    let base_row_position_id = vtab_pane_row_position_id(props.pane_group_id, props.pane_id);
+    let row_position_id = match &props.herdr_pane {
+        Some(herdr_pane) => format!("{base_row_position_id}:{}", herdr_pane.pane.as_str()),
+        None => base_row_position_id,
+    };
     let PaneProps {
         pane_id,
         pane_group_id,
@@ -414,6 +419,7 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
         shortcut_hint_binding_name: _,
+        herdr_pane,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let show_pin = FeatureFlag::PinnedTabs.is_enabled() && is_pinned && !container_is_hovered;
@@ -485,6 +491,12 @@ fn render_pane_row_element(
             ctx.dispatch_typed_action(WorkspaceAction::ShiftSelectTabRange { locator });
         } else if modifiers.cmd && FeatureFlag::GroupedTabs.is_enabled() {
             ctx.dispatch_typed_action(WorkspaceAction::ToggleTabMultiSelection { locator });
+        } else if let Some(herdr_pane) = &herdr_pane {
+            ctx.dispatch_typed_action(WorkspaceAction::SelectHerdrPane {
+                pane_group_id,
+                herdr_tab: herdr_pane.herdr_tab.clone(),
+                pane: herdr_pane.pane.clone(),
+            });
         } else {
             ctx.dispatch_typed_action(WorkspaceAction::FocusPane(locator));
         }
@@ -703,6 +715,8 @@ pub(super) struct VerticalTabsPanelState {
     pane_row_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     pane_title_mouse_states: RefCell<HashMap<PaneId, MouseStateHandle>>,
     pane_badge_mouse_states: RefCell<HashMap<PaneId, PaneRowBadgeMouseStates>>,
+    /// Hover states of the rows of a Herdr workspace's panes, keyed by Herdr's pane id.
+    herdr_pane_row_states: RefCell<HashMap<HerdrPaneId, HerdrPaneRowStates>>,
     /// Hover states for the clickable GitHub PR chips on a Summary-mode tab card,
     /// keyed by the card's representative pane id. A card can show multiple branch
     /// lines (one per repo/branch), so each entry holds one handle per branch line.
@@ -744,6 +758,7 @@ impl Default for VerticalTabsPanelState {
             pane_row_mouse_states: RefCell::default(),
             pane_title_mouse_states: RefCell::default(),
             pane_badge_mouse_states: RefCell::default(),
+            herdr_pane_row_states: RefCell::default(),
             summary_pr_badge_mouse_states: RefCell::default(),
             detail_pane_badge_mouse_states: RefCell::default(),
             detail_scroll_state: ClippedScrollStateHandle::default(),
@@ -775,6 +790,14 @@ impl Default for VerticalTabsPanelState {
 }
 
 impl VerticalTabsPanelState {
+    fn herdr_pane_row_states(&self, pane: &HerdrPaneId) -> HerdrPaneRowStates {
+        self.herdr_pane_row_states
+            .borrow_mut()
+            .entry(pane.clone())
+            .or_default()
+            .clone()
+    }
+
     /// Returns a lightweight handle bundle for workspace-level visibility reconciliation while the
     /// detail sidecar is active.
     pub(super) fn detail_hover_state(&self, window_id: WindowId) -> VerticalTabsDetailHoverState {
@@ -860,6 +883,8 @@ struct PaneProps<'a> {
     /// The pin icon is hidden when a tab is hovered.
     container_is_hovered: bool,
     shortcut_hint_binding_name: Option<&'static str>,
+    /// The Herdr pane this row stands for; `None` for a row of a Warp pane or of a whole tab.
+    herdr_pane: Option<HerdrPaneRowProps>,
 }
 
 struct PaneRowState {
@@ -1015,6 +1040,83 @@ fn herdr_compact_subtitle(
             .map(|working_directory| (working_directory, false)),
         VerticalTabsCompactSubtitle::Command => None,
     }
+}
+
+/// The Herdr pane a row of a Herdr workspace stands for in Panes view.
+struct HerdrPaneRowProps {
+    herdr_tab: HerdrTabId,
+    pane: HerdrPaneId,
+    details: HerdrRowDetails,
+    agent_line: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct HerdrPaneRowStates {
+    mouse_state: MouseStateHandle,
+    badge_mouse_states: PaneRowBadgeMouseStates,
+}
+
+/// What a row says about the agent Herdr recognizes in a pane: its name, what it is and its
+/// state.
+fn herdr_agent_line(agent: &PresentedAgent) -> String {
+    let name = agent.name.as_deref();
+    let kind = agent.kind.as_deref().filter(|kind| Some(*kind) != name);
+    [name, kind, Some(agent.state.as_str())]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The one line a compact row shows under a Herdr pane's title: its agent when it has one, else
+/// what a workspace's compact row shows.
+fn herdr_pane_compact_subtitle(
+    row: &HerdrRowDetails,
+    agent_line: Option<&str>,
+    setting: VerticalTabsCompactSubtitle,
+) -> Option<(String, bool)> {
+    match agent_line {
+        Some(line) => Some((line.to_owned(), false)),
+        None => herdr_compact_subtitle(row, setting),
+    }
+}
+
+fn herdr_workspace_pane_rows(
+    workspace_pane: &HerdrWorkspacePane,
+    app: &AppContext,
+) -> Vec<HerdrPaneRow> {
+    workspace_pane
+        .workspace_view(app)
+        .as_ref(app)
+        .pane_rows(app)
+}
+
+/// The rows a Herdr workspace's pane has in Panes view, one per pane of its shown Herdr tab.
+/// Empty when the pane is not a Herdr workspace, the view groups by tab, or the shown Herdr tab
+/// has no panes yet; the pane then has the one row of its own.
+fn herdr_pane_rows(
+    pane_group: &PaneGroup,
+    pane_id: PaneId,
+    granularity: VerticalTabsDisplayGranularity,
+    app: &AppContext,
+) -> Vec<HerdrPaneRow> {
+    if !matches!(granularity, VerticalTabsDisplayGranularity::Panes) {
+        return Vec::new();
+    }
+    pane_group
+        .downcast_pane_by_id::<HerdrWorkspacePane>(pane_id)
+        .map(|workspace_pane| herdr_workspace_pane_rows(workspace_pane, app))
+        .unwrap_or_default()
+}
+
+fn herdr_details_search_fragments(details: HerdrRowDetails) -> Vec<String> {
+    let mut fragments: Vec<String> = details.working_directory.into_iter().collect();
+    if let Some(entry) = details.branch_entry {
+        fragments.push(entry.branch_name);
+        fragments.extend(entry.pull_request_label);
+        fragments.extend(entry.diff_stats.as_ref().map(vtab_diff_stats_text));
+    }
+    fragments
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2304,6 +2406,23 @@ fn render_tab_group_internal(
         } else {
             GROUP_ITEM_SPACING
         };
+        let rows_to_render: Vec<(PaneId, MouseStateHandle, Option<HerdrPaneRow>)> =
+            row_mouse_states
+                .iter()
+                .flat_map(|(pane_id, mouse_state)| {
+                    let herdr_rows =
+                        herdr_pane_rows(pane_group, *pane_id, display_granularity, app);
+                    if herdr_rows.is_empty() {
+                        vec![(*pane_id, mouse_state.clone(), None)]
+                    } else {
+                        herdr_rows
+                            .into_iter()
+                            .map(|row| (*pane_id, mouse_state.clone(), Some(row)))
+                            .collect()
+                    }
+                })
+                .collect();
+        let shows_herdr_pane_rows = rows_to_render.iter().any(|(_, _, row)| row.is_some());
         let build_rows = || {
             let mut rows = Flex::column()
                 .with_main_axis_size(MainAxisSize::Min)
@@ -2378,8 +2497,10 @@ fn render_tab_group_internal(
                 ));
                 return rows.finish();
             }
-            let total_rows = row_mouse_states.len();
-            for (row_idx, (pane_id, row_mouse_state)) in row_mouse_states.iter().enumerate() {
+            let total_rows = rows_to_render.len();
+            for (row_idx, (pane_id, row_mouse_state, herdr_row)) in
+                rows_to_render.iter().enumerate()
+            {
                 let pane_color = per_pane_colors
                     .as_ref()
                     .and_then(|map| map.get(pane_id).copied())
@@ -2427,6 +2548,12 @@ fn render_tab_group_internal(
                 ) else {
                     continue;
                 };
+                if let Some(herdr_row) = herdr_row {
+                    pane_props.stand_for_herdr_pane(
+                        herdr_row,
+                        state.herdr_pane_row_states(&herdr_row.pane),
+                    );
+                }
                 if stack_panes_flush {
                     pane_props.stack_position = PaneRowStackPosition::Flush {
                         is_first: row_idx == 0,
@@ -2443,11 +2570,12 @@ fn render_tab_group_internal(
             rows.finish()
         };
 
-        let show_header = should_show_tab_group_header(
-            has_custom_title,
-            is_being_renamed,
-            visible_pane_ids.len(),
-        );
+        let show_header = shows_herdr_pane_rows
+            || should_show_tab_group_header(
+                has_custom_title,
+                is_being_renamed,
+                visible_pane_ids.len(),
+            );
         let group_content = if uses_outer_group_container {
             let mut group = Flex::column()
                 .with_main_axis_size(MainAxisSize::Min)
@@ -3652,16 +3780,18 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         theme,
     );
 
-    let herdr_row = match &props.typed {
-        TypedPane::HerdrWorkspace(workspace_pane) => Some(herdr_row_details(workspace_pane, app)),
-        _ => None,
-    };
+    let herdr_row = props.herdr_details(app);
+    let herdr_agent_line = props
+        .herdr_pane
+        .as_ref()
+        .and_then(|pane| pane.agent_line.clone());
 
     // Top-align the icon when there are multiple lines of content so it sits next to
     // the first line; center it for single-line rows (Settings, Notebook with no subtitle, etc.).
     let icon_alignment = if matches!(props.typed, TypedPane::Terminal(_))
         || !effective_subtitle.is_empty()
         || herdr_row.as_ref().is_some_and(HerdrRowDetails::is_present)
+        || herdr_agent_line.is_some()
     {
         CrossAxisAlignment::Start
     } else {
@@ -3735,6 +3865,15 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
                     .with_color(theme.sub_text_color(theme.background()).into())
                     .finish(),
             );
+        }
+
+        if let Some(line) = &herdr_agent_line {
+            content_col.add_child(render_text_line(
+                line,
+                theme.sub_text_color(theme.background()),
+                ClipConfig::ellipsis(),
+                appearance,
+            ));
         }
 
         if let Some(row) = &herdr_row {
@@ -4153,6 +4292,7 @@ impl<'a> PaneProps<'a> {
             is_pinned,
             container_is_hovered,
             shortcut_hint_binding_name,
+            herdr_pane: None,
         })
     }
 
@@ -4167,6 +4307,48 @@ impl<'a> PaneProps<'a> {
             .as_deref()
             .or(self.display_title_override.as_deref())
             .unwrap_or(self.title.as_str())
+    }
+
+    /// Makes this row, built for the Herdr workspace's own pane, stand for `pane` of that
+    /// workspace. A Herdr pane has no name of its own to rename here, and no menu.
+    fn stand_for_herdr_pane(&mut self, pane: &HerdrPaneRow, states: HerdrPaneRowStates) {
+        let home_dir = dirs::home_dir();
+        self.title = pane.title.clone();
+        self.subtitle.clear();
+        self.custom_vertical_tabs_title = None;
+        self.display_title_override = None;
+        self.is_focused = pane.is_selected;
+        self.mouse_state = states.mouse_state;
+        self.title_mouse_state = None;
+        self.badge_mouse_states = states.badge_mouse_states;
+        self.renamable_tab_index = None;
+        self.pane_context_menu_tab_index = None;
+        self.is_tab_being_renamed = false;
+        self.rename_editor = None;
+        self.is_pane_being_renamed = false;
+        self.pane_rename_editor = None;
+        self.herdr_pane = Some(HerdrPaneRowProps {
+            herdr_tab: pane.herdr_tab.clone(),
+            pane: pane.pane.clone(),
+            details: herdr_row_details_from(
+                pane.directory.as_deref(),
+                pane.git.clone(),
+                home_dir.as_deref().and_then(Path::to_str),
+            ),
+            agent_line: pane.agent.as_ref().map(herdr_agent_line),
+        });
+    }
+
+    /// What a Herdr row shows beyond its title: the pane's own details for a Herdr pane, the
+    /// selected pane's for the row of a whole Herdr workspace; `None` for any other row.
+    fn herdr_details(&self, app: &AppContext) -> Option<HerdrRowDetails> {
+        match (&self.herdr_pane, &self.typed) {
+            (Some(pane), _) => Some(pane.details.clone()),
+            (None, TypedPane::HerdrWorkspace(workspace_pane)) => {
+                Some(herdr_row_details(workspace_pane, app))
+            }
+            _ => None,
+        }
     }
 
     fn generated_or_tab_title(&self) -> &str {
@@ -4206,12 +4388,24 @@ impl<'a> PaneProps<'a> {
                     self.generated_or_tab_title(),
                     &self.subtitle,
                 );
-                let row = herdr_row_details(workspace_pane, app);
-                fragments.extend(row.working_directory);
-                if let Some(entry) = row.branch_entry {
-                    fragments.push(entry.branch_name);
-                    fragments.extend(entry.pull_request_label);
-                    fragments.extend(entry.diff_stats.as_ref().map(vtab_diff_stats_text));
+                fragments.extend(herdr_details_search_fragments(herdr_row_details(
+                    workspace_pane,
+                    app,
+                )));
+                if matches!(
+                    self.display_granularity,
+                    VerticalTabsDisplayGranularity::Panes
+                ) {
+                    let home_dir = dirs::home_dir();
+                    for row in herdr_workspace_pane_rows(workspace_pane, app) {
+                        fragments.push(row.title.clone());
+                        fragments.extend(herdr_details_search_fragments(herdr_row_details_from(
+                            row.directory.as_deref(),
+                            row.git,
+                            home_dir.as_deref().and_then(Path::to_str),
+                        )));
+                        fragments.extend(row.agent.as_ref().map(herdr_agent_line));
+                    }
                 }
                 fragments
             }
@@ -7688,12 +7882,17 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
                 appearance,
                 app,
             );
-            let herdr_subtitle = match &props.typed {
-                TypedPane::HerdrWorkspace(workspace_pane) => herdr_compact_subtitle(
+            let herdr_subtitle = match (&props.herdr_pane, &props.typed) {
+                (Some(pane), _) => herdr_pane_compact_subtitle(
+                    &pane.details,
+                    pane.agent_line.as_deref(),
+                    compact_subtitle,
+                ),
+                (None, TypedPane::HerdrWorkspace(workspace_pane)) => herdr_compact_subtitle(
                     &herdr_row_details(workspace_pane, app),
                     compact_subtitle,
                 ),
-                _ => None,
+                (None, _) => None,
             };
             let subtitle = match herdr_subtitle {
                 Some((text, true)) => Some(render_git_branch_text(
