@@ -12,6 +12,7 @@ use crate::tab::NewSessionMenuItem;
 use crate::tab_configs::NewWorktreeModalEvent;
 use crate::test_util::assert_eventually;
 use crate::workspace::WorkspaceAction;
+use crate::workspace::view::NewSessionSidecarSelection;
 use crate::workspace::view::tests::{initialize_app, mock_workspace};
 
 fn fake_with(status: HerdrStatus) -> FakeHerdr {
@@ -792,6 +793,45 @@ fn a_refused_worktree_creation_shows_an_error_and_adds_nothing() {
             tab_titles(&app, &workspace),
             ["notes", "lib", "app", "app-feature"]
         );
+    });
+}
+
+#[test]
+fn the_new_worktree_menu_lists_the_sessions_repositories_and_creates_through_herdr() {
+    let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
+    let temp = tempfile::tempdir().unwrap();
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let (script, app_root, lib_root) = repository_script(temp.path());
+        let session = fake.start_session("default", script);
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace).len() == 4,
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+
+        let listed = workspace.read(&app, |workspace, ctx| workspace.worktree_sidecar_repos(ctx));
+        assert_eq!(
+            listed,
+            [lib_root, app_root.clone(), temp.path().join("notes")]
+        );
+
+        let selection = NewSessionSidecarSelection::OpenWorktreeRepo {
+            repo_path: app_root.to_string_lossy().into_owned(),
+        };
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.execute_new_session_sidecar_selection(selection, ctx);
+        });
+
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace).len() == 5,
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let methods = session.served_methods();
+        assert!(methods.contains(&"worktree.create".to_owned()));
+        assert!(!methods.contains(&"workspace.create".to_owned()));
     });
 }
 

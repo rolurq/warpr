@@ -38,8 +38,8 @@ pub struct NewWorktree {
     pub repo: PathBuf,
     /// The branch the worktree checks out, created when it does not exist.
     pub branch: String,
-    /// The ref a new branch starts from.
-    pub base: String,
+    /// The ref a new branch starts from; Herdr chooses when `None`.
+    pub base: Option<String>,
     /// Where the worktree is checked out; Herdr chooses when `None`.
     pub path: Option<PathBuf>,
     /// The new workspace's label; Herdr chooses when `None`.
@@ -55,9 +55,11 @@ pub fn create_worktree(
     let mut params = json!({
         "cwd": worktree.repo,
         "branch": worktree.branch,
-        "base": worktree.base,
         "focus": true,
     });
+    if let Some(base) = &worktree.base {
+        params["base"] = json!(base);
+    }
     if let Some(path) = &worktree.path {
         params["path"] = json!(path);
     }

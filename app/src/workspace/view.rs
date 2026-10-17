@@ -10223,7 +10223,11 @@ impl Workspace {
     ) {
         match selection {
             NewSessionSidecarSelection::OpenWorktreeRepo { repo_path } => {
-                self.open_worktree_in_repo(repo_path, ctx);
+                if crate::herdr::presents_herdr_workspaces(ctx) {
+                    self.create_herdr_worktree(&repo_path, None, None, ctx);
+                } else {
+                    self.open_worktree_in_repo(repo_path, ctx);
+                }
             }
         }
     }
@@ -10688,6 +10692,29 @@ impl Workspace {
         }
     }
 
+    /// The repos the new-worktree sidecar offers: in a window presenting a Herdr session, the
+    /// session's repositories followed by those the user added; otherwise the registered
+    /// primary checkouts.
+    fn worktree_sidecar_repos(&self, ctx: &AppContext) -> Vec<PathBuf> {
+        let registered = PersistedWorkspace::as_ref(ctx)
+            .workspaces()
+            .map(|workspace| workspace.path.clone());
+        match self.herdr_new_worktree_repositories(ctx) {
+            Some(herdr) => {
+                let mut repos = herdr.roots;
+                for path in registered {
+                    if !repos.contains(&path) {
+                        repos.push(path);
+                    }
+                }
+                repos
+            }
+            None => registered
+                .filter(|path| Self::should_include_worktree_sidecar_repo(path, ctx))
+                .collect(),
+        }
+    }
+
     fn build_worktree_sidecar_items(
         &self,
         ctx: &AppContext,
@@ -10736,22 +10763,20 @@ impl Workspace {
         let home = dirs::home_dir().map(|p| p.display().to_string());
         let mut items = vec![search_item];
         items.extend(
-            PersistedWorkspace::as_ref(ctx)
-                .workspaces()
-                .filter(|ws| ws.path.exists())
-                .filter(|ws| Self::should_include_worktree_sidecar_repo(&ws.path, ctx))
-                .filter(|ws| {
+            self.worktree_sidecar_repos(ctx)
+                .into_iter()
+                .filter(|path| path.exists())
+                .filter(|path| {
                     if query.is_empty() {
                         true
                     } else {
-                        ws.path
-                            .to_string_lossy()
+                        path.to_string_lossy()
                             .to_lowercase()
                             .contains(query.as_str())
                     }
                 })
-                .map(|ws| {
-                    let path_str = ws.path.to_string_lossy().into_owned();
+                .map(|path| {
+                    let path_str = path.to_string_lossy().into_owned();
                     let display = user_friendly_path(&path_str, home.as_deref()).into_owned();
                     MenuItemFields::new(display)
                         .with_on_select_action(NewSessionSidecarSelection::OpenWorktreeRepo {
@@ -11254,7 +11279,12 @@ impl Workspace {
                 worktree_branch_name,
             } => {
                 if crate::herdr::presents_herdr_workspaces(ctx) {
-                    self.create_herdr_worktree(repo, branch, worktree_branch_name.as_deref(), ctx);
+                    self.create_herdr_worktree(
+                        repo,
+                        Some(branch),
+                        worktree_branch_name.as_deref(),
+                        ctx,
+                    );
                 } else {
                     self.handle_new_worktree_submit(
                         repo,

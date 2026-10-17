@@ -906,7 +906,7 @@ fn a_worktree_created_through_the_client_is_presented_nested_by_the_live_session
     let request = crate::NewWorktree {
         repo: "/src/app".into(),
         branch: "feature".to_owned(),
-        base: "main".to_owned(),
+        base: Some("main".to_owned()),
         path: None,
         label: None,
     };

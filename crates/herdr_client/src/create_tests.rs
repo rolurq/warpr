@@ -87,7 +87,7 @@ fn worktree_request(repo: &str) -> NewWorktree {
     NewWorktree {
         repo: PathBuf::from(repo),
         branch: "feature".to_owned(),
-        base: "main".to_owned(),
+        base: Some("main".to_owned()),
         path: None,
         label: None,
     }

@@ -68,7 +68,7 @@ impl Workspace {
         FeatureFlag::GroupedTabs.is_enabled() && !crate::herdr::presents_herdr_workspaces(app)
     }
 
-    fn presents_herdr_workspaces(ctx: &ViewContext<Self>) -> bool {
+    fn presents_herdr_workspaces(ctx: &AppContext) -> bool {
         crate::herdr::presents_herdr_workspaces(ctx)
     }
 
@@ -175,7 +175,7 @@ impl Workspace {
     /// `None` in windows that do not present a Herdr session.
     pub(super) fn herdr_new_worktree_repositories(
         &self,
-        ctx: &ViewContext<Self>,
+        ctx: &AppContext,
     ) -> Option<HerdrRepositories> {
         if !Self::presents_herdr_workspaces(ctx) {
             return None;
@@ -194,13 +194,14 @@ impl Workspace {
     }
 
     /// Asks Herdr to create a linked worktree of the repository at `repo`, on a new branch from
-    /// `base`. The branch is named `branch_name`, or generated when `None`. Nothing is added
+    /// `base`, or from Herdr's default when `None`. The branch is named `branch_name`, or
+    /// generated when `None`. Nothing is added
     /// here: the worktree workspace appears nested under its repository's, and focused, when the
     /// session presents it. A refused request is shown to the user.
     pub(super) fn create_herdr_worktree(
         &mut self,
         repo: &str,
-        base: &str,
+        base: Option<&str>,
         branch_name: Option<&str>,
         ctx: &mut ViewContext<Self>,
     ) {
@@ -222,7 +223,7 @@ impl Workspace {
         let worktree = NewWorktree {
             repo: PathBuf::from(repo),
             branch,
-            base: base.to_owned(),
+            base: base.map(str::to_owned),
             path: None,
             label: None,
         };
@@ -376,10 +377,7 @@ impl Workspace {
     }
 
     /// The tabs that show Herdr contents, in tab order, with what each shows.
-    fn herdr_tab_contents(
-        &self,
-        ctx: &ViewContext<Self>,
-    ) -> Vec<(EntityId, HerdrWorkspaceContents)> {
+    fn herdr_tab_contents(&self, ctx: &AppContext) -> Vec<(EntityId, HerdrWorkspaceContents)> {
         self.tabs
             .iter()
             .filter_map(|tab| {
@@ -396,7 +394,7 @@ impl Workspace {
     }
 
     /// The tabs that stand for Herdr workspaces, in tab order, with the workspace each stands for.
-    fn herdr_workspace_tabs(&self, ctx: &ViewContext<Self>) -> Vec<(EntityId, WorkspaceId)> {
+    fn herdr_workspace_tabs(&self, ctx: &AppContext) -> Vec<(EntityId, WorkspaceId)> {
         self.herdr_tab_contents(ctx)
             .into_iter()
             .filter_map(|(pane_group_id, contents)| match contents {
