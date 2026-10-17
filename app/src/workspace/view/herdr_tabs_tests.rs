@@ -1425,7 +1425,6 @@ mod pane_rows {
     #[test]
     fn selecting_a_pane_row_selects_that_pane_of_its_workspace_without_asking_herdr_to_move_focus()
     {
-        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
         App::test((), |mut app| async move {
             let fake = fake_with(HerdrStatus::compatible());
             let session = fake.start_session("default", two_workspaces());
@@ -1455,7 +1454,6 @@ mod pane_rows {
 
     #[test]
     fn selecting_a_pane_row_of_another_workspace_shows_that_workspace() {
-        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
         App::test((), |mut app| async move {
             let fake = fake_with(HerdrStatus::compatible());
             let session = fake.start_session("default", two_workspaces());
@@ -1472,7 +1470,6 @@ mod pane_rows {
 
     #[test]
     fn selecting_a_pane_row_closes_the_agent_panel_that_covered_the_workspaces() {
-        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
         App::test((), |mut app| async move {
             let fake = fake_with(HerdrStatus::compatible());
             let _session = fake.start_session("default", two_workspaces());
@@ -1562,7 +1559,6 @@ mod vertical_tabs_rows {
     #[test]
     fn panes_view_lists_the_panes_of_each_workspaces_shown_herdr_tab_and_workspaces_view_does_not()
     {
-        let _flag = FeatureFlag::HerdrWorkspaceTabs.override_enabled(true);
         App::test((), |mut app| async move {
             let fake = fake_with(HerdrStatus::compatible());
             let _session = fake.start_session("default", two_workspaces());

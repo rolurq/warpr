@@ -129,7 +129,10 @@ impl HerdrWorkspaceView {
         if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
             ctx.add_singleton_model(HerdrPaneContentsRegistry::new);
         }
-
+        ctx.subscribe_to_model(
+            &HerdrPaneContentsRegistry::handle(ctx),
+            |_, _, HerdrPaneContentsRegistryEvent::PaneChanged, ctx| ctx.notify(),
+        );
         ctx.subscribe_to_model(&PaneSettings::handle(ctx), |_, _, event, ctx| {
             if matches!(
                 event,
