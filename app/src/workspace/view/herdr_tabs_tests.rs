@@ -13,9 +13,7 @@ use crate::tab_configs::NewWorktreeModalEvent;
 use crate::test_util::assert_eventually;
 use crate::workspace::WorkspaceAction;
 use crate::workspace::view::NewSessionSidecarSelection;
-use crate::workspace::view::tests::{
-    initialize_app_without_herdr as initialize_app, mock_workspace,
-};
+use crate::workspace::view::tests::{initialize_app_without_herdr, mock_workspace};
 
 fn fake_with(status: HerdrStatus) -> FakeHerdr {
     let mut fake = FakeHerdr::new();
@@ -103,7 +101,7 @@ fn active_tab_title(app: &App, workspace: &ViewHandle<Workspace>) -> String {
 #[test]
 fn each_herdr_workspace_becomes_a_top_level_tab_with_its_label() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let _session = fake.start_session(
             "default",
@@ -126,7 +124,7 @@ fn each_herdr_workspace_becomes_a_top_level_tab_with_its_label() {
 #[test]
 fn the_workspace_herdr_has_focused_is_the_selected_tab() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let _session = fake.start_session(
             "default",
@@ -151,7 +149,7 @@ fn the_workspace_herdr_has_focused_is_the_selected_tab() {
 #[test]
 fn a_window_opened_after_connecting_presents_the_workspaces_immediately() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let _session = fake.start_session(
             "default",
@@ -178,7 +176,7 @@ fn a_window_opened_after_connecting_presents_the_workspaces_immediately() {
 #[test]
 fn an_unreachable_session_leaves_the_windows_tabs_alone() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::server_not_running());
         connect_to(&mut app, &fake, "stopped");
         assert_eventually!(
@@ -195,7 +193,7 @@ fn an_unreachable_session_leaves_the_windows_tabs_alone() {
 #[test]
 fn an_incompatible_herdr_replaces_the_windows_tabs_with_the_reason_and_shows_no_workspaces() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible().server_protocol(21));
         let _session = fake.start_session("default", SessionScript::new().workspace("api"));
         connect_to(&mut app, &fake, "default");
@@ -218,7 +216,7 @@ fn an_incompatible_herdr_replaces_the_windows_tabs_with_the_reason_and_shows_no_
 #[test]
 fn a_missing_herdr_executable_replaces_the_windows_tabs_with_the_reason() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = FakeHerdr::new();
         let missing = HerdrCli::new(fake.config_dir().join("not-installed").join("herdr"));
         connect_with(&mut app, missing, &fake, "default");
@@ -237,7 +235,7 @@ fn a_missing_herdr_executable_replaces_the_windows_tabs_with_the_reason() {
 #[test]
 fn a_workspace_created_in_herdr_gets_a_tab_at_its_position_without_moving_the_selection() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to(&mut app, &fake, "default");
@@ -265,7 +263,7 @@ fn a_workspace_created_in_herdr_gets_a_tab_at_its_position_without_moving_the_se
 #[test]
 fn a_workspace_closed_in_herdr_closes_only_its_tab() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web", "docs"]));
         connect_to(&mut app, &fake, "default");
@@ -292,7 +290,7 @@ fn a_workspace_closed_in_herdr_closes_only_its_tab() {
 #[test]
 fn a_workspace_closed_in_the_middle_keeps_the_tabs_of_the_others() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web", "docs"]));
         connect_to(&mut app, &fake, "default");
@@ -323,7 +321,7 @@ fn a_workspace_closed_in_the_middle_keeps_the_tabs_of_the_others() {
 #[test]
 fn closing_the_selected_workspace_selects_the_one_herdr_has_focused() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web", "docs"]));
         connect_to(&mut app, &fake, "default");
@@ -348,7 +346,7 @@ fn closing_the_selected_workspace_selects_the_one_herdr_has_focused() {
 #[test]
 fn a_workspace_renamed_in_herdr_retitles_its_tab_in_place() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to(&mut app, &fake, "default");
@@ -373,7 +371,7 @@ fn a_workspace_renamed_in_herdr_retitles_its_tab_in_place() {
 #[test]
 fn changes_whose_events_were_lost_are_presented_after_the_resync() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to(&mut app, &fake, "default");
@@ -396,7 +394,7 @@ fn changes_whose_events_were_lost_are_presented_after_the_resync() {
 #[test]
 fn a_lost_connection_is_shown_and_the_tabs_follow_herdr_once_it_returns() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to_with_quick_retries(&mut app, &fake, "default");
@@ -428,7 +426,7 @@ fn a_lost_connection_is_shown_and_the_tabs_follow_herdr_once_it_returns() {
 #[test]
 fn a_server_restarted_as_an_incompatible_release_is_refused_until_it_is_compatible_again() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let mut fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to_with_quick_retries(&mut app, &fake, "default");
@@ -486,7 +484,7 @@ fn toggle_agent_panel(app: &mut App, workspace: &ViewHandle<Workspace>) {
 fn the_agent_panel_opens_without_warps_hosted_agent_and_selecting_an_agent_goes_to_its_workspace() {
     let _flags = agent_panel_flags();
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session(
             "default",
@@ -541,7 +539,7 @@ fn dispatch(app: &mut App, workspace: &ViewHandle<Workspace>, action: WorkspaceA
 #[test]
 fn the_new_tab_action_creates_a_herdr_workspace_that_takes_focus_through_herdrs_state() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to(&mut app, &fake, "default");
@@ -576,7 +574,7 @@ fn the_new_tab_action_creates_a_herdr_workspace_that_takes_focus_through_herdrs_
 #[test]
 fn a_refused_workspace_creation_shows_an_error_and_adds_no_tab() {
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to(&mut app, &fake, "default");
@@ -635,7 +633,7 @@ fn picked_repos(app: &App, workspace: &ViewHandle<Workspace>) -> (Vec<String>, O
 fn the_new_worktree_modal_lists_each_repository_of_the_session_and_preselects_the_shown_one() {
     let temp = tempfile::tempdir().unwrap();
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let (script, app_root, lib_root) = repository_script(temp.path());
         let _session = fake.start_session("default", script);
@@ -686,7 +684,7 @@ fn submit_worktree(app: &mut App, workspace: &ViewHandle<Workspace>, repo: &Path
 fn confirming_a_new_worktree_creates_it_in_herdr_and_presents_it_through_herdrs_state() {
     let temp = tempfile::tempdir().unwrap();
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let (script, app_root, _) = repository_script(temp.path());
         let session = fake.start_session("default", script);
@@ -718,7 +716,7 @@ fn confirming_a_new_worktree_creates_it_in_herdr_and_presents_it_through_herdrs_
 fn a_refused_worktree_creation_shows_an_error_and_adds_nothing() {
     let temp = tempfile::tempdir().unwrap();
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let (script, app_root, _) = repository_script(temp.path());
         let session = fake.start_session("default", script);
@@ -744,7 +742,7 @@ fn a_refused_worktree_creation_shows_an_error_and_adds_nothing() {
 fn the_new_worktree_menu_lists_the_sessions_repositories_and_creates_through_herdr() {
     let temp = tempfile::tempdir().unwrap();
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let (script, app_root, lib_root) = repository_script(temp.path());
         let session = fake.start_session("default", script);
@@ -786,7 +784,7 @@ fn adding_a_tab_with_a_shell_creates_a_herdr_workspace_instead_of_a_local_tab() 
     use crate::terminal::shell::ShellType;
 
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api"]));
         connect_to(&mut app, &fake, "default");
@@ -854,7 +852,7 @@ fn worktree_script() -> SessionScript {
 fn each_workspace_is_a_group_with_its_linked_worktrees_nested_after_it() {
     let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let _session = fake.start_session("default", worktree_script());
         connect_to(&mut app, &fake, "default");
@@ -877,7 +875,7 @@ fn each_workspace_is_a_group_with_its_linked_worktrees_nested_after_it() {
 fn a_worktree_workspace_whose_main_checkout_closes_leads_its_own_group() {
     let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", worktree_script());
         connect_to(&mut app, &fake, "default");
@@ -904,11 +902,11 @@ fn a_worktree_workspace_whose_main_checkout_closes_leads_its_own_group() {
 }
 
 #[test]
-fn the_user_cannot_create_groups_in_a_herdr_window() {
+fn the_user_cannot_create_groups_while_user_groups_are_disabled() {
     let _groups = FeatureFlag::GroupedTabs.override_enabled(true);
     let _no_user_groups = FeatureFlag::DisableUserTabGroups.override_enabled(true);
     App::test((), |mut app| async move {
-        initialize_app(&mut app);
+        initialize_app_without_herdr(&mut app);
         let fake = fake_with(HerdrStatus::compatible());
         let session = fake.start_session("default", workspaces(&["api", "web"]));
         connect_to(&mut app, &fake, "default");
@@ -997,7 +995,7 @@ mod tools_panel_scope {
     #[test]
     fn the_tools_panel_follows_the_focused_pane_across_workspaces_and_snapshots() {
         App::test((), |mut app| async move {
-            initialize_app(&mut app);
+            initialize_app_without_herdr(&mut app);
             let temp_dir = tempfile::TempDir::new().expect("temp dir");
             let api = directory_named(temp_dir.path(), "api");
             let api_src = directory_named(temp_dir.path(), "api-src");
@@ -1028,7 +1026,7 @@ mod tools_panel_scope {
     #[test]
     fn a_directory_inside_a_git_repository_scopes_the_tools_panel_to_that_repository() {
         App::test((), |mut app| async move {
-            initialize_app(&mut app);
+            initialize_app_without_herdr(&mut app);
             let temp_dir = tempfile::TempDir::new().expect("temp dir");
             let repo = directory_named(temp_dir.path(), "repo");
             git_init(&repo);
@@ -1056,7 +1054,7 @@ mod tools_panel_scope {
         use crate::code_review::diff_state::DiffState;
 
         App::test((), |mut app| async move {
-            initialize_app(&mut app);
+            initialize_app_without_herdr(&mut app);
             app.add_singleton_model(|_| crate::code_review::GlobalCodeReviewModel);
             app.add_singleton_model(crate::code::global_buffer_model::GlobalBufferModel::new);
             app.add_singleton_model(|_| crate::terminal::local_shell::LocalShellState::NotLoaded);
@@ -1121,7 +1119,7 @@ mod tools_panel_scope {
     #[test]
     fn a_herdr_workspace_has_a_tools_panel_to_open() {
         App::test((), |mut app| async move {
-            initialize_app(&mut app);
+            initialize_app_without_herdr(&mut app);
             let fake = fake_with(HerdrStatus::compatible());
             let _session = fake.start_session("default", workspaces(&["api"]));
             connect_to(&mut app, &fake, "default");
@@ -1179,7 +1177,7 @@ mod tab_bar {
         app: &mut App,
         fake: &FakeHerdr,
     ) -> ViewHandle<Workspace> {
-        initialize_app(app);
+        initialize_app_without_herdr(app);
         connect_to(app, fake, "default");
         let workspace = mock_workspace(app);
         assert_eventually!(

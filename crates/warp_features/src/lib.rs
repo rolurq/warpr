@@ -1030,8 +1030,8 @@ pub enum FeatureFlag {
     /// app updates or changelogs.
     DisableWarpUpdates,
 
-    /// warpr kill switch: when enabled, the user cannot create, edit or rearrange tab groups.
-    /// warpr's tabs are Herdr's workspaces, whose groupings Herdr owns.
+    /// warpr kill switch: when enabled, the user cannot create tab groups or move tabs into or
+    /// out of them. warpr's tabs are Herdr's workspaces, whose groupings Herdr owns.
     DisableUserTabGroups,
 
     /// warpr kill switch: when enabled, warpr does not offer to start local shell sessions, which

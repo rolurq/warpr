@@ -60,21 +60,6 @@ use crate::workspace::{
     PaneViewLocator, TabBarDropTargetData, TabBarLocation, TabContextMenuAnchor, WorkspaceAction,
 };
 
-/// Label of the menu item and binding that closes every tab but the one acted on.
-pub(crate) fn close_other_tabs_label() -> &'static str {
-    "Close other workspaces"
-}
-
-/// Label of the menu item that closes the tabs after the one acted on, which lie below it in
-/// vertical tabs and to its right otherwise.
-pub(crate) fn close_tabs_after_label(vertical: bool) -> &'static str {
-    if vertical {
-        "Close Workspaces Below"
-    } else {
-        "Close Workspaces to the Right"
-    }
-}
-
 pub const TAB_BAR_BORDER_HEIGHT: f32 = 1.0;
 pub(crate) const TAB_INDICATOR_HEIGHT: f32 = 14.0;
 const TAB_SHORTCUT_HINT_REVEAL_DELAY: Duration = Duration::from_millis(750);
@@ -801,7 +786,7 @@ impl TabData {
         }
         if tabs_len > 1 {
             menu_items.push(
-                MenuItemFields::new(close_other_tabs_label())
+                MenuItemFields::new("Close other workspaces")
                     .with_on_select_action(WorkspaceAction::CloseOtherTabs(index))
                     .into_item(),
             );
@@ -809,9 +794,13 @@ impl TabData {
         let not_last_tab = index != tabs_len - 1;
         if not_last_tab {
             menu_items.push(
-                MenuItemFields::new(close_tabs_after_label(uses_vertical_tabs))
-                    .with_on_select_action(WorkspaceAction::CloseTabsRight(index))
-                    .into_item(),
+                MenuItemFields::new(if uses_vertical_tabs {
+                    "Close Workspaces Below"
+                } else {
+                    "Close Workspaces to the Right"
+                })
+                .with_on_select_action(WorkspaceAction::CloseTabsRight(index))
+                .into_item(),
             );
         }
         menu_items

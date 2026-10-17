@@ -1,6 +1,6 @@
 # warpr is Herdr-only: no window distinguishes Herdr from Warp
 
-warpr is exclusively a Herdr client. No code asks whether a window is Herdr-backed, because every window is: the top-level tabs are Herdr workspaces, the agent panel is Herdr's, new tabs and worktrees are created through Herdr, and every user-facing string says "workspace". The window-level predicate (`presents_herdr_workspaces`), the per-window wording switch (`herdr::wording`), the `HerdrWorkspaceTabs` flag and its Cargo feature are gone, and the Herdr session model is registered unconditionally at startup. Where warpr once kept Warp's own tab, agent and worktree behavior alive for windows without Herdr, that behavior is not reachable any more.
+warpr is exclusively a Herdr client. No code asks whether a window is Herdr-backed, because every window is: the top-level tabs are Herdr workspaces, the agent panel is Herdr's, new tabs and worktrees are created through Herdr, and the strings that used to switch between "tab" and "workspace" say "workspace". The window-level predicate (`presents_herdr_workspaces`), the per-window wording switch (`herdr::wording`), the `HerdrWorkspaceTabs` flag and its Cargo feature are gone, and the Herdr session model is registered unconditionally at startup. Where warpr once kept Warp's own tab, agent and worktree behavior alive for windows without Herdr, that behavior is not reachable any more.
 
 The one non-Herdr state is the refusal from ADR-0001's compatibility check (#9): a missing or incompatible Herdr is shown as a refusal in place of the workspaces. That is a connection state of the Herdr model, not a mode of the window. The app still starts when no Herdr session is reachable, as it did before; the window then shows the refusal or the connection notice.
 
@@ -8,10 +8,10 @@ The one non-Herdr state is the refusal from ADR-0001's compatibility check (#9):
 
 ADR-0001 keeps upstream features warpr does not use behind turned-off flags so the rolling fork keeps merging `warpdotdev/warp`. That rule is about upstream code. Branching on "is this window Herdr-backed" was warpr's own code, and it goes. The rule when the two meet:
 
-- **warpr's own branches and strings are deleted.** Dual-mode wording, predicates, test-only models and tests that pinned only the non-Herdr side are removed, not kept as dead alternatives.
+- **warpr's own branches and strings are deleted.** Dual-mode wording, predicates and tests that pinned only the non-Herdr side are removed, not kept as dead alternatives.
 - **In upstream code the minimal edit that makes Herdr behavior unconditional wins.** Replace the branch by its Herdr side in place; do not remove the upstream module, setting, action or flag around it.
 - **Consequences the compiler flags are removed with it.** A match arm that the unconditional Herdr arm now shadows, and a private helper left without a caller, are deleted. Anything still reachable from elsewhere, including upstream actions and public items, stays.
-- **What Herdr does not support stays off through a kill-switch flag, as ADR-0001 says.** Where the non-Herdr branch carried behavior warpr must keep hidden, it is expressed as a turned-off upstream behavior: `DisableUserTabGroups` (the user cannot create or rearrange groups; Herdr owns the groupings and the order) and `DisableLocalSessions` (the command palette does not offer to start local shell sessions). Both are on in every warpr build.
+- **What Herdr does not support stays off through a kill-switch flag, as ADR-0001 says.** Where the non-Herdr branch carried behavior warpr must keep hidden, it is expressed as a turned-off upstream behavior: `DisableUserTabGroups` (the user cannot create tab groups or move tabs into or out of them; Herdr owns the groupings and the order) and `DisableLocalSessions` (the command palette does not offer to start local shell sessions). Both are on in every warpr build. Turning one off does not restore Warp's behavior, because the code that only the Herdr branches bypassed is gone where nothing reaches it any more (see Consequences).
 
 ## Whether warpr code may depend on upstream `ai` types
 

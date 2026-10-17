@@ -541,8 +541,9 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::CloudAgentShellRespawn,
     ]);
 
-    // warpr never uses Warp's hosted services; removing these lines (or the flag checks they
-    // drive) is how the upstream behaviour is restored.
+    // warpr never uses Warp's hosted services, and Herdr owns what the last two switches hide;
+    // removing these lines (or the flag checks they drive) restores the upstream behaviour
+    // where the upstream code is still there.
     flags.extend([
         FeatureFlag::DisableWarpAccount,
         FeatureFlag::DisableWarpDrive,

@@ -167,8 +167,7 @@ impl HerdrTabBarState {
 }
 
 impl Workspace {
-    /// Whether the user may create and rearrange tab groups. warpr presents Herdr's own
-    /// groupings and Herdr owns the order, so the user may not.
+    /// Whether the user may create and rearrange tab groups.
     pub(crate) fn user_tab_groups_enabled() -> bool {
         FeatureFlag::GroupedTabs.is_enabled() && !FeatureFlag::DisableUserTabGroups.is_enabled()
     }

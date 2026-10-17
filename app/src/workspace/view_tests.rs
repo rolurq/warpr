@@ -5,8 +5,6 @@ use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use ai::project_context::model::ProjectContextModel;
 use pane_group::{NotebookPane, PaneState, SplitPaneState, TerminalPaneId};
 #[cfg(feature = "local_fs")]
-use repo_metadata::CanonicalizedPath;
-#[cfg(feature = "local_fs")]
 use repo_metadata::RepoMetadataModel;
 use repo_metadata::repositories::DetectedRepositories;
 use repo_metadata::watcher::DirectoryWatcher;
@@ -104,8 +102,7 @@ pub(crate) fn initialize_app_with_team_client(app: &mut App, team_client: Arc<dy
     app.add_singleton_model(|_| HerdrSessionModel::never_connected());
 }
 
-/// Initializes everything a workspace needs except the Herdr session, for tests that connect to
-/// a Herdr session of their own.
+/// Initializes everything a workspace needs except the Herdr session model.
 pub(crate) fn initialize_app_without_herdr(app: &mut App) {
     initialize_models(app, Arc::new(MockTeamClient::new()));
 }

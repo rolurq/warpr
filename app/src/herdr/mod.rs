@@ -93,8 +93,7 @@ impl HerdrSessionModel {
         model
     }
 
-    /// A model whose session never connects, for tests that need the model to exist without
-    /// exercising Herdr.
+    /// A model presenting a session that never connects.
     #[cfg(test)]
     pub(crate) fn never_connected() -> Self {
         Self {

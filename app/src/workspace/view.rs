@@ -9659,6 +9659,19 @@ impl Workspace {
         }
         self.current_workspace_state.is_agent_management_view_open = is_open;
         self.report_shown_herdr_workspace(ctx);
+        if !FeatureFlag::DisableHostedAgent.is_enabled() {
+            let window_id = self.window_id;
+            let view_id = self.agent_management_view.id();
+            let team_context_resolver =
+                UserWorkspaces::team_context_resolver(self.agent_management_view.downgrade());
+            AgentConversationsModel::handle(ctx).update(ctx, move |model, ctx| {
+                if is_open {
+                    model.register_view_open(window_id, view_id, team_context_resolver, ctx);
+                } else {
+                    model.register_view_closed(window_id, view_id, ctx);
+                }
+            });
+        }
 
         // Notify panels about the agent management view state change so they can
         // update their top border visibility accordingly.
@@ -24177,7 +24190,7 @@ impl TypedActionView for Workspace {
                 let cwd = herdr_repos.preselected.clone();
                 self.new_worktree_modal.view.update(ctx, |modal, ctx| {
                     modal.body().update(ctx, |body, ctx| {
-                        body.on_open(cwd, Some(herdr_repos.roots), ctx);
+                        body.on_open(cwd, herdr_repos.roots, ctx);
                     });
                 });
                 self.new_worktree_modal.open();

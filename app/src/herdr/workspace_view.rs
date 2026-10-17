@@ -266,9 +266,6 @@ impl HerdrWorkspaceView {
     }
 
     fn show_panes(&mut self, panes: Vec<PaneId>, ctx: &mut ViewContext<Self>) {
-        if !ctx.has_singleton_model::<HerdrPaneContentsRegistry>() {
-            return;
-        }
         let view_id = ctx.view_id();
         HerdrPaneContentsRegistry::handle(ctx).update(ctx, |registry, ctx| {
             registry.set_shown(view_id, panes, ctx);
@@ -503,10 +500,7 @@ impl HerdrWorkspaceView {
         app: &AppContext,
     ) -> Box<dyn Element> {
         let theme = appearance.theme();
-        let contents = app
-            .has_singleton_model::<HerdrPaneContentsRegistry>()
-            .then(|| HerdrPaneContentsRegistry::as_ref(app).contents(&pane.id))
-            .flatten();
+        let contents = HerdrPaneContentsRegistry::as_ref(app).contents(&pane.id);
         let ownership = contents
             .as_ref()
             .and_then(|contents| contents.as_ref(app).ownership().cloned());
