@@ -506,6 +506,7 @@ define_settings_group!(TabSettings, settings: [
         private: false,
         toml_path: "appearance.vertical_tabs.enabled",
         description: "Whether to display tabs vertically instead of horizontally.",
+        feature_flag: warp_core::features::FeatureFlag::TabLayoutChoice,
     },
     show_vertical_tab_panel_in_restored_windows: ShowVerticalTabPanelInRestoredWindows {
         type: bool,
