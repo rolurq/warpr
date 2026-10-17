@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::*;
-use crate::FakeHerdr;
+use crate::{FakeHerdr, PaneTree, SplitDirection, TabScript};
 
 struct Client {
     stream: UnixStream,
@@ -308,4 +308,142 @@ fn a_rejected_creation_changes_nothing_and_announces_nothing() {
         json!({}),
         "nothing was announced before the probe"
     );
+}
+
+fn pane_ids(client: &mut Client) -> Vec<String> {
+    client.send("p", "pane.list", json!({}));
+    let response = client.read().expect("a pane list");
+    response["result"]["panes"]
+        .as_array()
+        .expect("panes")
+        .iter()
+        .map(|pane| pane["pane_id"].as_str().expect("pane_id").to_owned())
+        .collect()
+}
+
+fn session_with_two_tabs(fake: &FakeHerdr) -> FakeSession {
+    fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [
+                TabScript::new(
+                    "one",
+                    PaneTree::split(
+                        SplitDirection::Right,
+                        0.5,
+                        PaneTree::pane(),
+                        PaneTree::pane(),
+                    ),
+                ),
+                TabScript::new("two", PaneTree::pane()),
+            ],
+        ),
+    )
+}
+
+#[test]
+fn closing_a_pane_announces_pane_closed_and_the_others_keep_their_ids_and_the_freed_space() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe("w", json!([{ "type": "pane.closed" }]));
+    let mut client = Client::connect(&session);
+
+    client.send("c", "pane.close", json!({ "pane_id": "w1:p1" }));
+    let response = client.read().expect("a response");
+
+    assert_eq!(response["result"], json!({ "type": "ok" }));
+    let event = watcher.read().expect("an event");
+    assert_eq!(event["event"], "pane_closed");
+    assert_eq!(
+        event["data"],
+        json!({ "type": "pane_closed", "pane_id": "w1:p1", "workspace_id": "w1" })
+    );
+    assert_eq!(pane_ids(&mut client), ["w1:p2", "w1:p3"]);
+    client.send("s", "session.snapshot", json!({}));
+    let snapshot = client.read().expect("a snapshot");
+    let layout = &snapshot["result"]["snapshot"]["layouts"][0];
+    assert_eq!(layout["panes"][0]["pane_id"], "w1:p2");
+    assert_eq!(layout["panes"][0]["rect"], layout["area"]);
+    assert_eq!(layout["panes"][0]["focused"], true);
+}
+
+#[test]
+fn closing_the_only_pane_of_a_herdr_tab_closes_the_tab_and_of_a_workspace_the_workspace() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut client = Client::connect(&session);
+
+    client.send("c", "pane.close", json!({ "pane_id": "w1:p3" }));
+    client.read().expect("a response");
+    client.send("s", "session.snapshot", json!({}));
+    let snapshot = client.read().expect("a snapshot");
+    assert_eq!(
+        snapshot["result"]["snapshot"]["tabs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    client.send("c", "pane.close", json!({ "pane_id": "w1:p1" }));
+    client.read().expect("a response");
+    client.send("c", "pane.close", json!({ "pane_id": "w1:p2" }));
+    client.read().expect("a response");
+    assert_eq!(client.snapshot_labels(), Vec::<String>::new());
+}
+
+#[test]
+fn a_pane_that_does_not_exist_or_a_rejected_close_changes_nothing_and_announces_nothing() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe("w", json!([{ "type": "pane.closed" }]));
+    let mut client = Client::connect(&session);
+
+    client.send("c", "pane.close", json!({ "pane_id": "w9:p1" }));
+    let missing = client.read().expect("a response");
+    session.reject_next_close("pane_busy", "try again later");
+    client.send("c", "pane.close", json!({ "pane_id": "w1:p1" }));
+    let rejected = client.read().expect("a response");
+
+    assert_eq!(missing["error"]["code"], "pane_not_found");
+    assert_eq!(missing["error"]["message"], "pane w9:p1 not found");
+    assert_eq!(rejected["error"]["code"], "pane_busy");
+    assert_eq!(pane_ids(&mut client), ["w1:p1", "w1:p2", "w1:p3"]);
+    assert_eq!(session.emit_event("pane_closed", json!({})), 1);
+    assert_eq!(
+        watcher.read().expect("the probe event")["data"],
+        json!({}),
+        "nothing was announced before the probe"
+    );
+}
+
+#[test]
+fn a_scripted_pane_name_is_reported_as_the_panes_label() {
+    let fake = FakeHerdr::new();
+    let session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new(
+                "one",
+                PaneTree::split(
+                    SplitDirection::Right,
+                    0.5,
+                    PaneTree::pane(),
+                    PaneTree::pane(),
+                ),
+            )
+            .pane_label(1, "build")],
+        ),
+    );
+    let mut client = Client::connect(&session);
+
+    client.send("p", "pane.list", json!({}));
+    let panes = client.read().expect("a pane list")["result"]["panes"].clone();
+
+    assert_eq!(panes[0].get("label"), None);
+    assert_eq!(panes[1]["label"], "build");
 }

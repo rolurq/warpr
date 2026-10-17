@@ -15,7 +15,9 @@ use warpui::{App, ViewHandle};
 
 use super::*;
 use crate::app_state::HerdrWorkspaceSnapshot;
+use crate::pane_group::pane::view::header::PANE_HEADER_HEIGHT;
 use crate::test_util::assert_eventually;
+use crate::test_util::settings::initialize_settings_for_tests;
 
 fn split_layout() -> PaneTree {
     PaneTree::split(
@@ -63,6 +65,7 @@ fn api_session(fake: &FakeHerdr) -> FakeSession {
 
 /// Opens a view of the fake session's workspace `w1` once the session has been presented.
 fn open_workspace_view(app: &mut App, fake: &FakeHerdr) -> ViewHandle<HerdrWorkspaceView> {
+    initialize_settings_for_tests(app);
     app.add_singleton_model(|_| Appearance::mock());
     let target = SessionTarget::new(&fake.config_dir(), SessionName::default_session());
     app.update(|ctx| {
@@ -82,10 +85,17 @@ fn open_workspace_view(app: &mut App, fake: &FakeHerdr) -> ViewHandle<HerdrWorks
     view
 }
 
-fn rendered_text(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> String {
+/// Everything the view shows, pane header titles included.
+fn rendered_text_with_headers(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> String {
     view.read(app, |view, ctx| {
         view.render(ctx).debug_text_content().unwrap_or_default()
     })
+}
+
+/// What the view shows besides the pane headers' titles. Every pane of the fake sessions reports
+/// the working directory `/` unless a test says otherwise, so its header reads `/`.
+fn rendered_text(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> String {
+    rendered_text_with_headers(app, view).replace("/\n", "")
 }
 
 fn select(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>, tab_id: &str) {
@@ -707,5 +717,136 @@ fn the_view_reports_a_directory_change_that_a_later_herdr_snapshot_brings() {
         session.emit_event("pane_updated", serde_json::json!({}));
 
         assert_eventually!(600 => changes.get() == 1, "{} changes reported", changes.get());
+    });
+}
+
+fn close_pane(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>, pane: &str) {
+    app.update(|ctx| {
+        view.update(ctx, |view, ctx| {
+            view.handle_action(
+                &HerdrWorkspaceViewAction::ClosePane(PaneId::from(pane)),
+                ctx,
+            );
+        });
+    });
+}
+
+fn close_requests(session: &FakeSession) -> usize {
+    session
+        .served_methods()
+        .iter()
+        .filter(|method| method.as_str() == "pane.close")
+        .count()
+}
+
+#[test]
+fn closing_a_pane_goes_through_herdr_and_the_pane_leaves_the_view_with_the_others_kept() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        assert!(rendered_text(&app, &view).contains("w1:p3"));
+
+        close_pane(&mut app, &view, "w1:p3");
+
+        assert_eventually!(
+            600 => !rendered_text(&app, &view).contains("w1:p3"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        let text = rendered_text(&app, &view);
+        assert!(text.contains("w1:p2") && text.contains("w1:p4"), "{text:?}");
+        assert_eq!(close_requests(&session), 1);
+    });
+}
+
+#[test]
+fn a_close_herdr_rejects_shows_the_error_and_leaves_the_panes_alone() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        session.reject_next_close("pane_busy", "try again later");
+
+        close_pane(&mut app, &view, "w1:p3");
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("Could not close the pane:"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        let text = rendered_text(&app, &view);
+        assert!(text.contains("try again later"), "{text:?}");
+        for pane in ["w1:p2", "w1:p3", "w1:p4"] {
+            assert!(text.contains(pane), "{pane} is gone from {text:?}");
+        }
+    });
+}
+
+/// The size of the window the test platform opens and the scale factor it reports.
+const TEST_WINDOW_WIDTH: f32 = 1024.;
+const TEST_WINDOW_HEIGHT: f32 = 768.;
+const TEST_SCALE_FACTOR: f32 = 2.;
+
+#[test]
+fn the_header_and_borders_come_out_of_the_frame_so_the_grid_fills_what_is_left_of_it() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = api_session(&fake);
+        let _view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        assert_eventually!(
+            600 => fake.control_input("w1:p1").len() == 1,
+            "the pane was never given a size"
+        );
+
+        let resize = &fake.control_input("w1:p1")[0];
+        let number = |field: &str| resize[field].as_f64().expect(field) as f32;
+        let (cols, rows) = (number("cols"), number("rows"));
+        let cell_width = number("cell_width_px") / TEST_SCALE_FACTOR;
+        let cell_height = number("cell_height_px") / TEST_SCALE_FACTOR;
+        let width = TEST_WINDOW_WIDTH - 2. * PANE_BORDER_WIDTH;
+        let height = TEST_WINDOW_HEIGHT - PANE_HEADER_HEIGHT - 2. * PANE_BORDER_WIDTH;
+        assert!(
+            cols * cell_width <= width && width < (cols + 1.) * cell_width,
+            "{cols} columns of {cell_width}px in {width}px"
+        );
+        assert!(
+            rows * cell_height <= height && height < (rows + 1.) * cell_height,
+            "{rows} rows of {cell_height}px in {height}px"
+        );
+    });
+}
+
+#[test]
+fn each_pane_header_shows_the_name_herdr_gives_the_pane_else_the_folder_of_its_directory() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = fake.start_session(
+            "default",
+            SessionScript::new().workspace_with_tabs(
+                "api",
+                [TabScript::new("t", split_layout())
+                    .cwd(0, "/srv/api")
+                    .cwd(1, "/srv/web")
+                    .pane_label(1, "build")
+                    .without_cwd(2)],
+            ),
+        );
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        assert_eventually!(
+            600 => rendered_text_with_headers(&app, &view).contains("build"),
+            "rendered text was {:?}", rendered_text_with_headers(&app, &view)
+        );
+        let words: Vec<_> = rendered_text_with_headers(&app, &view)
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        assert!(words.contains(&"api".to_owned()), "{words:?}");
+        assert!(!words.contains(&"web".to_owned()), "{words:?}");
     });
 }

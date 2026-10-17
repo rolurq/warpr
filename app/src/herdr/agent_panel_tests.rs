@@ -11,6 +11,7 @@ use super::*;
 use crate::app_state::{HerdrWorkspaceContents, HerdrWorkspaceSnapshot};
 use crate::herdr::HerdrWorkspaceView;
 use crate::test_util::assert_eventually;
+use crate::test_util::settings::initialize_settings_for_tests;
 
 fn two_panes() -> PaneTree {
     PaneTree::split(
@@ -184,6 +185,7 @@ fn an_agent_that_appears_or_goes_away_is_listed_or_dropped() {
 }
 
 fn open_workspace_view(app: &mut App) -> ViewHandle<HerdrWorkspaceView> {
+    initialize_settings_for_tests(app);
     let (_, view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
         HerdrWorkspaceView::new(
             HerdrWorkspaceContents::Workspace(HerdrWorkspaceSnapshot {
@@ -196,10 +198,13 @@ fn open_workspace_view(app: &mut App) -> ViewHandle<HerdrWorkspaceView> {
     view
 }
 
+/// What the view shows besides the pane headers' titles; every pane here is in the working
+/// directory `/`, so its header reads `/`.
 fn workspace_text(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> String {
     view.read(app, |view, ctx| {
         view.render(ctx).debug_text_content().unwrap_or_default()
     })
+    .replace("/\n", "")
 }
 
 #[test]

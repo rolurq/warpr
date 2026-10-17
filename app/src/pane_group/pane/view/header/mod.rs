@@ -580,17 +580,6 @@ impl<P: BackingView> PaneHeader<P> {
     }
 
     fn render_standard_header(&self, header: StandardHeader, app: &AppContext) -> Box<dyn Element> {
-        let StandardHeader {
-            title,
-            title_secondary,
-            title_style,
-            title_clip_config,
-            title_max_width,
-            left_of_title,
-            right_of_title,
-            left_of_overflow,
-            options,
-        } = header;
         let appearance = Appearance::as_ref(app);
         let header_icon_color = appearance
             .theme()
@@ -618,130 +607,31 @@ impl<P: BackingView> PaneHeader<P> {
         );
         let should_display_overflow_menu_button = !self.overflow_menu.as_ref(app).is_empty();
 
-        (Hoverable::new(
+        components::render_standard_header_row(
+            header,
+            appearance,
             self.mouse_state_handles.header_hover_handle.clone(),
-            |hover_state| {
+            self.render_toolbelt_buttons(app),
+            self.pane_configuration.as_ref(app).header_left_inset,
+            |is_hovered, left_of_overflow, options| {
                 // Determine if icons should be shown based on hover state and options.
-                let should_show_on_header = hover_state.is_hovered()
+                let should_show_on_header = is_hovered
                     || self.open_overlay != OpenOverlay::None
                     || options.has_open_menu
                     || self.has_shareable_shared_session(app)
                     || options.always_show_icons;
 
-                let (right_justified_row, min_right_width) = self.render_right_justified_row(
+                self.render_right_justified_row(
                     should_show_on_header,
                     should_display_overflow_menu_button,
                     close_button,
                     overflow_menu_button,
                     left_of_overflow,
-                    &options,
+                    options,
                     app,
-                );
-
-                // Build the center row with title and optional customization elements.
-                let mut center_row = Flex::row()
-                    .with_main_axis_alignment(MainAxisAlignment::Center)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_main_axis_size(MainAxisSize::Max);
-
-                if let Some(left_element) = left_of_title {
-                    center_row
-                        .add_child(Container::new(left_element).with_margin_right(4.).finish());
-                }
-
-                let font_size = appearance.ui_font_size();
-                let font_color = appearance
-                    .theme()
-                    .sub_text_color(appearance.theme().background());
-
-                // Build title row with primary title and optional secondary title.
-                let mut title_row = Flex::row();
-                let title_text =
-                    Text::new_inline(title.clone(), appearance.ui_font_family(), font_size)
-                        .with_color(font_color.into())
-                        .with_style(title_style.unwrap_or_default())
-                        .with_clip(title_clip_config)
-                        .finish();
-                title_row.add_child(Shrinkable::new(1., title_text).finish());
-
-                if let Some(secondary) = &title_secondary
-                    && !secondary.is_empty()
-                {
-                    let secondary_text =
-                        Text::new_inline(secondary.clone(), appearance.ui_font_family(), font_size)
-                            .with_color(font_color.into())
-                            .finish();
-                    title_row.add_child(secondary_text);
-                }
-
-                // If a max width is set, constrain the title to that width.
-                let title_element = if let Some(max_width) = title_max_width {
-                    Shrinkable::new(
-                        1.,
-                        ConstrainedBox::new(title_row.finish())
-                            .with_max_width(max_width)
-                            .finish(),
-                    )
-                    .finish()
-                } else {
-                    Shrinkable::new(1., title_row.finish()).finish()
-                };
-                center_row.add_child(title_element);
-
-                if let Some(right_element) = right_of_title {
-                    center_row
-                        .add_child(Container::new(right_element).with_margin_left(4.).finish());
-                }
-
-                // Build the left column with toolbelt buttons.
-                let mut left_justified_row = Flex::row()
-                    .with_main_axis_alignment(MainAxisAlignment::Start)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_main_axis_size(MainAxisSize::Min);
-
-                left_justified_row.add_child(self.render_toolbelt_buttons(app));
-
-                let header_left_inset = self.pane_configuration.as_ref(app).header_left_inset;
-                let left_justified_container = Container::new(left_justified_row.finish())
-                    .with_padding_left(4. + header_left_inset);
-                let right_justified_container =
-                    Container::new(right_justified_row.finish()).with_padding_right(4.);
-
-                let edge_width = options.control_container_width();
-                let left_constrained = ConstrainedBox::new(left_justified_container.finish())
-                    .with_min_width(min_right_width)
-                    .with_max_width(edge_width)
-                    .finish();
-                let right_constrained = ConstrainedBox::new(right_justified_container.finish())
-                    .with_min_width(min_right_width)
-                    .with_max_width(edge_width)
-                    .finish();
-
-                // Build the complete 3-column layout.
-                let mut row = Flex::row()
-                    .with_main_axis_size(MainAxisSize::Max)
-                    .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-
-                row.add_child(left_constrained);
-                // Wrap center_row in Align to vertically center within the stretched space.
-                row.add_child(
-                    Shrinkable::new(1., Align::new(center_row.finish()).finish()).finish(),
-                );
-                row.add_child(right_constrained);
-
-                Container::new(
-                    Clipped::new(
-                        ConstrainedBox::new(row.finish())
-                            .with_height(PANE_HEADER_HEIGHT)
-                            .finish(),
-                    )
-                    .finish(),
                 )
-                .finish()
             },
         )
-        .finish()) as _
     }
 }
 

@@ -8,6 +8,7 @@ mod desktop;
 mod directory_git;
 mod live;
 mod notifications;
+mod pane_chrome;
 mod pane_contents;
 mod pane_frames;
 mod pane_grid;

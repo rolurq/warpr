@@ -1,6 +1,5 @@
 use warp_core::ui::icons::ICON_DIMENSIONS;
 use warp_core::ui::theme::Fill;
-use warpui::Element;
 use warpui::elements::{
     Align, Clipped, ConstrainedBox, Container, CrossAxisAlignment, Flex, Hoverable,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, SavePosition, Shrinkable,
@@ -8,9 +7,10 @@ use warpui::elements::{
 };
 use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::UiComponent;
+use warpui::{Action, Element};
 
-use super::super::header_content::HeaderRenderContext;
-use super::{ActionPayload, PaneHeaderAction};
+use super::super::header_content::{HeaderRenderContext, StandardHeader, StandardHeaderOptions};
+use super::{ActionPayload, PANE_HEADER_HEIGHT, PaneHeaderAction};
 use crate::appearance::Appearance;
 use crate::ui_components::buttons::{icon_button, icon_button_with_color};
 use crate::ui_components::icons::Icon;
@@ -43,6 +43,19 @@ fn apply_size_constraint(element: Box<dyn Element>, size: Option<f32>) -> Box<dy
     }
 }
 
+/// Renders the standard pane close button, dispatching `action` when it is clicked.
+pub fn render_close_button<T: Action + Clone>(
+    appearance: &Appearance,
+    mouse_state: MouseStateHandle,
+    icon_color: Option<Fill>,
+    button_size: Option<f32>,
+    action: T,
+) -> Box<dyn Element> {
+    let button = build_icon_button(appearance, Icon::X, mouse_state, icon_color)
+        .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()));
+    apply_size_constraint(button.finish(), button_size)
+}
+
 /// Renders the standard pane close button to dispatch the close action.
 pub fn render_pane_close_button<A: ActionPayload, B: ActionPayload>(
     appearance: &Appearance,
@@ -50,9 +63,13 @@ pub fn render_pane_close_button<A: ActionPayload, B: ActionPayload>(
     icon_color: Option<Fill>,
     button_size: Option<f32>,
 ) -> Box<dyn Element> {
-    let button = build_icon_button(appearance, Icon::X, mouse_state, icon_color)
-        .on_click(|ctx, _, _| ctx.dispatch_typed_action(PaneHeaderAction::<A, B>::Close));
-    apply_size_constraint(button.finish(), button_size)
+    render_close_button(
+        appearance,
+        mouse_state,
+        icon_color,
+        button_size,
+        PaneHeaderAction::<A, B>::Close,
+    )
 }
 
 /// Renders the standard pane overflow menu button to dispatch the pane overflow menu action.
@@ -209,4 +226,132 @@ pub fn render_three_column_header(
     row.add_child(right_constrained);
 
     row.finish()
+}
+
+/// Lays out `header` as Warp's standard pane header: `[left] [title] [controls]`, with the edge
+/// columns sharing one width so the title stays centered.
+///
+/// `controls` builds the right-hand column from whether the pointer is over the header, the
+/// header's `left_of_overflow` element and its options, and returns it with the minimum width
+/// of the buttons that column always has room for.
+pub(crate) fn render_standard_header_row(
+    header: StandardHeader,
+    appearance: &Appearance,
+    hover_handle: MouseStateHandle,
+    left: Box<dyn Element>,
+    left_inset: f32,
+    controls: impl FnOnce(bool, Option<Box<dyn Element>>, &StandardHeaderOptions) -> (Flex, f32),
+) -> Box<dyn Element> {
+    let StandardHeader {
+        title,
+        title_secondary,
+        title_style,
+        title_clip_config,
+        title_max_width,
+        left_of_title,
+        right_of_title,
+        left_of_overflow,
+        options,
+    } = header;
+
+    Hoverable::new(hover_handle, |hover_state| {
+        let (right_justified_row, min_right_width) =
+            controls(hover_state.is_hovered(), left_of_overflow, &options);
+
+        // Build the center row with title and optional customization elements.
+        let mut center_row = Flex::row()
+            .with_main_axis_alignment(MainAxisAlignment::Center)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_main_axis_size(MainAxisSize::Max);
+
+        if let Some(left_element) = left_of_title {
+            center_row.add_child(Container::new(left_element).with_margin_right(4.).finish());
+        }
+
+        let font_size = appearance.ui_font_size();
+        let font_color = appearance
+            .theme()
+            .sub_text_color(appearance.theme().background());
+
+        // Build title row with primary title and optional secondary title.
+        let mut title_row = Flex::row();
+        let title_text = Text::new_inline(title, appearance.ui_font_family(), font_size)
+            .with_color(font_color.into())
+            .with_style(title_style.unwrap_or_default())
+            .with_clip(title_clip_config)
+            .finish();
+        title_row.add_child(Shrinkable::new(1., title_text).finish());
+
+        if let Some(secondary) = title_secondary
+            && !secondary.is_empty()
+        {
+            let secondary_text =
+                Text::new_inline(secondary, appearance.ui_font_family(), font_size)
+                    .with_color(font_color.into())
+                    .finish();
+            title_row.add_child(secondary_text);
+        }
+
+        // If a max width is set, constrain the title to that width.
+        let title_element = if let Some(max_width) = title_max_width {
+            Shrinkable::new(
+                1.,
+                ConstrainedBox::new(title_row.finish())
+                    .with_max_width(max_width)
+                    .finish(),
+            )
+            .finish()
+        } else {
+            Shrinkable::new(1., title_row.finish()).finish()
+        };
+        center_row.add_child(title_element);
+
+        if let Some(right_element) = right_of_title {
+            center_row.add_child(Container::new(right_element).with_margin_left(4.).finish());
+        }
+
+        // Build the left column.
+        let mut left_justified_row = Flex::row()
+            .with_main_axis_alignment(MainAxisAlignment::Start)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_main_axis_size(MainAxisSize::Min);
+        left_justified_row.add_child(left);
+
+        let left_justified_container =
+            Container::new(left_justified_row.finish()).with_padding_left(4. + left_inset);
+        let right_justified_container =
+            Container::new(right_justified_row.finish()).with_padding_right(4.);
+
+        let edge_width = options.control_container_width();
+        let left_constrained = ConstrainedBox::new(left_justified_container.finish())
+            .with_min_width(min_right_width)
+            .with_max_width(edge_width)
+            .finish();
+        let right_constrained = ConstrainedBox::new(right_justified_container.finish())
+            .with_min_width(min_right_width)
+            .with_max_width(edge_width)
+            .finish();
+
+        // Build the complete 3-column layout.
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+
+        row.add_child(left_constrained);
+        // Wrap center_row in Align to vertically center within the stretched space.
+        row.add_child(Shrinkable::new(1., Align::new(center_row.finish()).finish()).finish());
+        row.add_child(right_constrained);
+
+        Container::new(
+            Clipped::new(
+                ConstrainedBox::new(row.finish())
+                    .with_height(PANE_HEADER_HEIGHT)
+                    .finish(),
+            )
+            .finish(),
+        )
+        .finish()
+    })
+    .finish()
 }

@@ -382,3 +382,59 @@ fn a_pane_whose_cwd_herdr_does_not_report_presents_none() {
         ]
     );
 }
+
+fn pane_names(presented: &PresentedSession) -> Vec<(String, Option<String>)> {
+    presented.workspaces[0].herdr_tabs[0]
+        .layout
+        .as_ref()
+        .expect("tab has a layout")
+        .panes
+        .iter()
+        .map(|pane| (pane.id.as_str().to_owned(), pane.name.clone()))
+        .collect()
+}
+
+#[test]
+fn a_pane_presents_the_name_herdr_gives_it_and_none_when_it_has_no_name() {
+    let fake = compatible_fake();
+    let _session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout()).pane_label(1, "build")],
+        ),
+    );
+
+    let presented = present(&fake);
+
+    assert_eq!(
+        pane_names(&presented)[..2],
+        [
+            ("w1:p1".to_owned(), None),
+            ("w1:p2".to_owned(), Some("build".to_owned())),
+        ]
+    );
+}
+
+#[test]
+fn a_zoomed_pane_keeps_its_name() {
+    let fake = compatible_fake();
+    let _session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout())
+                .pane_label(1, "build")
+                .focused_pane(1)
+                .zoomed()],
+        ),
+    );
+
+    let presented = present(&fake);
+
+    let layout = presented.workspaces[0].herdr_tabs[0]
+        .layout
+        .as_ref()
+        .unwrap();
+    assert_eq!(layout.frames()[0].name.as_deref(), Some("build"));
+}
