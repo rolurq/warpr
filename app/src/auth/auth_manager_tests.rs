@@ -1,11 +1,12 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::anyhow;
 use warp_core::features::FeatureFlag;
 use warp_core::telemetry::testing::MockTelemetryContextProvider;
 use warpui::{App, SingletonEntity};
+use warpui_extras::secure_storage::{self, SecureStorage};
 
 use super::{AuthManager, AuthManagerEvent, request_device_code_with_timeout};
 use crate::ServerApiProvider;
@@ -151,14 +152,13 @@ fn validated_api_key_is_promoted_with_its_user() {
         auth_state.set_user(None);
         auth_state.set_credentials(None);
 
-        AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
+        AuthManager::handle(&app).update(&mut app, |auth_manager, _| {
             auth_manager.complete_authentication(
                 User::test(),
                 Credentials::ApiKey {
                     key: "wk-validated-key".to_owned(),
                     owner_type: None,
                 },
-                ctx,
             );
         });
 
@@ -282,21 +282,14 @@ fn test_log_out_clears_pending_auth_state() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
 
-        // `log_out` clears user+credentials and then calls `persist`, which
-        // routes to `PersistedUser::remove_from_secure_storage`. That requires
-        // a `SecureStorage` singleton, so register a no-op one for this test.
-        app.update(|ctx| {
-            warpui_extras::secure_storage::register_noop("warp_test", ctx);
-        });
-
-        AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
+        AuthManager::handle(&app).update(&mut app, |auth_manager, _| {
             let _pending = auth_manager.generate_auth_state();
             assert!(
                 auth_manager.pending_auth_state.is_some(),
                 "precondition: generate_auth_state should populate pending_auth_state"
             );
 
-            auth_manager.log_out(ctx);
+            auth_manager.log_out();
 
             assert!(
                 auth_manager.pending_auth_state.is_none(),
@@ -306,51 +299,57 @@ fn test_log_out_clears_pending_auth_state() {
     });
 }
 
-// These two tests verify that `persist` skips writing to secure storage under certain conditions.
-// They rely on the fact that no secure storage singleton is registered in the test app: if
-// `write_to_secure_storage` were ever called, it would panic trying to look up the unregistered
-// singleton, causing the test to fail.
-
-#[test]
-fn test_persist_skips_when_refresh_token_is_empty() {
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        // Override default test credentials with Firebase tokens that have an empty refresh token.
-        app.update(|ctx| {
-            let tokens = FirebaseAuthTokens {
-                id_token: String::new(),
-                refresh_token: String::new(),
-                expiration_time: chrono::Utc::now().fixed_offset() + chrono::Duration::days(365),
-            };
-            AuthStateProvider::as_ref(ctx)
-                .get()
-                .set_credentials(Some(Credentials::Firebase(tokens)));
-        });
-
-        AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
-            auth_manager.persist(ctx);
-        });
-    });
+struct RecordingSecureStorage {
+    accessed_keys: Arc<Mutex<Vec<String>>>,
 }
 
+impl RecordingSecureStorage {
+    fn record(&self, key: &str) {
+        self.accessed_keys.lock().unwrap().push(key.to_owned());
+    }
+}
+
+impl SecureStorage for RecordingSecureStorage {
+    fn write_value(&self, key: &str, _value: &str) -> Result<(), secure_storage::Error> {
+        self.record(key);
+        Ok(())
+    }
+
+    fn read_value(&self, key: &str) -> Result<String, secure_storage::Error> {
+        self.record(key);
+        Err(secure_storage::Error::NotFound)
+    }
+
+    fn remove_value(&self, key: &str) -> Result<(), secure_storage::Error> {
+        self.record(key);
+        Ok(())
+    }
+}
+
+/// On macOS a Keychain item's ACL pins the code-signing hash of the binary that wrote it, so any
+/// access from a rebuilt binary prompts the user. Signing in and out must not touch secure storage.
 #[test]
-fn test_persist_skips_when_api_key_authenticated() {
+fn test_auth_state_changes_do_not_access_secure_storage() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
-
-        app.update(|ctx| {
-            AuthStateProvider::as_ref(ctx)
-                .get()
-                .set_credentials(Some(Credentials::ApiKey {
-                    key: "wk-test-key".to_owned(),
-                    owner_type: None,
-                }));
-        });
+        let accessed_keys = Arc::new(Mutex::new(Vec::new()));
+        let storage = RecordingSecureStorage {
+            accessed_keys: accessed_keys.clone(),
+        };
+        app.add_singleton_model(move |_| -> secure_storage::Model { Box::new(storage) });
 
         AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
-            auth_manager.persist(ctx);
+            let tokens = FirebaseAuthTokens {
+                id_token: "id-token".to_owned(),
+                refresh_token: "refresh-token".to_owned(),
+                expiration_time: chrono::Utc::now().fixed_offset() + chrono::Duration::days(365),
+            };
+            auth_manager.complete_authentication(User::test(), Credentials::Firebase(tokens));
+            auth_manager.set_user_onboarded(ctx);
+            auth_manager.log_out();
         });
+
+        assert_eq!(*accessed_keys.lock().unwrap(), Vec::<String>::new());
     });
 }
 

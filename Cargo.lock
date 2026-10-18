@@ -16052,14 +16052,12 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.17",
  "uuid",
  "warp_core",
  "warp_errors",
  "warp_graphql",
  "warp_managed_secrets",
  "warpui_core",
- "warpui_extras",
 ]
 
 [[package]]

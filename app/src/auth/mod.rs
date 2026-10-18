@@ -283,9 +283,7 @@ pub fn log_out(app: &mut AppContext) {
     // TODO: Implement per-user scoping of sqlite3.
     persistence::remove(&global_resource_handles.model_event_sender);
 
-    AuthManager::handle(app).update(app, |auth_manager, ctx| {
-        auth_manager.log_out(ctx);
-    });
+    AuthManager::handle(app).update(app, |auth_manager, _| auth_manager.log_out());
     // Detach built-in Warp-hosted MCP servers; they authenticate with the
     // credentials that were just cleared.
     #[cfg(not(target_family = "wasm"))]
