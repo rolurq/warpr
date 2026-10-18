@@ -17,12 +17,11 @@ use warp_graphql::mutations::create_anonymous_user::{
     AnonymousUserType, CreateAnonymousUserResult,
 };
 use warp_server_auth::API_KEY_PREFIX;
-use warp_server_auth::user::persistence::PersistedUser;
 use warpui::r#async::Timer;
 use warpui::clipboard::ClipboardContent;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
-use super::auth_state::{AuthState, PersistAction};
+use super::auth_state::AuthState;
 use super::auth_view_modal::{AuthRedirectPayload, AuthViewVariant};
 use super::credentials::{Credentials, FirebaseToken, LoginToken};
 use super::user::User;
@@ -422,7 +421,7 @@ impl AuthManager {
                     llms,
                 } = user_output.into();
 
-                self.complete_authentication(user.clone(), credentials, ctx);
+                self.complete_authentication(user.clone(), credentials);
 
                 self.set_needs_reauth(false, ctx);
 
@@ -599,60 +598,22 @@ impl AuthManager {
         }
     }
 
-    /// Sets the user and credentials in auth state and persists to secure storage.
-    /// Persistence depends on the credential type - currently, we only persist
-    /// state if authenticated via a Firebase token.
-    fn complete_authentication(
-        &self,
-        user: User,
-        credentials: Credentials,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.set_and_persist(Some(user), Some(credentials), ctx);
-    }
-    fn set_and_persist(
-        &self,
-        user: Option<User>,
-        credentials: Option<Credentials>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.auth_state.set_user(user);
-        self.auth_state.set_credentials(credentials);
-        self.persist(ctx);
-    }
-
-    /// Persists (or removes) the current user and credentials to/from secure storage,
-    /// based on the current auth state.
-    fn persist(&self, ctx: &mut ModelContext<Self>) {
-        match self.auth_state.persist_action() {
-            PersistAction::Persist(persisted_user) => {
-                if persisted_user.auth_tokens.refresh_token.is_empty() {
-                    log::warn!("Skipping user persistence due to empty refresh token");
-                    return;
-                }
-                let _ = persisted_user.write_to_secure_storage(ctx).map_err(|err| {
-                    log::warn!("Unable to persist user to secure storage: {err:?}");
-                });
-            }
-            PersistAction::Remove => {
-                let _ = PersistedUser::remove_from_secure_storage(ctx).map_err(|err| {
-                    log::warn!("Unable to clear user from secure storage: {err:?}");
-                });
-            }
-            PersistAction::DoNothing => {}
-        }
+    fn complete_authentication(&self, user: User, credentials: Credentials) {
+        self.auth_state.set_user(Some(user));
+        self.auth_state.set_credentials(Some(credentials));
     }
 
     /// Helper function for logging out the user.
     /// NOTE: You probably want to call auth::log_out instead; this only manages the auth state,
     /// it doesn't shut down any other user-dependent parts of the app.
     /// TODO(jeff): Can we move those pieces in here?
-    pub(super) fn log_out(&mut self, ctx: &mut ModelContext<Self>) {
+    pub(super) fn log_out(&mut self) {
         // Clear any dangling CSRF token from an auth flow that was started but never
         // completed before this logout, so it can't be replayed against the next session
         // in the same process.
         self.pending_auth_state = None;
-        self.set_and_persist(None, None, ctx);
+        self.auth_state.set_user(None);
+        self.auth_state.set_credentials(None);
     }
 
     /// Sets whether or not this user's Firebase credentials are invalid and thus needs to reauth.
@@ -972,9 +933,6 @@ impl AuthManager {
     }
 
     /// Sets the user as onboarded both on the server and locally.
-    /// This method:
-    /// 1. Updates the server by calling set_user_is_onboarded
-    /// 2. Updates the local auth state and persists the user data
     pub fn set_user_onboarded(&self, ctx: &mut ModelContext<Self>) {
         // Update server
         let auth_client = self.auth_client.clone();
@@ -983,10 +941,7 @@ impl AuthManager {
             |_, _, _| {},
         );
 
-        // Update local auth state and persist
         self.auth_state.set_is_onboarded(true);
-
-        self.persist(ctx);
     }
 }
 
