@@ -1,4 +1,4 @@
-use herdr_client::{PaneLayout, PresentedPane};
+use herdr_client::{PaneLayout, PresentedAgent, PresentedPane};
 use warpui::Element;
 use warpui::elements::{
     CrossAxisAlignment, Empty, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
@@ -36,6 +36,17 @@ pub(super) fn pane_title(pane: &PresentedPane) -> String {
             .into_owned(),
         None => pane.id.as_str().to_owned(),
     }
+}
+
+/// What Herdr says is running in a pane: the name of the agent it detects there, else the kind
+/// of that agent, else the name given to the pane, else the title its program set. `None` when
+/// Herdr tells none of these.
+pub(super) fn pane_command(pane: &PresentedPane, agent: Option<&PresentedAgent>) -> Option<String> {
+    agent
+        .and_then(|agent| agent.name.as_ref().or(agent.kind.as_ref()))
+        .or(pane.name.as_ref())
+        .or(pane.title.as_ref())
+        .cloned()
 }
 
 /// Whether the panes of `layout` can be closed. Herdr closes a Herdr tab along with its last

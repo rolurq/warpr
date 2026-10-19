@@ -447,3 +447,22 @@ fn a_scripted_pane_name_is_reported_as_the_panes_label() {
     assert_eq!(panes[0].get("label"), None);
     assert_eq!(panes[1]["label"], "build");
 }
+
+#[test]
+fn a_scripted_terminal_title_is_reported_raw_and_stripped() {
+    let fake = FakeHerdr::new();
+    let session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("one", PaneTree::pane()).terminal_title(0, " nvim ")],
+        ),
+    );
+    let mut client = Client::connect(&session);
+
+    client.send("p", "pane.list", json!({}));
+    let panes = client.read().expect("a pane list")["result"]["panes"].clone();
+
+    assert_eq!(panes[0]["terminal_title"], " nvim ");
+    assert_eq!(panes[0]["terminal_title_stripped"], "nvim");
+}

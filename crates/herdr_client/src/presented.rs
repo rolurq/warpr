@@ -178,7 +178,13 @@ struct PaneInfo {
     /// What `herdr pane rename` sets; Herdr leaves it out of a pane that has no name.
     #[serde(default)]
     label: Option<String>,
+    /// The title the pane's program set, with control characters stripped.
+    #[serde(default)]
+    terminal_title_stripped: Option<String>,
 }
+
+/// The cwd, name and title of a pane, as `session.snapshot`'s pane list reports them.
+type PaneDetails = (Option<PathBuf>, Option<String>, Option<String>);
 
 #[derive(Deserialize)]
 struct WorkspaceInfo {
@@ -202,15 +208,20 @@ impl Snapshot {
             panes,
             ..
         } = self;
-        let mut details: HashMap<PaneId, (Option<PathBuf>, Option<String>)> = panes
+        let mut details: HashMap<PaneId, PaneDetails> = panes
             .into_iter()
-            .map(|pane| (pane.pane_id, (pane.cwd, pane.label)))
+            .map(|pane| {
+                let title = pane
+                    .terminal_title_stripped
+                    .filter(|title| !title.trim().is_empty());
+                (pane.pane_id, (pane.cwd, pane.label, title))
+            })
             .collect();
         for pane in layouts
             .iter_mut()
             .flat_map(|layout| &mut layout.layout.panes)
         {
-            (pane.cwd, pane.name) = details.remove(&pane.id).unwrap_or_default();
+            (pane.cwd, pane.name, pane.title) = details.remove(&pane.id).unwrap_or_default();
         }
         let mut tabs_by_workspace: HashMap<WorkspaceId, Vec<PresentedHerdrTab>> = HashMap::new();
         for tab in tabs {

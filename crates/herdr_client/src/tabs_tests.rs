@@ -438,3 +438,75 @@ fn a_zoomed_pane_keeps_its_name() {
         .unwrap();
     assert_eq!(layout.frames()[0].name.as_deref(), Some("build"));
 }
+
+fn pane_titles(presented: &PresentedSession) -> Vec<(String, Option<String>)> {
+    presented.workspaces[0].herdr_tabs[0]
+        .layout
+        .as_ref()
+        .expect("tab has a layout")
+        .panes
+        .iter()
+        .map(|pane| (pane.id.as_str().to_owned(), pane.title.clone()))
+        .collect()
+}
+
+#[test]
+fn a_pane_presents_the_title_its_program_sets_and_none_when_it_has_no_title() {
+    let fake = compatible_fake();
+    let _session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout()).terminal_title(1, "nvim main.rs")],
+        ),
+    );
+
+    let presented = present(&fake);
+
+    assert_eq!(
+        pane_titles(&presented)[..2],
+        [
+            ("w1:p1".to_owned(), None),
+            ("w1:p2".to_owned(), Some("nvim main.rs".to_owned())),
+        ]
+    );
+}
+
+#[test]
+fn a_blank_terminal_title_is_no_title() {
+    let fake = compatible_fake();
+    let _session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", PaneTree::pane()).terminal_title(0, "  ")],
+        ),
+    );
+
+    let presented = present(&fake);
+
+    assert_eq!(pane_titles(&presented), [("w1:p1".to_owned(), None)]);
+}
+
+#[test]
+fn a_zoomed_pane_keeps_its_title() {
+    let fake = compatible_fake();
+    let _session = fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [TabScript::new("t", split_layout())
+                .terminal_title(1, "htop")
+                .focused_pane(1)
+                .zoomed()],
+        ),
+    );
+
+    let presented = present(&fake);
+
+    let layout = presented.workspaces[0].herdr_tabs[0]
+        .layout
+        .as_ref()
+        .unwrap();
+    assert_eq!(layout.frames()[0].title.as_deref(), Some("htop"));
+}

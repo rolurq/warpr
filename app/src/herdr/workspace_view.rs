@@ -18,7 +18,7 @@ use warpui::{
 
 use super::directory_git::{DirectoryGitContext, HerdrDirectoryGit, HerdrDirectoryGitEvent};
 use super::pane_chrome::{
-    PANE_BORDER_WIDTH, PaneHeaderMouseStates, can_close_panes, dims_pane, pane_title,
+    PANE_BORDER_WIDTH, PaneHeaderMouseStates, can_close_panes, dims_pane, pane_command, pane_title,
     render_pane_header,
 };
 use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
@@ -63,6 +63,8 @@ pub struct HerdrSidebarDetails<'a> {
     pub directory: Option<&'a Path>,
     /// The git repository holding `directory`; `None` outside one.
     pub git: Option<DirectoryGitContext>,
+    /// What Herdr says is running in the selected pane.
+    pub command: Option<String>,
 }
 
 /// A pane of the Herdr tab a workspace's view shows, as the vertical tabs list it.
@@ -75,6 +77,8 @@ pub struct HerdrPaneRow {
     pub directory: Option<PathBuf>,
     /// The git repository holding `directory`; `None` outside one.
     pub git: Option<DirectoryGitContext>,
+    /// What Herdr says is running in the pane.
+    pub command: Option<String>,
     /// The agent Herdr recognizes in the pane.
     pub agent: Option<PresentedAgent>,
     pub is_selected: bool,
@@ -285,6 +289,12 @@ impl HerdrWorkspaceView {
     /// is always current; the view is notified whenever either changes. Reading it never talks
     /// to Herdr, and `foreground_cwd` is deliberately not consulted.
     pub fn focused_pane_directory<'a>(&self, app: &'a AppContext) -> Option<&'a Path> {
+        self.selected_pane(app)?.cwd.as_deref()
+    }
+
+    /// The pane the user has selected in the Herdr tab this view shows, under the rules of
+    /// [`Self::focused_pane_directory`].
+    fn selected_pane<'a>(&self, app: &'a AppContext) -> Option<&'a PresentedPane> {
         let layout = self
             .presented_workspace(app)?
             .selected_tab(self.selected_tab.as_ref())?
@@ -294,9 +304,7 @@ impl HerdrWorkspaceView {
             .panes
             .iter()
             .filter(|pane| !layout.zoomed || pane.id == layout.focused_pane)
-            .find(|pane| self.is_selected(pane))?
-            .cwd
-            .as_deref()
+            .find(|pane| self.is_selected(pane))
     }
 
     fn is_selected(&self, pane: &PresentedPane) -> bool {
@@ -307,12 +315,19 @@ impl HerdrWorkspaceView {
     }
 
     /// What the Warp sidebar shows for this workspace beyond its label: the selected pane's
-    /// directory and the git repository that directory is in.
+    /// directory, the git repository that directory is in, and its command.
     pub fn sidebar_details<'a>(&self, app: &'a AppContext) -> HerdrSidebarDetails<'a> {
         let directory = self.focused_pane_directory(app);
+        let command = self.selected_pane(app).and_then(|pane| {
+            pane_command(
+                pane,
+                HerdrSessionModel::as_ref(app).agents().agent(&pane.id),
+            )
+        });
         HerdrSidebarDetails {
             directory,
             git: directory.and_then(|directory| self.directory_git_context(directory, app)),
+            command,
         }
     }
 
@@ -348,6 +363,7 @@ impl HerdrWorkspaceView {
                     .cwd
                     .as_deref()
                     .and_then(|directory| self.directory_git_context(directory, app)),
+                command: pane_command(&pane, agents.agent(&pane.id)),
                 agent: agents.agent(&pane.id).cloned(),
                 is_selected: self.is_selected(&pane),
                 directory: pane.cwd,

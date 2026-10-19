@@ -2,22 +2,30 @@ use std::collections::{HashMap, HashSet};
 use std::iter::once;
 use std::path::{Path, PathBuf};
 
+use herdr_client::{HerdrCli, HerdrTabId, SessionName, SessionTarget, WorkspaceId};
+use herdr_fake::{FakeHerdr, FakeSession, PaneTree, SessionScript, SplitDirection, TabScript};
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
-use warpui::EntityId;
+use settings::Setting as _;
+use warp_core::features::FeatureFlag;
+use warp_core::ui::appearance::Appearance;
 use warpui::elements::PositionedElementOffsetBounds;
+use warpui::platform::WindowStyle;
+use warpui::{App, EntityId, SingletonEntity as _, TypedActionView as _, ViewHandle};
 
 use super::{
-    AgentTabTextPreference, HerdrRowDetails, SummaryPaneKind, SummaryPaneKindIcons,
-    TerminalAgentText, TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
-    VerticalTabsDetailTargetKind, VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData,
-    VerticalTabsSummaryPrimaryLabel, branch_label_display, coalesce_summary_branch_entries,
-    code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
+    AgentTabTextPreference, BranchLineBadges, HerdrRowDetails, HerdrRowTitle, SummaryPaneKind,
+    SummaryPaneKindIcons, TerminalAgentText, TerminalPrimaryLineData, TerminalPrimaryLineFont,
+    VerticalTabsDetailTarget, VerticalTabsDetailTargetKind, VerticalTabsPanelState,
+    VerticalTabsSummaryBranchEntry, VerticalTabsSummaryData, VerticalTabsSummaryPrimaryLabel,
+    branch_label_display, coalesce_summary_branch_entries, code_detail_kind_label,
+    compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, group_display_name, group_name_highlight_indices,
-    group_subtitle_text, herdr_agent_line, herdr_compact_subtitle, herdr_pane_compact_subtitle,
-    herdr_row_details_from, matched_group_ids, merge_group_name_matches,
-    non_terminal_search_text_fragments, pane_ids_for_display_granularity,
-    pane_search_text_fragments, preferred_agent_tab_titles, push_normalized_unique_summary_label,
+    group_subtitle_text, herdr_agent_line, herdr_compact_subtitle, herdr_details_below_title,
+    herdr_pane_compact_subtitle, herdr_row_details_from, herdr_row_title, herdr_shown_title,
+    matched_group_ids, merge_group_name_matches, non_terminal_search_text_fragments,
+    pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
+    push_normalized_unique_summary_label, render_settings_popup_menu, render_summary_branch_line,
     search_fragments_contain_query, select_summary_pane_kind_icons,
     should_keep_detail_sidecar_visible_for_mouse_position, should_show_tab_group_header,
     shows_synced_inputs_indicator, sort_summary_primary_labels_status_first,
@@ -27,15 +35,24 @@ use super::{
     visible_pane_ids_for_detail_target, vtab_diff_stats_text,
 };
 use crate::ai::agent::conversation::ConversationStatus;
+use crate::app_state::{HerdrWorkspaceContents, HerdrWorkspaceSnapshot};
 use crate::context_chips::display_chip::GitLineChanges;
-use crate::herdr::DirectoryGitContext;
+use crate::herdr::{
+    DirectoryGitContext, HerdrSessionModel, HerdrWorkspaceView, HerdrWorkspaceViewAction,
+};
 use crate::pane_group::pane::IPaneType;
 use crate::pane_group::{PaneId, TerminalPaneId};
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::{ShortcutModifierKind, reveals_shortcut_hints};
 use crate::terminal::CLIAgent;
+use crate::test_util::assert_eventually;
+use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
-use crate::workspace::tab_settings::{VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity};
+use crate::workspace::tab_settings::{
+    TabSettings, VerticalTabsCompactSubtitle, VerticalTabsDisplayGranularity,
+    VerticalTabsPrimaryInfo, VerticalTabsTabItemMode, VerticalTabsViewMode,
+};
+use crate::workspace::view::vertical_tabs::telemetry::VerticalTabsChipEntrypoint;
 
 fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
     VerticalTabsSummaryPrimaryLabel {
@@ -1503,13 +1520,15 @@ fn herdr_git(pull_request_url: Option<&str>) -> DirectoryGitContext {
 
 #[test]
 fn herdr_row_outside_a_repository_shows_only_the_directory() {
-    let details = herdr_row_details_from(Some(Path::new("/srv/logs")), None, Some("/home/me"));
+    let details =
+        herdr_row_details_from(Some(Path::new("/srv/logs")), None, None, Some("/home/me"));
 
     assert_eq!(
         details,
         HerdrRowDetails {
             working_directory: Some("/srv/logs".to_string()),
             branch_entry: None,
+            command: None,
         }
     );
 }
@@ -1520,6 +1539,7 @@ fn herdr_row_in_a_repository_has_the_branch_entry_a_terminal_would_build() {
     let details = herdr_row_details_from(
         Some(Path::new("/home/me/api/src")),
         Some(herdr_git(Some(url))),
+        None,
         Some("/home/me"),
     );
 
@@ -1541,6 +1561,7 @@ fn herdr_row_without_a_pull_request_has_no_chip() {
     let details = herdr_row_details_from(
         Some(Path::new("/home/me/api")),
         Some(herdr_git(None)),
+        None,
         Some("/home/me"),
     );
 
@@ -1551,7 +1572,7 @@ fn herdr_row_without_a_pull_request_has_no_chip() {
 
 #[test]
 fn herdr_row_without_a_directory_shows_nothing() {
-    let details = herdr_row_details_from(None, None, Some("/home/me"));
+    let details = herdr_row_details_from(None, None, None, Some("/home/me"));
 
     assert!(!details.is_present());
 }
@@ -1561,9 +1582,11 @@ fn herdr_compact_subtitle_follows_the_setting_like_a_terminal_row() {
     let in_repo = herdr_row_details_from(
         Some(Path::new("/home/me/api")),
         Some(herdr_git(None)),
+        Some("claude".to_string()),
         Some("/home/me"),
     );
-    let outside = herdr_row_details_from(Some(Path::new("/srv/logs")), None, Some("/home/me"));
+    let outside =
+        herdr_row_details_from(Some(Path::new("/srv/logs")), None, None, Some("/home/me"));
 
     assert_eq!(
         herdr_compact_subtitle(&in_repo, VerticalTabsCompactSubtitle::Branch),
@@ -1579,7 +1602,86 @@ fn herdr_compact_subtitle_follows_the_setting_like_a_terminal_row() {
     );
     assert_eq!(
         herdr_compact_subtitle(&in_repo, VerticalTabsCompactSubtitle::Command),
+        Some(("claude".to_string(), false))
+    );
+    assert_eq!(
+        herdr_compact_subtitle(&outside, VerticalTabsCompactSubtitle::Command),
         None
+    );
+}
+
+fn titled_row() -> HerdrRowDetails {
+    herdr_row_details_from(
+        Some(Path::new("/home/me/api/src")),
+        Some(herdr_git(None)),
+        Some("claude".to_string()),
+        Some("/home/me"),
+    )
+}
+
+#[test]
+fn herdr_row_title_follows_pane_title_as_like_a_terminal_row() {
+    let row = titled_row();
+
+    assert_eq!(
+        herdr_row_title(&row, VerticalTabsPrimaryInfo::Command, "api"),
+        HerdrRowTitle {
+            text: "claude".to_string(),
+            source: Some(VerticalTabsPrimaryInfo::Command),
+        }
+    );
+    assert_eq!(
+        herdr_row_title(&row, VerticalTabsPrimaryInfo::WorkingDirectory, "api"),
+        HerdrRowTitle {
+            text: "~/api/src".to_string(),
+            source: Some(VerticalTabsPrimaryInfo::WorkingDirectory),
+        }
+    );
+    assert_eq!(
+        herdr_row_title(&row, VerticalTabsPrimaryInfo::Branch, "api"),
+        HerdrRowTitle {
+            text: "feature/sidebar".to_string(),
+            source: Some(VerticalTabsPrimaryInfo::Branch),
+        }
+    );
+}
+
+#[test]
+fn herdr_row_title_falls_back_to_the_workspace_label_when_the_chosen_value_is_unknown() {
+    let outside_a_repository = herdr_row_details_from(
+        Some(Path::new("/srv/logs")),
+        None,
+        Some("claude".to_string()),
+        Some("/home/me"),
+    );
+    let nothing_known = HerdrRowDetails::default();
+    let label_only = HerdrRowTitle {
+        text: "api".to_string(),
+        source: None,
+    };
+
+    assert_eq!(
+        herdr_row_title(
+            &outside_a_repository,
+            VerticalTabsPrimaryInfo::Branch,
+            "api"
+        ),
+        label_only
+    );
+    for primary in [
+        VerticalTabsPrimaryInfo::Command,
+        VerticalTabsPrimaryInfo::WorkingDirectory,
+        VerticalTabsPrimaryInfo::Branch,
+    ] {
+        assert_eq!(herdr_row_title(&nothing_known, primary, "api"), label_only);
+    }
+    assert_eq!(
+        herdr_row_title(
+            &herdr_row_details_from(Some(Path::new("/srv/logs")), None, None, Some("/home/me")),
+            VerticalTabsPrimaryInfo::Command,
+            "api"
+        ),
+        label_only
     );
 }
 
@@ -1637,6 +1739,7 @@ fn herdr_pane_compact_subtitle_is_the_agent_when_there_is_one_else_follows_the_s
     let in_repo = herdr_row_details_from(
         Some(Path::new("/home/me/api")),
         Some(herdr_git(None)),
+        None,
         Some("/home/me"),
     );
 
@@ -1660,4 +1763,364 @@ fn herdr_pane_compact_subtitle_is_the_agent_when_there_is_one_else_follows_the_s
         ),
         None
     );
+}
+
+#[test]
+fn herdr_details_below_the_title_leave_out_what_the_title_already_shows() {
+    let row = titled_row();
+    let title = |primary| herdr_row_title(&row, primary, "api");
+
+    let below = |primary| herdr_details_below_title(&row, Some(&title(primary)));
+
+    assert_eq!(below(VerticalTabsPrimaryInfo::Command), row);
+    assert_eq!(
+        below(VerticalTabsPrimaryInfo::WorkingDirectory).working_directory,
+        None
+    );
+    assert_eq!(
+        below(VerticalTabsPrimaryInfo::WorkingDirectory).branch_entry,
+        row.branch_entry
+    );
+    assert_eq!(below(VerticalTabsPrimaryInfo::Branch).branch_entry, None);
+    assert_eq!(
+        below(VerticalTabsPrimaryInfo::Branch).working_directory,
+        row.working_directory
+    );
+    assert_eq!(
+        herdr_details_below_title(
+            &row,
+            Some(&herdr_row_title(
+                &HerdrRowDetails::default(),
+                VerticalTabsPrimaryInfo::Branch,
+                "api"
+            ))
+        ),
+        row,
+        "a title that fell back to the label shows nothing of the row"
+    );
+}
+
+fn popup_text(
+    app: &mut App,
+    granularity: VerticalTabsDisplayGranularity,
+    item_mode: VerticalTabsTabItemMode,
+    view_mode: VerticalTabsViewMode,
+) -> String {
+    app.update(|ctx| {
+        TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+            let _ = settings
+                .vertical_tabs_display_granularity
+                .set_value(granularity, ctx);
+            let _ = settings
+                .vertical_tabs_tab_item_mode
+                .set_value(item_mode, ctx);
+            let _ = settings.vertical_tabs_view_mode.set_value(view_mode, ctx);
+        });
+    });
+    let state = VerticalTabsPanelState::default();
+    app.read(|ctx| {
+        render_settings_popup_menu(&state, ctx)
+            .debug_text_content()
+            .unwrap_or_default()
+    })
+}
+
+#[test]
+fn the_settings_popup_offers_pane_title_as_only_when_it_lists_panes() {
+    App::test((), |mut app| async move {
+        let _summary = FeatureFlag::VerticalTabsSummaryMode.override_enabled(true);
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| Appearance::mock());
+
+        let panes = popup_text(
+            &mut app,
+            VerticalTabsDisplayGranularity::Panes,
+            VerticalTabsTabItemMode::FocusedSession,
+            VerticalTabsViewMode::Compact,
+        );
+        for expected in [
+            "Pane title as",
+            "Command / Conversation",
+            "Working Directory",
+            "Branch",
+        ] {
+            assert!(panes.contains(expected), "Panes: {panes:?}");
+        }
+
+        for item_mode in [
+            VerticalTabsTabItemMode::FocusedSession,
+            VerticalTabsTabItemMode::Summary,
+        ] {
+            let workspaces = popup_text(
+                &mut app,
+                VerticalTabsDisplayGranularity::Tabs,
+                item_mode,
+                VerticalTabsViewMode::Compact,
+            );
+            assert!(
+                !workspaces.contains("Pane title as"),
+                "Workspaces, {item_mode:?}: {workspaces:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn the_settings_popup_offers_density_and_the_show_toggles_for_workspaces_in_both_item_modes() {
+    App::test((), |mut app| async move {
+        let _summary = FeatureFlag::VerticalTabsSummaryMode.override_enabled(true);
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| Appearance::mock());
+
+        for (item_mode, view_mode) in [
+            (
+                VerticalTabsTabItemMode::FocusedSession,
+                VerticalTabsViewMode::Expanded,
+            ),
+            (
+                VerticalTabsTabItemMode::Summary,
+                VerticalTabsViewMode::Expanded,
+            ),
+            (
+                VerticalTabsTabItemMode::Summary,
+                VerticalTabsViewMode::Compact,
+            ),
+        ] {
+            let text = popup_text(
+                &mut app,
+                VerticalTabsDisplayGranularity::Tabs,
+                item_mode,
+                view_mode,
+            );
+            for expected in ["Density", "PR link", "Diff stats"] {
+                assert!(
+                    text.contains(expected),
+                    "{item_mode:?}, {view_mode:?}: {text:?}"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn pane_title_as_gives_only_the_rows_of_the_panes_view_a_herdr_title() {
+    let row = titled_row();
+
+    assert_eq!(
+        herdr_shown_title(
+            &row,
+            VerticalTabsPrimaryInfo::Command,
+            "api",
+            VerticalTabsDisplayGranularity::Tabs
+        ),
+        None
+    );
+    assert_eq!(
+        herdr_shown_title(
+            &row,
+            VerticalTabsPrimaryInfo::Command,
+            "api",
+            VerticalTabsDisplayGranularity::Panes
+        )
+        .map(|title| title.text),
+        Some("claude".to_string())
+    );
+}
+
+#[test]
+fn a_branch_line_shows_the_pull_request_and_diff_stats_the_toggles_leave_on() {
+    App::test((), |app| async move {
+        app.add_singleton_model(|_| Appearance::mock());
+        let url = "https://github.com/acme/api/pull/42";
+        let entry = herdr_row_details_from(
+            Some(Path::new("/home/me/api")),
+            Some(herdr_git(Some(url))),
+            None,
+            Some("/home/me"),
+        )
+        .branch_entry
+        .expect("branch entry");
+        let text = |app: &App, badges| {
+            app.read(|ctx| {
+                render_summary_branch_line(
+                    &entry,
+                    None,
+                    VerticalTabsChipEntrypoint::Pane,
+                    badges,
+                    Appearance::as_ref(ctx),
+                )
+                .debug_text_content()
+                .unwrap_or_default()
+            })
+        };
+        let pr_label = terminal_pull_request_badge_label(url);
+        let diff_stats = "+10";
+
+        let both = text(
+            &app,
+            BranchLineBadges {
+                diff_stats: true,
+                pr_link: true,
+            },
+        );
+        assert!(
+            both.contains(&pr_label) && both.contains(diff_stats.trim()),
+            "{both:?}"
+        );
+
+        let only_diff_stats = text(
+            &app,
+            BranchLineBadges {
+                diff_stats: true,
+                pr_link: false,
+            },
+        );
+        assert!(!only_diff_stats.contains(&pr_label), "{only_diff_stats:?}");
+        assert!(
+            only_diff_stats.contains(diff_stats.trim()),
+            "{only_diff_stats:?}"
+        );
+
+        let only_pr_link = text(
+            &app,
+            BranchLineBadges {
+                diff_stats: false,
+                pr_link: true,
+            },
+        );
+        assert!(only_pr_link.contains(&pr_label), "{only_pr_link:?}");
+        assert!(
+            !only_pr_link.contains(diff_stats.trim()),
+            "{only_pr_link:?}"
+        );
+    });
+}
+
+fn herdr_titles_session(fake: &FakeHerdr) -> FakeSession {
+    fake.start_session(
+        "default",
+        SessionScript::new().workspace_with_tabs(
+            "api",
+            [
+                TabScript::new(
+                    "logs",
+                    PaneTree::split(
+                        SplitDirection::Right,
+                        0.5,
+                        PaneTree::pane(),
+                        PaneTree::pane(),
+                    ),
+                )
+                .cwd(0, "/srv/api")
+                .agent(
+                    0,
+                    herdr_fake::AgentScript::new("claude", herdr_fake::AgentState::Working),
+                )
+                .cwd(1, "/srv/logs")
+                .terminal_title(1, "tail -f app.log"),
+                TabScript::new("blank", PaneTree::pane()).without_cwd(0),
+            ],
+        ),
+    )
+}
+
+/// The titles `primary` gives the rows of the workspace `w1`'s shown Herdr tab, as
+/// `(pane, title)`.
+fn herdr_row_titles(
+    app: &App,
+    view: &ViewHandle<HerdrWorkspaceView>,
+    primary: VerticalTabsPrimaryInfo,
+) -> Vec<(String, String)> {
+    view.read(app, |view, ctx| {
+        view.pane_rows(ctx)
+            .into_iter()
+            .map(|row| {
+                let details = herdr_row_details_from(
+                    row.directory.as_deref(),
+                    row.git,
+                    row.command,
+                    Some("/home/me"),
+                );
+                (
+                    row.pane.as_str().to_owned(),
+                    herdr_row_title(&details, primary, "api").text,
+                )
+            })
+            .collect()
+    })
+}
+
+#[test]
+fn herdr_rows_are_titled_from_what_herdr_reports_for_each_pane() {
+    App::test((), |mut app| async move {
+        let mut fake = FakeHerdr::new();
+        fake.script_status(&herdr_fake::HerdrStatus::compatible());
+        let _session = herdr_titles_session(&fake);
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(|_| Appearance::mock());
+        let target = SessionTarget::new(&fake.config_dir(), SessionName::default_session());
+        app.update(|ctx| {
+            ctx.add_singleton_model(|ctx| {
+                HerdrSessionModel::connect(HerdrCli::new(fake.binary_path()), target, ctx)
+            });
+        });
+        let (_, view) = app.add_window(WindowStyle::NotStealFocus, |ctx| {
+            HerdrWorkspaceView::new(
+                HerdrWorkspaceContents::Workspace(HerdrWorkspaceSnapshot {
+                    workspace_id: WorkspaceId::from("w1"),
+                    label: "api".to_owned(),
+                }),
+                ctx,
+            )
+        });
+        assert_eventually!(
+            600 => herdr_row_titles(&app, &view, VerticalTabsPrimaryInfo::Command)
+                .first()
+                .is_some_and(|(_, title)| title == "claude"),
+            "the agents never arrived"
+        );
+
+        assert_eq!(
+            herdr_row_titles(&app, &view, VerticalTabsPrimaryInfo::Command),
+            [
+                ("w1:p1".to_owned(), "claude".to_owned()),
+                ("w1:p2".to_owned(), "tail -f app.log".to_owned()),
+            ]
+        );
+        assert_eq!(
+            herdr_row_titles(&app, &view, VerticalTabsPrimaryInfo::WorkingDirectory),
+            [
+                ("w1:p1".to_owned(), "/srv/api".to_owned()),
+                ("w1:p2".to_owned(), "/srv/logs".to_owned()),
+            ]
+        );
+        assert_eq!(
+            herdr_row_titles(&app, &view, VerticalTabsPrimaryInfo::Branch),
+            [
+                ("w1:p1".to_owned(), "api".to_owned()),
+                ("w1:p2".to_owned(), "api".to_owned()),
+            ],
+            "neither directory is in a git repository"
+        );
+
+        app.update(|ctx| {
+            view.update(ctx, |view, ctx| {
+                view.handle_action(
+                    &HerdrWorkspaceViewAction::SelectTab(HerdrTabId::from("w1:t2")),
+                    ctx,
+                );
+            });
+        });
+        for primary in [
+            VerticalTabsPrimaryInfo::Command,
+            VerticalTabsPrimaryInfo::WorkingDirectory,
+            VerticalTabsPrimaryInfo::Branch,
+        ] {
+            assert_eq!(
+                herdr_row_titles(&app, &view, primary),
+                [("w1:p3".to_owned(), "api".to_owned())],
+                "Herdr reports nothing for this pane: {primary:?}"
+            );
+        }
+    });
 }
