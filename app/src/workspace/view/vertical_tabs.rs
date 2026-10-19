@@ -2,6 +2,7 @@ pub mod telemetry;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -972,6 +973,8 @@ struct HerdrRowDetails {
     working_directory: Option<String>,
     /// Present only inside a git repository.
     branch_entry: Option<VerticalTabsSummaryBranchEntry>,
+    /// What Herdr says is running in the pane.
+    command: Option<String>,
 }
 
 impl HerdrRowDetails {
@@ -987,6 +990,7 @@ fn herdr_row_details(workspace_pane: &HerdrWorkspacePane, app: &AppContext) -> H
     herdr_row_details_from(
         details.directory,
         details.git,
+        details.command,
         home_dir.as_deref().and_then(Path::to_str),
     )
 }
@@ -994,6 +998,7 @@ fn herdr_row_details(workspace_pane: &HerdrWorkspacePane, app: &AppContext) -> H
 fn herdr_row_details_from(
     directory: Option<&Path>,
     git: Option<DirectoryGitContext>,
+    command: Option<String>,
     home_dir: Option<&str>,
 ) -> HerdrRowDetails {
     let working_directory = directory
@@ -1018,10 +1023,90 @@ fn herdr_row_details_from(
     HerdrRowDetails {
         working_directory,
         branch_entry,
+        command,
     }
 }
 
-/// The one line a compact row shows under a Herdr workspace's label, chosen the way a terminal's
+/// The line 1 of a Herdr row: what "Pane title as" chooses from what Herdr reports for the row's
+/// pane, or the workspace label when Herdr reports none of it.
+#[derive(Clone, Debug, PartialEq)]
+struct HerdrRowTitle {
+    text: String,
+    /// The choice the text satisfies; `None` for the workspace label.
+    source: Option<VerticalTabsPrimaryInfo>,
+}
+
+fn herdr_row_title(
+    row: &HerdrRowDetails,
+    primary: VerticalTabsPrimaryInfo,
+    workspace_label: &str,
+) -> HerdrRowTitle {
+    let chosen = match primary {
+        VerticalTabsPrimaryInfo::Command => row.command.clone(),
+        VerticalTabsPrimaryInfo::WorkingDirectory => row.working_directory.clone(),
+        VerticalTabsPrimaryInfo::Branch => row
+            .branch_entry
+            .as_ref()
+            .map(|entry| entry.branch_name.clone()),
+    };
+    match chosen {
+        Some(text) => HerdrRowTitle {
+            text,
+            source: Some(primary),
+        },
+        None => HerdrRowTitle {
+            text: workspace_label.to_owned(),
+            source: None,
+        },
+    }
+}
+
+/// The title "Pane title as" gives a Herdr row; `None` when the row is not a row of the Panes
+/// view, where the workspace's own title stays.
+fn herdr_shown_title(
+    row: &HerdrRowDetails,
+    primary: VerticalTabsPrimaryInfo,
+    workspace_label: &str,
+    granularity: VerticalTabsDisplayGranularity,
+) -> Option<HerdrRowTitle> {
+    matches!(granularity, VerticalTabsDisplayGranularity::Panes)
+        .then(|| herdr_row_title(row, primary, workspace_label))
+}
+
+fn render_herdr_row_title(
+    title: &HerdrRowTitle,
+    text_color: WarpThemeFill,
+    font_size: f32,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let clip = match title.source {
+        Some(VerticalTabsPrimaryInfo::Branch) => {
+            return render_git_branch_text(&title.text, text_color, font_size, appearance);
+        }
+        Some(VerticalTabsPrimaryInfo::WorkingDirectory) => ClipConfig::start(),
+        Some(VerticalTabsPrimaryInfo::Command) | None => ClipConfig::ellipsis(),
+    };
+    Text::new_inline(title.text.clone(), appearance.ui_font_family(), font_size)
+        .with_clip(clip)
+        .with_color(text_color.into())
+        .finish()
+}
+
+/// What a Herdr row's detail lines still show once its title has shown one of them.
+fn herdr_details_below_title(
+    row: &HerdrRowDetails,
+    title: Option<&HerdrRowTitle>,
+) -> HerdrRowDetails {
+    let mut shown = row.clone();
+    match title.and_then(|title| title.source) {
+        Some(VerticalTabsPrimaryInfo::WorkingDirectory) => shown.working_directory = None,
+        Some(VerticalTabsPrimaryInfo::Branch) => shown.branch_entry = None,
+        Some(VerticalTabsPrimaryInfo::Command) | None => {}
+    }
+    shown
+}
+
+/// The one line a compact row shows under a Herdr workspace's title, chosen the way a terminal's
 /// compact row chooses it; the flag says whether it is a branch name.
 fn herdr_compact_subtitle(
     row: &HerdrRowDetails,
@@ -1038,7 +1123,7 @@ fn herdr_compact_subtitle(
             .working_directory
             .clone()
             .map(|working_directory| (working_directory, false)),
-        VerticalTabsCompactSubtitle::Command => None,
+        VerticalTabsCompactSubtitle::Command => row.command.clone().map(|command| (command, false)),
     }
 }
 
@@ -1046,6 +1131,7 @@ fn herdr_compact_subtitle(
 struct HerdrPaneRowProps {
     herdr_tab: HerdrTabId,
     pane: HerdrPaneId,
+    workspace_label: String,
     details: HerdrRowDetails,
     agent_line: Option<String>,
 }
@@ -1111,6 +1197,7 @@ fn herdr_pane_rows(
 
 fn herdr_details_search_fragments(details: HerdrRowDetails) -> Vec<String> {
     let mut fragments: Vec<String> = details.working_directory.into_iter().collect();
+    fragments.extend(details.command);
     if let Some(entry) = details.branch_entry {
         fragments.push(entry.branch_name);
         fragments.extend(entry.pull_request_label);
@@ -3753,6 +3840,15 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
     );
 
     let herdr_row = props.herdr_details(app);
+    let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
+    let herdr_title = herdr_row.as_ref().and_then(|row| {
+        herdr_shown_title(
+            row,
+            primary_info,
+            props.herdr_label(),
+            props.display_granularity,
+        )
+    });
     let herdr_agent_line = props
         .herdr_pane
         .as_ref()
@@ -3789,11 +3885,19 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
                 1.,
                 render_pane_title_slot(
                     &props,
-                    || {
-                        Text::new_inline(props.displayed_title().to_string(), font_family, 12.)
-                            .with_clip(ClipConfig::ellipsis())
-                            .with_color(theme.main_text_color(theme.background()).into())
-                            .finish()
+                    || match &herdr_title {
+                        Some(herdr_title) => render_herdr_row_title(
+                            herdr_title,
+                            theme.main_text_color(theme.background()),
+                            12.,
+                            appearance,
+                        ),
+                        None => {
+                            Text::new_inline(props.displayed_title().to_string(), font_family, 12.)
+                                .with_clip(ClipConfig::ellipsis())
+                                .with_color(theme.main_text_color(theme.background()).into())
+                                .finish()
+                        }
                     },
                     12.,
                     theme.main_text_color(theme.background()),
@@ -3849,7 +3953,8 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         }
 
         if let Some(row) = &herdr_row {
-            if let Some(working_directory) = &row.working_directory {
+            let shown_below_title = herdr_details_below_title(row, herdr_title.as_ref());
+            if let Some(working_directory) = &shown_below_title.working_directory {
                 content_col.add_child(render_text_line(
                     working_directory,
                     theme.sub_text_color(theme.background()),
@@ -3857,11 +3962,12 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
                     appearance,
                 ));
             }
-            if let Some(branch_entry) = &row.branch_entry {
+            if let Some(branch_entry) = &shown_below_title.branch_entry {
                 content_col.add_child(render_summary_branch_line(
                     branch_entry,
                     Some(props.badge_mouse_states.pull_request.clone()),
                     chip_entrypoint_for_granularity(props.display_granularity),
+                    BranchLineBadges::from_settings(app),
                     appearance,
                 ));
             }
@@ -4285,7 +4391,7 @@ impl<'a> PaneProps<'a> {
     /// workspace. A Herdr pane has no name of its own to rename here, and no menu.
     fn stand_for_herdr_pane(&mut self, pane: &HerdrPaneRow, states: HerdrPaneRowStates) {
         let home_dir = dirs::home_dir();
-        self.title = pane.title.clone();
+        let workspace_label = mem::replace(&mut self.title, pane.title.clone());
         self.subtitle.clear();
         self.custom_vertical_tabs_title = None;
         self.display_title_override = None;
@@ -4302,9 +4408,11 @@ impl<'a> PaneProps<'a> {
         self.herdr_pane = Some(HerdrPaneRowProps {
             herdr_tab: pane.herdr_tab.clone(),
             pane: pane.pane.clone(),
+            workspace_label,
             details: herdr_row_details_from(
                 pane.directory.as_deref(),
                 pane.git.clone(),
+                pane.command.clone(),
                 home_dir.as_deref().and_then(Path::to_str),
             ),
             agent_line: pane.agent.as_ref().map(herdr_agent_line),
@@ -4320,6 +4428,15 @@ impl<'a> PaneProps<'a> {
                 Some(herdr_row_details(workspace_pane, app))
             }
             _ => None,
+        }
+    }
+
+    /// The label of the Herdr workspace a Herdr row belongs to, which stands in for any title
+    /// Herdr gives nothing to build.
+    fn herdr_label(&self) -> &str {
+        match &self.herdr_pane {
+            Some(pane) => &pane.workspace_label,
+            None => &self.title,
         }
     }
 
@@ -4374,6 +4491,7 @@ impl<'a> PaneProps<'a> {
                         fragments.extend(herdr_details_search_fragments(herdr_row_details_from(
                             row.directory.as_deref(),
                             row.git,
+                            row.command,
                             home_dir.as_deref().and_then(Path::to_str),
                         )));
                         fragments.extend(row.agent.as_ref().map(herdr_agent_line));
@@ -5341,6 +5459,7 @@ fn render_summary_tab_item(
 
     // Branch region. Each branch line gets the existing 4px top margin from APP-3875.
     let pr_chip_entrypoint = chip_entrypoint_for_granularity(props.display_granularity);
+    let branch_line_badges = BranchLineBadges::from_settings(app);
     for (idx, branch_entry) in summary
         .branch_entries
         .iter()
@@ -5352,6 +5471,7 @@ fn render_summary_tab_item(
                 branch_entry,
                 pr_badge_mouse_states.get(idx).cloned(),
                 pr_chip_entrypoint,
+                branch_line_badges,
                 appearance,
             ))
             .with_margin_top(REGION_GAP)
@@ -5664,10 +5784,28 @@ fn summary_pane_kind_icon(
     }
 }
 
+/// Which of the badges on a branch line the "Show" toggles of the settings popup leave on.
+#[derive(Clone, Copy)]
+struct BranchLineBadges {
+    diff_stats: bool,
+    pr_link: bool,
+}
+
+impl BranchLineBadges {
+    fn from_settings(app: &AppContext) -> Self {
+        let settings = TabSettings::as_ref(app);
+        Self {
+            diff_stats: *settings.vertical_tabs_show_diff_stats.value(),
+            pr_link: *settings.vertical_tabs_show_pr_link.value(),
+        }
+    }
+}
+
 fn render_summary_branch_line(
     entry: &VerticalTabsSummaryBranchEntry,
     pr_badge_mouse_state: Option<MouseStateHandle>,
     pr_chip_entrypoint: VerticalTabsChipEntrypoint,
+    badges: BranchLineBadges,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
@@ -5688,7 +5826,7 @@ fn render_summary_branch_line(
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(4.);
     let mut has_right_badges = false;
-    if let Some(diff_stats) = &entry.diff_stats {
+    if let Some(diff_stats) = entry.diff_stats.as_ref().filter(|_| badges.diff_stats) {
         right_badges.add_child(render_passive_terminal_diff_stats_badge(
             diff_stats, appearance,
         ));
@@ -5698,7 +5836,10 @@ fn render_summary_branch_line(
     // the URL and a persistent hover handle for it; fall back to the passive badge
     // (label only) so the chip still renders even if either is missing.
     match (
-        entry.pull_request_label.as_ref(),
+        badges
+            .pr_link
+            .then_some(entry.pull_request_label.as_ref())
+            .flatten(),
         entry.pull_request_url.as_ref(),
         pr_badge_mouse_state,
     ) {
@@ -5712,15 +5853,14 @@ fn render_summary_branch_line(
             ));
             has_right_badges = true;
         }
-        _ => {
-            if let Some(pull_request_label) = &entry.pull_request_label {
-                right_badges.add_child(render_passive_terminal_pull_request_badge(
-                    pull_request_label,
-                    appearance,
-                ));
-                has_right_badges = true;
-            }
+        (Some(pull_request_label), _, _) => {
+            right_badges.add_child(render_passive_terminal_pull_request_badge(
+                pull_request_label,
+                appearance,
+            ));
+            has_right_badges = true;
         }
+        (None, _, _) => {}
     }
     if has_right_badges {
         row.add_child(
@@ -6248,6 +6388,15 @@ pub(super) fn render_settings_popup(
     state: &VerticalTabsPanelState,
     app: &AppContext,
 ) -> Box<dyn Element> {
+    EventHandler::new(render_settings_popup_menu(state, app))
+        .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+        .finish()
+}
+
+fn render_settings_popup_menu(
+    state: &VerticalTabsPanelState,
+    app: &AppContext,
+) -> Box<dyn Element> {
     const SETTINGS_POPUP_CORNER_RADIUS: f32 = 6.;
     const SETTINGS_POPUP_MENU_ITEM_FONT_SIZE: f32 = 12.;
 
@@ -6274,10 +6423,12 @@ pub(super) fn render_settings_popup(
         .value();
     let show_tab_item_section = matches!(current_granularity, VerticalTabsDisplayGranularity::Tabs)
         && FeatureFlag::VerticalTabsSummaryMode.is_enabled();
-    let show_focused_session_controls = !matches!(
+    let is_summary_mode = matches!(
         resolve_vertical_tabs_mode(app),
         VerticalTabsResolvedMode::Summary
     );
+    let show_pane_title_section =
+        matches!(current_granularity, VerticalTabsDisplayGranularity::Panes);
     let sub_text = theme.sub_text_color(theme.background());
     let view_as_header = Container::new(
         Text::new_inline(
@@ -6511,97 +6662,98 @@ pub(super) fn render_settings_popup(
         }
     }
 
-    if show_focused_session_controls {
-        popup_col.add_child(make_divider(theme));
-        popup_col.add_child(density_header);
-        popup_col.add_child(segmented_control_row);
+    popup_col.add_child(make_divider(theme));
+    popup_col.add_child(density_header);
+    popup_col.add_child(segmented_control_row);
+
+    if show_pane_title_section {
         popup_col.add_child(make_divider(theme));
         popup_col.add_child(pane_title_header);
         popup_col.add_child(command_option);
         popup_col.add_child(directory_option);
         popup_col.add_child(branch_option);
+    }
 
-        if matches!(current_mode, VerticalTabsViewMode::Compact) {
-            popup_col.add_child(make_divider(theme));
+    if matches!(current_mode, VerticalTabsViewMode::Compact) && !is_summary_mode {
+        popup_col.add_child(make_divider(theme));
 
-            let subtitle_header = Container::new(
-                Text::new_inline(
-                    "Additional metadata".to_string(),
-                    appearance.ui_font_family(),
-                    SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-                )
-                .with_color(sub_text.into())
-                .finish(),
+        let subtitle_header = Container::new(
+            Text::new_inline(
+                "Additional metadata".to_string(),
+                appearance.ui_font_family(),
+                SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
             )
-            .with_horizontal_padding(16.)
-            .with_margin_bottom(4.)
-            .finish();
-            popup_col.add_child(subtitle_header);
+            .with_color(sub_text.into())
+            .finish(),
+        )
+        .with_horizontal_padding(16.)
+        .with_margin_bottom(4.)
+        .finish();
+        popup_col.add_child(subtitle_header);
 
-            let options = subtitle_options_for_primary(current_primary_info);
-            let mouse_states = [
-                state.subtitle_option_1_mouse_state.clone(),
-                state.subtitle_option_2_mouse_state.clone(),
-            ];
-            for (i, (value, label)) in options.iter().enumerate() {
-                popup_col.add_child(render_compact_subtitle_option(
-                    label,
-                    current_subtitle == *value,
-                    mouse_states[i].clone(),
-                    *value,
-                    appearance,
-                    theme,
-                ));
-            }
-        }
-
-        if matches!(current_mode, VerticalTabsViewMode::Expanded) {
-            popup_col.add_child(make_divider(theme));
-
-            let show_header = Container::new(
-                Text::new_inline(
-                    "Show".to_string(),
-                    appearance.ui_font_family(),
-                    SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
-                )
-                .with_color(sub_text.into())
-                .finish(),
-            )
-            .with_horizontal_padding(16.)
-            .with_margin_bottom(4.)
-            .finish();
-            popup_col.add_child(show_header);
-            let pr_validation_suppressed = SessionSettings::as_ref(app)
-                .github_pr_chip_default_validation
-                .is_suppressed();
-            let pr_link_info_tooltip = if show_pr_link && pr_validation_suppressed {
-                Some(ShowToggleInfoTooltip {
-                    mouse_state: state.show_pr_link_info_tooltip_mouse_state.clone(),
-                    tooltip_text: "Requires the GitHub CLI to be installed and authenticated",
-                })
-            } else {
-                None
-            };
-
-            popup_col.add_child(render_show_toggle_option(
-                "PR link",
-                show_pr_link,
-                state.show_pr_link_mouse_state.clone(),
-                WorkspaceAction::ToggleVerticalTabsShowPrLink,
-                pr_link_info_tooltip,
-                appearance,
-                theme,
-            ));
-            popup_col.add_child(render_show_toggle_option(
-                "Diff stats",
-                show_diff_stats,
-                state.show_diff_stats_mouse_state.clone(),
-                WorkspaceAction::ToggleVerticalTabsShowDiffStats,
-                None,
+        let options = subtitle_options_for_primary(current_primary_info);
+        let mouse_states = [
+            state.subtitle_option_1_mouse_state.clone(),
+            state.subtitle_option_2_mouse_state.clone(),
+        ];
+        for (i, (value, label)) in options.iter().enumerate() {
+            popup_col.add_child(render_compact_subtitle_option(
+                label,
+                current_subtitle == *value,
+                mouse_states[i].clone(),
+                *value,
                 appearance,
                 theme,
             ));
         }
+    }
+
+    if matches!(current_mode, VerticalTabsViewMode::Expanded) || is_summary_mode {
+        popup_col.add_child(make_divider(theme));
+
+        let show_header = Container::new(
+            Text::new_inline(
+                "Show".to_string(),
+                appearance.ui_font_family(),
+                SETTINGS_POPUP_MENU_ITEM_FONT_SIZE,
+            )
+            .with_color(sub_text.into())
+            .finish(),
+        )
+        .with_horizontal_padding(16.)
+        .with_margin_bottom(4.)
+        .finish();
+        popup_col.add_child(show_header);
+        let pr_validation_suppressed = SessionSettings::as_ref(app)
+            .github_pr_chip_default_validation
+            .is_suppressed();
+        let pr_link_info_tooltip = if show_pr_link && pr_validation_suppressed {
+            Some(ShowToggleInfoTooltip {
+                mouse_state: state.show_pr_link_info_tooltip_mouse_state.clone(),
+                tooltip_text: "Requires the GitHub CLI to be installed and authenticated",
+            })
+        } else {
+            None
+        };
+
+        popup_col.add_child(render_show_toggle_option(
+            "PR link",
+            show_pr_link,
+            state.show_pr_link_mouse_state.clone(),
+            WorkspaceAction::ToggleVerticalTabsShowPrLink,
+            pr_link_info_tooltip,
+            appearance,
+            theme,
+        ));
+        popup_col.add_child(render_show_toggle_option(
+            "Diff stats",
+            show_diff_stats,
+            state.show_diff_stats_mouse_state.clone(),
+            WorkspaceAction::ToggleVerticalTabsShowDiffStats,
+            None,
+            appearance,
+            theme,
+        ));
     }
     popup_col.add_child(make_divider(theme));
 
@@ -6614,22 +6766,18 @@ pub(super) fn render_settings_popup(
         appearance,
         theme,
     ));
-    EventHandler::new(
-        ConstrainedBox::new(
-            Container::new(popup_col.finish())
-                .with_vertical_padding(8.)
-                .with_background(internal_colors::neutral_1(theme))
-                .with_border(Border::all(1.).with_border_fill(internal_colors::fg_overlay_1(theme)))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-                    SETTINGS_POPUP_CORNER_RADIUS,
-                )))
-                .with_drop_shadow(DropShadow::default())
-                .finish(),
-        )
-        .with_width(200.)
-        .finish(),
+    ConstrainedBox::new(
+        Container::new(popup_col.finish())
+            .with_vertical_padding(8.)
+            .with_background(internal_colors::neutral_1(theme))
+            .with_border(Border::all(1.).with_border_fill(internal_colors::fg_overlay_1(theme)))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
+                SETTINGS_POPUP_CORNER_RADIUS,
+            )))
+            .with_drop_shadow(DropShadow::default())
+            .finish(),
     )
-    .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+    .with_width(200.)
     .finish()
 }
 
@@ -7835,14 +7983,26 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
 
             (title, subtitle)
         } else {
+            let herdr_details = props.herdr_details(app);
+            let herdr_title = herdr_details.as_ref().and_then(|row| {
+                herdr_shown_title(
+                    row,
+                    primary_info,
+                    props.herdr_label(),
+                    props.display_granularity,
+                )
+            });
             let title = render_pane_title_slot(
                 &props,
-                || {
-                    render_compact_non_terminal_title(
+                || match &herdr_title {
+                    Some(herdr_title) => {
+                        render_herdr_row_title(herdr_title, main_text_color, 12., appearance)
+                    }
+                    None => render_compact_non_terminal_title(
                         props.displayed_title(),
                         &props.typed,
                         appearance,
-                    )
+                    ),
                 },
                 12.,
                 main_text_color,
@@ -7854,18 +8014,16 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
                 appearance,
                 app,
             );
-            let herdr_subtitle = match (&props.herdr_pane, &props.typed) {
-                (Some(pane), _) => herdr_pane_compact_subtitle(
-                    &pane.details,
-                    pane.agent_line.as_deref(),
-                    compact_subtitle,
-                ),
-                (None, TypedPane::HerdrWorkspace(workspace_pane)) => herdr_compact_subtitle(
-                    &herdr_row_details(workspace_pane, app),
-                    compact_subtitle,
-                ),
-                (None, _) => None,
-            };
+            let herdr_subtitle = herdr_details
+                .as_ref()
+                .and_then(|row| match &props.herdr_pane {
+                    Some(pane) => herdr_pane_compact_subtitle(
+                        row,
+                        pane.agent_line.as_deref(),
+                        compact_subtitle,
+                    ),
+                    None => herdr_compact_subtitle(row, compact_subtitle),
+                });
             let subtitle = match herdr_subtitle {
                 Some((text, true)) => Some(render_git_branch_text(
                     &text,

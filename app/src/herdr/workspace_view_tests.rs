@@ -1092,3 +1092,116 @@ fn the_sidebar_is_told_when_the_selected_pane_changes_even_within_one_directory(
         assert_eq!(changes.get(), 1, "the same pane again");
     });
 }
+
+fn scripted_commands(first_pane_title: &str) -> SessionScript {
+    SessionScript::new().workspace_with_tabs(
+        "api",
+        [
+            TabScript::new("logs", four_panes())
+                .agent(
+                    0,
+                    herdr_fake::AgentScript::new("claude", herdr_fake::AgentState::Idle),
+                )
+                .terminal_title(0, "ignored while an agent is there")
+                .agent(
+                    1,
+                    herdr_fake::AgentScript::new("claude", herdr_fake::AgentState::Working)
+                        .named("builder"),
+                )
+                .pane_label(2, "build")
+                .terminal_title(2, "make")
+                .terminal_title(3, first_pane_title),
+            TabScript::new("server", PaneTree::pane()),
+        ],
+    )
+}
+
+fn commands(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> Vec<(String, Option<String>)> {
+    view.read(app, |view, ctx| {
+        view.pane_rows(ctx)
+            .into_iter()
+            .map(|row| (row.pane.as_str().to_owned(), row.command))
+            .collect()
+    })
+}
+
+fn command_of(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> Option<String> {
+    view.read(app, |view, ctx| view.sidebar_details(ctx).command)
+}
+
+#[test]
+fn a_rows_command_is_the_agent_herdr_detects_else_the_panes_name_else_its_title() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = fake.start_session("default", scripted_commands("nvim"));
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        assert_eventually!(
+            600 => commands(&app, &view).get(1).is_some_and(|(_, command)| command.as_deref() == Some("builder")),
+            "the agents never arrived"
+        );
+
+        assert_eq!(
+            commands(&app, &view),
+            [
+                ("w1:p1".to_owned(), Some("claude".to_owned())),
+                ("w1:p2".to_owned(), Some("builder".to_owned())),
+                ("w1:p3".to_owned(), Some("build".to_owned())),
+                ("w1:p4".to_owned(), Some("nvim".to_owned())),
+            ]
+        );
+    });
+}
+
+#[test]
+fn a_pane_herdr_tells_nothing_about_has_no_command() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = fake.start_session("default", scripted_commands("nvim"));
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        select(&mut app, &view, "w1:t2");
+
+        assert_eq!(commands(&app, &view), [("w1:p5".to_owned(), None)]);
+        assert_eq!(command_of(&app, &view), None);
+    });
+}
+
+#[test]
+fn the_workspaces_command_is_the_selected_panes() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = fake.start_session("default", scripted_commands("nvim"));
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        select_pane(&mut app, &view, "w1:p3");
+        assert_eq!(command_of(&app, &view), Some("build".to_owned()));
+
+        select_pane(&mut app, &view, "w1:p4");
+        assert_eq!(command_of(&app, &view), Some("nvim".to_owned()));
+    });
+}
+
+#[test]
+fn a_title_change_reported_by_herdr_changes_the_command_and_tells_the_sidebar() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = fake.start_session("default", scripted_commands("nvim"));
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select_pane(&mut app, &view, "w1:p4");
+        assert_eq!(command_of(&app, &view), Some("nvim".to_owned()));
+        let changes = count_sidebar_changes(&mut app, &view);
+
+        session.set_script(scripted_commands("htop"));
+        session.emit_event("pane_updated", serde_json::json!({}));
+
+        assert_eventually!(
+            600 => command_of(&app, &view) == Some("htop".to_owned()),
+            "the command stayed {:?}", command_of(&app, &view)
+        );
+        assert!(changes.get() >= 1, "the sidebar was never told");
+    });
+}

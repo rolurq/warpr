@@ -16,6 +16,7 @@ fn pane(id: &str, name: Option<&str>, cwd: Option<&str>) -> PresentedPane {
         focused: false,
         cwd: cwd.map(PathBuf::from),
         name: name.map(str::to_owned),
+        title: None,
     }
 }
 

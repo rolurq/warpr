@@ -1570,7 +1570,7 @@ mod vertical_tabs_rows {
             );
 
             let api = tab_text(&app, &workspace, 0);
-            for expected in ["api", "editor", "build", "/srv/api", "w1:p3"] {
+            for expected in ["api", "editor", "builder", "/srv/api"] {
                 assert!(api.contains(expected), "{expected} missing from {api:?}");
             }
             let web = tab_text(&app, &workspace, 1);

@@ -143,6 +143,8 @@ pub struct TabScript {
     pub(crate) cwds: Vec<(usize, Option<String>)>,
     /// By pane index in the tree's order; panes without an entry have no name.
     pub(crate) pane_labels: Vec<(usize, String)>,
+    /// By pane index in the tree's order; panes without an entry report no terminal title.
+    pub(crate) terminal_titles: Vec<(usize, String)>,
     /// The Herdr pane number of each pane in the tree's order. Empty until a pane of the
     /// workspace is closed: numbers are derived from position until then, and fixed from then on
     /// so that closing a pane does not renumber the others, as in Herdr.
@@ -157,6 +159,7 @@ impl TabScript {
             focused_pane: 0,
             zoomed: false,
             agents: Vec::new(),
+            terminal_titles: Vec::new(),
             cwds: Vec::new(),
             pane_labels: Vec::new(),
             pane_numbers: Vec::new(),
@@ -182,6 +185,27 @@ impl TabScript {
             .map(|(_, label)| label.as_str())
     }
 
+    /// Gives the pane at `index` in the tree's order the title its program set, as Herdr
+    /// reports it in `terminal_title` and `terminal_title_stripped`.
+    pub fn terminal_title(mut self, index: usize, title: &str) -> Self {
+        assert!(
+            index < self.tree.pane_count(),
+            "tab {:?} has no pane at index {index}",
+            self.label
+        );
+        self.terminal_titles
+            .retain(|(existing, _)| *existing != index);
+        self.terminal_titles.push((index, title.to_owned()));
+        self
+    }
+
+    fn terminal_title_at(&self, index: usize) -> Option<&str> {
+        self.terminal_titles
+            .iter()
+            .find(|(existing, _)| *existing == index)
+            .map(|(_, title)| title.as_str())
+    }
+
     /// Takes the pane at `index` out of the tab, with what the tab holds for it. Returns `false`
     /// when it was the tab's only pane, which leaves the tab untouched.
     fn close_pane(&mut self, index: usize) -> bool {
@@ -193,6 +217,7 @@ impl TabScript {
         shift_entries(&mut self.agents, index);
         shift_entries(&mut self.cwds, index);
         shift_entries(&mut self.pane_labels, index);
+        shift_entries(&mut self.terminal_titles, index);
         self.pane_numbers.remove(index);
         let remaining = self.tree.pane_count();
         if self.focused_pane > index {
@@ -694,6 +719,10 @@ impl SessionScript {
                     }
                     if let Some(label) = tab.label_at(pane_index) {
                         pane["label"] = json!(label);
+                    }
+                    if let Some(title) = tab.terminal_title_at(pane_index) {
+                        pane["terminal_title"] = json!(title);
+                        pane["terminal_title_stripped"] = json!(title.trim());
                     }
                     if let Some(agent) = tab.agent_at(pane_index) {
                         agents.push(agent_info(&pane, agent));

@@ -62,6 +62,11 @@ pub struct PresentedPane {
     /// from the snapshot's pane list.
     #[serde(default)]
     pub name: Option<String>,
+    /// The title the pane's program has set, as Herdr reports it without control characters;
+    /// `None` when it reports none or a blank one. Like `cwd`, it is filled in from the
+    /// snapshot's pane list.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// How Herdr lays out the panes of one Herdr tab. Herdr owns the geometry; nothing here is
