@@ -2,6 +2,7 @@
 
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::context_flag::ContextFlag;
+use warp_core::features::FeatureFlag;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{ChildAnchor, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack};
 use warpui::keymap::Trigger;
@@ -177,7 +178,9 @@ where
 
     fn split_pane_menu_items(&self, ctx: &mut ViewContext<V>) -> Vec<MenuItem<V::Action>> {
         let mut items = vec![];
-        if ContextFlag::CreateNewSession.is_enabled() {
+        if ContextFlag::CreateNewSession.is_enabled()
+            && !FeatureFlag::DisableLocalPaneLayout.is_enabled()
+        {
             items.extend([
                 MenuItemFields::new("Split pane right")
                     .with_on_select_action(V::Action::from(ContextMenuAction::EmitPaneEvent(
@@ -224,17 +227,19 @@ where
             .map_or(SplitPaneState::NotInSplitPane, |h| h.split_pane_state(ctx));
         if split_pane_state.is_in_split_pane() {
             let is_maximized = split_pane_state.is_maximized();
-            items.push(
-                MenuItemFields::toggle_pane_action(is_maximized)
-                    .with_on_select_action(V::Action::from(ContextMenuAction::EmitPaneEvent(
-                        PaneEvent::ToggleMaximized,
-                    )))
-                    .with_key_shortcut_label(keybinding_name_to_display_string(
-                        "pane_group:toggle_maximize_pane",
-                        ctx,
-                    ))
-                    .into_item(),
-            );
+            if !FeatureFlag::DisableLocalPaneLayout.is_enabled() {
+                items.push(
+                    MenuItemFields::toggle_pane_action(is_maximized)
+                        .with_on_select_action(V::Action::from(ContextMenuAction::EmitPaneEvent(
+                            PaneEvent::ToggleMaximized,
+                        )))
+                        .with_key_shortcut_label(keybinding_name_to_display_string(
+                            "pane_group:toggle_maximize_pane",
+                            ctx,
+                        ))
+                        .into_item(),
+                );
+            }
 
             items.push(
                 MenuItemFields::new("Close pane")

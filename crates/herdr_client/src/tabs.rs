@@ -1,8 +1,9 @@
+use std::cmp::Reverse;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::WorkspaceId;
+use crate::{PaneDirection, WorkspaceId};
 
 /// Herdr's identifier for a Herdr tab, stable for the life of the tab.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
@@ -98,6 +99,42 @@ impl PaneLayout {
             })
             .collect()
     }
+
+    /// The pane drawn next to `pane` in `direction`: of the [frames](Self::frames) wholly on that
+    /// side of it and level with it, the nearest, then the one sharing most of its edge, then the
+    /// first in Herdr's order. `None` when there is none or `pane` is not drawn.
+    pub fn neighbor(&self, pane: &PaneId, direction: PaneDirection) -> Option<PresentedPane> {
+        let frames = self.frames();
+        let from = frames.iter().find(|candidate| candidate.id == *pane)?.rect;
+        let (from_x, from_y) = (span(from.x, from.width), span(from.y, from.height));
+        frames
+            .into_iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.id != *pane)
+            .filter_map(|(order, candidate)| {
+                let rect = candidate.rect;
+                let (x, y) = (span(rect.x, rect.width), span(rect.y, rect.height));
+                let (distance, shared) = match direction {
+                    PaneDirection::Left => (from_x.0.checked_sub(x.1)?, overlap(from_y, y)),
+                    PaneDirection::Right => (x.0.checked_sub(from_x.1)?, overlap(from_y, y)),
+                    PaneDirection::Up => (from_y.0.checked_sub(y.1)?, overlap(from_x, x)),
+                    PaneDirection::Down => (y.0.checked_sub(from_y.1)?, overlap(from_x, x)),
+                };
+                (shared > 0).then_some(((distance, Reverse(shared), order), candidate))
+            })
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, candidate)| candidate)
+    }
+}
+
+/// The cells from `start` up to, not including, `start + length`.
+fn span(start: u16, length: u16) -> (u32, u32) {
+    (u32::from(start), u32::from(start) + u32::from(length))
+}
+
+/// How many cells two spans share.
+fn overlap((a_start, a_end): (u32, u32), (b_start, b_end): (u32, u32)) -> u32 {
+    a_end.min(b_end).saturating_sub(a_start.max(b_start))
 }
 
 /// A Herdr tab as presented in the strip of its workspace.

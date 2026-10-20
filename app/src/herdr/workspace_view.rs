@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use herdr_client::{
-    AgentJump, ConnectionStatus, Contest, HerdrTabId, MetadataToken, PaneId, PaneInput,
-    PaneOwnership, PresentedAgent, PresentedHerdrTab, PresentedPane, PresentedWorkspace,
+    AgentJump, ConnectionFailure, ConnectionStatus, Contest, HerdrTabId, MetadataToken,
+    PaneDirection, PaneId, PaneInput, PaneLayout, PaneOwnership, PresentedAgent, PresentedHerdrTab,
+    PresentedPane, PresentedWorkspace, SessionTarget, SplitDirection,
 };
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warpui::elements::{
@@ -18,8 +19,8 @@ use warpui::{
 
 use super::directory_git::{DirectoryGitContext, HerdrDirectoryGit, HerdrDirectoryGitEvent};
 use super::pane_chrome::{
-    PANE_BORDER_WIDTH, PaneHeaderMouseStates, can_close_panes, dims_pane, pane_command, pane_title,
-    render_pane_header,
+    PANE_BORDER_WIDTH, PaneHeaderMouseStates, ZoomControl, can_close_panes, dims_pane,
+    pane_command, pane_title, render_pane_header, zoom_control,
 };
 use super::pane_contents::{HerdrPaneContentsRegistry, HerdrPaneContentsRegistryEvent};
 use super::pane_frames::PaneFrames;
@@ -29,7 +30,7 @@ use crate::app_state::HerdrWorkspaceContents;
 use crate::appearance::Appearance;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view;
-use crate::pane_group::{BackingView, PaneConfiguration, PaneEvent};
+use crate::pane_group::{BackingView, Direction, PaneConfiguration, PaneEvent};
 use crate::settings::{PaneSettings, PaneSettingsChangedEvent};
 use crate::util::repo_detection::{RepoDetectionSessionType, detect_possible_git_repo};
 
@@ -55,6 +56,29 @@ pub enum HerdrWorkspaceViewAction {
     /// Asks Herdr to close a pane. Nothing is removed here: the pane leaves the view once the
     /// session stops presenting it. A refused request is shown in the view.
     ClosePane(PaneId),
+    /// Asks Herdr to split a pane. Like `ClosePane`, the new pane only appears once the session
+    /// presents it, and a refused request is shown in the view.
+    SplitPane(PaneId, SplitDirection),
+    /// Asks Herdr to move the divider next to a pane one step in the direction. The panes resize
+    /// once the session presents it, and a refused request is shown in the view.
+    ResizePane(PaneId, PaneDirection),
+    /// Asks Herdr to zoom a pane, or to unzoom its Herdr tab while that is zoomed. The zoom shows
+    /// once the session presents it, the pane is selected here when Herdr accepts, and a refused
+    /// request is shown in the view.
+    ToggleZoom(PaneId),
+}
+
+/// A Warp pane action, for the pane this view acts on: the selected one, or the one a zoomed
+/// Herdr tab shows.
+#[derive(Clone, Copy, Debug)]
+pub enum HerdrPaneCommand {
+    /// Splits the pane. Herdr splits only right and down, so the other directions do nothing.
+    Split(Direction),
+    /// Moves the divider next to the pane in the direction.
+    Resize(Direction),
+    ToggleZoom,
+    /// Selects the pane next to it in the direction, as `SelectPane` does: Herdr's focus stays.
+    SelectTowards(Direction),
 }
 
 /// What the Warp sidebar shows for a Herdr workspace beyond its label.
@@ -307,16 +331,30 @@ impl HerdrWorkspaceView {
     /// The pane the user has selected in the Herdr tab this view shows, under the rules of
     /// [`Self::focused_pane_directory`].
     fn selected_pane<'a>(&self, app: &'a AppContext) -> Option<&'a PresentedPane> {
-        let layout = self
-            .presented_workspace(app)?
-            .selected_tab(self.selected_tab.as_ref())?
-            .layout
-            .as_ref()?;
+        let layout = self.shown_layout(app)?;
         layout
             .panes
             .iter()
             .filter(|pane| !layout.zoomed || pane.id == layout.focused_pane)
             .find(|pane| self.is_selected(pane))
+    }
+
+    /// The layout of the Herdr tab this view shows, once Herdr has reported one.
+    fn shown_layout<'a>(&self, app: &'a AppContext) -> Option<&'a PaneLayout> {
+        self.presented_workspace(app)?
+            .selected_tab(self.selected_tab.as_ref())?
+            .layout
+            .as_ref()
+    }
+
+    /// The pane a [`HerdrPaneCommand`] applies to: the selected one, or while the Herdr tab is
+    /// zoomed with another selection, the pane the zoom shows.
+    fn acted_on_pane(&self, app: &AppContext) -> Option<PaneId> {
+        if let Some(pane) = self.selected_pane(app) {
+            return Some(pane.id.clone());
+        }
+        let layout = self.shown_layout(app)?;
+        layout.zoomed.then(|| layout.focused_pane.clone())
     }
 
     fn is_selected(&self, pane: &PresentedPane) -> bool {
@@ -530,7 +568,6 @@ impl HerdrWorkspaceView {
         self.pane_header_states
             .borrow_mut()
             .retain(|id, _| panes.iter().any(|pane| pane.id == *id));
-        let can_close = can_close_panes(layout);
         let dim_inactive_panes = *PaneSettings::as_ref(app).should_dim_inactive_panes;
         let frames = panes
             .iter()
@@ -539,14 +576,7 @@ impl HerdrWorkspaceView {
                 let is_dimmed = dims_pane(dim_inactive_panes, panes.len(), is_selected);
                 (
                     pane.rect,
-                    self.render_pane_frame(
-                        pane,
-                        is_selected,
-                        is_dimmed,
-                        can_close,
-                        appearance,
-                        app,
-                    ),
+                    self.render_pane_frame(pane, layout, is_selected, is_dimmed, appearance, app),
                 )
             })
             .collect();
@@ -560,9 +590,9 @@ impl HerdrWorkspaceView {
     fn render_pane_frame(
         &self,
         pane: &PresentedPane,
+        layout: &PaneLayout,
         is_selected: bool,
         is_dimmed: bool,
-        can_close: bool,
         appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
@@ -622,7 +652,8 @@ impl HerdrWorkspaceView {
             .with_main_axis_size(MainAxisSize::Max)
             .with_child(render_pane_header(
                 pane,
-                can_close,
+                can_close_panes(layout),
+                zoom_control(layout),
                 &mouse_states,
                 appearance,
             ))
@@ -818,6 +849,122 @@ impl HerdrWorkspaceView {
             },
         );
     }
+
+    /// Applies `command` to the pane this view acts on: the selected pane, or while the Herdr tab
+    /// is zoomed, the pane its zoom shows. Nothing happens while there is no such pane.
+    pub fn run_pane_command(&mut self, command: HerdrPaneCommand, ctx: &mut ViewContext<Self>) {
+        let Some(pane) = self.acted_on_pane(ctx) else {
+            return;
+        };
+        let action = match command {
+            HerdrPaneCommand::Split(direction) => {
+                let Some(direction) = herdr_split(direction) else {
+                    return;
+                };
+                HerdrWorkspaceViewAction::SplitPane(pane, direction)
+            }
+            HerdrPaneCommand::Resize(direction) => {
+                HerdrWorkspaceViewAction::ResizePane(pane, herdr_direction(direction))
+            }
+            HerdrPaneCommand::ToggleZoom => HerdrWorkspaceViewAction::ToggleZoom(pane),
+            HerdrPaneCommand::SelectTowards(direction) => {
+                let Some(neighbor) = self
+                    .shown_layout(ctx)
+                    .and_then(|layout| layout.neighbor(&pane, herdr_direction(direction)))
+                else {
+                    return;
+                };
+                HerdrWorkspaceViewAction::SelectPane(neighbor.id)
+            }
+        };
+        self.handle_action(&action, ctx);
+    }
+
+    /// Asks Herdr to zoom `pane`, or to unzoom the Herdr tab when it is zoomed, as the pane's
+    /// zoom control offers. Herdr does not zoom a tab's only pane, so nothing is asked for one.
+    fn toggle_zoom(&mut self, pane: &PaneId, ctx: &mut ViewContext<Self>) {
+        let Some(control) = self.shown_layout(ctx).and_then(zoom_control) else {
+            return;
+        };
+        let (zoomed, failure_prefix) = match control {
+            ZoomControl::Zoom => (true, "Could not zoom the pane"),
+            ZoomControl::Unzoom => (false, "Could not unzoom the pane"),
+        };
+        let selected = pane.clone();
+        self.request_layout_change(
+            pane,
+            failure_prefix,
+            ctx,
+            move |target, pane| herdr_client::set_pane_zoom(target, pane, zoomed),
+            move |me, ctx| me.select_pane(selected, ctx),
+        );
+    }
+
+    /// Sends `request` for `pane` to the connected session. Nothing changes here when Herdr
+    /// accepts it but what `on_success` does: the result arrives through the session's presented
+    /// state. A refused request is shown in the view, after `failure_prefix`, and changes nothing.
+    fn request_layout_change(
+        &mut self,
+        pane: &PaneId,
+        failure_prefix: &'static str,
+        ctx: &mut ViewContext<Self>,
+        request: impl FnOnce(&SessionTarget, &PaneId) -> Result<(), ConnectionFailure> + Send + 'static,
+        on_success: impl FnOnce(&mut Self, &mut ViewContext<Self>) + 'static,
+    ) {
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.request_error = Some(format!("{failure_prefix}: no Herdr session is connected"));
+            ctx.notify();
+            return;
+        };
+        let pane = pane.clone();
+        ctx.spawn(
+            {
+                let pane = pane.clone();
+                async move { request(&target, &pane) }
+            },
+            move |me, result, ctx| {
+                match result {
+                    Ok(()) => {
+                        me.request_error = None;
+                        on_success(me, ctx);
+                    }
+                    Err(failure) => {
+                        log::error!("{failure_prefix} (Herdr pane {}): {failure}", pane.as_str());
+                        me.request_error = Some(format!("{failure_prefix}: {failure}"));
+                    }
+                }
+                ctx.notify();
+            },
+        );
+    }
+
+    /// Makes `pane` the selected pane of this view. Like the rest of the selection it is view
+    /// state: Herdr is not told.
+    fn select_pane(&mut self, pane: PaneId, ctx: &mut ViewContext<Self>) {
+        self.selected_pane = Some(pane);
+        self.report_viewed_panes(ctx);
+        self.update_shown_panes(ctx);
+        self.sync_sidebar_details(ctx);
+        ctx.notify();
+    }
+}
+
+/// The Herdr split that puts a new pane in `direction` of the pane it splits, where Herdr has one.
+fn herdr_split(direction: Direction) -> Option<SplitDirection> {
+    match direction {
+        Direction::Right => Some(SplitDirection::Right),
+        Direction::Down => Some(SplitDirection::Down),
+        Direction::Left | Direction::Up => None,
+    }
+}
+
+fn herdr_direction(direction: Direction) -> PaneDirection {
+    match direction {
+        Direction::Left => PaneDirection::Left,
+        Direction::Right => PaneDirection::Right,
+        Direction::Up => PaneDirection::Up,
+        Direction::Down => PaneDirection::Down,
+    }
 }
 
 impl Entity for HerdrWorkspaceView {
@@ -852,6 +999,27 @@ impl TypedActionView for HerdrWorkspaceView {
         match action {
             HerdrWorkspaceViewAction::CreateTab => self.create_tab(ctx),
             HerdrWorkspaceViewAction::ClosePane(pane) => self.close_pane(pane, ctx),
+            HerdrWorkspaceViewAction::SplitPane(pane, direction) => {
+                let direction = *direction;
+                self.request_layout_change(
+                    pane,
+                    "Could not split the pane",
+                    ctx,
+                    move |target, pane| herdr_client::split_pane(target, pane, direction),
+                    |_, _| {},
+                );
+            }
+            HerdrWorkspaceViewAction::ResizePane(pane, direction) => {
+                let direction = *direction;
+                self.request_layout_change(
+                    pane,
+                    "Could not resize the pane",
+                    ctx,
+                    move |target, pane| herdr_client::resize_pane(target, pane, direction),
+                    |_, _| {},
+                );
+            }
+            HerdrWorkspaceViewAction::ToggleZoom(pane) => self.toggle_zoom(pane, ctx),
             HerdrWorkspaceViewAction::Paste(pane) => {
                 let text = ctx
                     .clipboard()
@@ -867,12 +1035,8 @@ impl TypedActionView for HerdrWorkspaceView {
                 }
             }
             HerdrWorkspaceViewAction::SelectPane(pane) => {
-                self.selected_pane = Some(pane.clone());
-                self.report_viewed_panes(ctx);
-                self.update_shown_panes(ctx);
-                self.sync_sidebar_details(ctx);
+                self.select_pane(pane.clone(), ctx);
                 ctx.focus_self();
-                ctx.notify();
             }
             HerdrWorkspaceViewAction::SelectTab(tab_id) => {
                 self.selected_tab = Some(tab_id.clone());

@@ -180,7 +180,9 @@ impl EnvVarCollectionView {
 
         let mut items = Vec::new();
 
-        if ContextFlag::CreateNewSession.is_enabled() {
+        if ContextFlag::CreateNewSession.is_enabled()
+            && !FeatureFlag::DisableLocalPaneLayout.is_enabled()
+        {
             items.extend(vec![
                 split_pane_right,
                 split_pane_left,
@@ -194,7 +196,10 @@ impl EnvVarCollectionView {
             .as_ref()
             .is_some_and(|handle| handle.is_in_split_pane(ctx))
         {
-            items.extend(vec![toggle_maximize_pane, close_pane]);
+            if !FeatureFlag::DisableLocalPaneLayout.is_enabled() {
+                items.push(toggle_maximize_pane);
+            }
+            items.push(close_pane);
         }
 
         let pane_context_menu = Self::menu(items, Some(PANE_MENU_WIDTH), ctx);

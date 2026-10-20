@@ -785,6 +785,267 @@ fn a_close_herdr_rejects_shows_the_error_and_leaves_the_panes_alone() {
     });
 }
 
+fn run(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>, command: HerdrPaneCommand) {
+    app.update(|ctx| {
+        view.update(ctx, |view, ctx| view.run_pane_command(command, ctx));
+    });
+}
+
+fn requests(session: &FakeSession, method: &str) -> usize {
+    session
+        .served_methods()
+        .iter()
+        .filter(|served| served.as_str() == method)
+        .count()
+}
+
+fn selected_panes(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> Vec<String> {
+    view.read(app, |view, ctx| {
+        view.pane_rows(ctx)
+            .into_iter()
+            .filter(|row| row.is_selected)
+            .map(|row| row.pane.as_str().to_owned())
+            .collect()
+    })
+}
+
+fn shown_panes(app: &App, view: &ViewHandle<HerdrWorkspaceView>) -> Vec<String> {
+    view.read(app, |view, ctx| {
+        view.pane_rows(ctx)
+            .into_iter()
+            .map(|row| row.pane.as_str().to_owned())
+            .collect()
+    })
+}
+
+/// The width Herdr's layout of the `logs` tab gives `pane`.
+fn logs_pane_width(app: &App, pane: &str) -> Option<u16> {
+    HerdrSessionModel::handle(app).read(app, |model, _| {
+        model
+            .presented()
+            .workspace(&WorkspaceId::from("w1"))?
+            .herdr_tabs
+            .iter()
+            .find(|tab| tab.label == "logs")?
+            .layout
+            .as_ref()?
+            .panes
+            .iter()
+            .find(|candidate| candidate.id.as_str() == pane)
+            .map(|pane| pane.rect.width)
+    })
+}
+
+#[test]
+fn splitting_goes_through_herdr_and_the_new_pane_arrives_with_the_session_beside_the_others() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        select_pane(&mut app, &view, "w1:p3");
+
+        run(&mut app, &view, HerdrPaneCommand::Split(Direction::Right));
+
+        assert_eventually!(
+            600 => shown_panes(&app, &view) == ["w1:p2", "w1:p3", "w1:p8", "w1:p4"],
+            "shown panes were {:?}", shown_panes(&app, &view)
+        );
+        assert_eq!(requests(&session, "pane.split"), 1);
+        assert_eq!(
+            selected_panes(&app, &view),
+            ["w1:p3"],
+            "the selection, like Herdr's focus, stays on the split pane"
+        );
+    });
+}
+
+#[test]
+fn splitting_left_or_up_asks_herdr_nothing_because_herdr_only_splits_right_and_down() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        run(&mut app, &view, HerdrPaneCommand::Split(Direction::Left));
+        run(&mut app, &view, HerdrPaneCommand::Split(Direction::Up));
+        run(&mut app, &view, HerdrPaneCommand::Split(Direction::Down));
+
+        assert_eventually!(
+            600 => shown_panes(&app, &view).len() == 4,
+            "shown panes were {:?}", shown_panes(&app, &view)
+        );
+        assert_eq!(requests(&session, "pane.split"), 1, "only the split down");
+    });
+}
+
+#[test]
+fn zooming_shows_the_pane_alone_as_herdr_reports_it_selects_it_and_unzooming_brings_the_others_back()
+ {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        app.update(|ctx| {
+            view.update(ctx, |view, ctx| {
+                view.handle_action(
+                    &HerdrWorkspaceViewAction::ToggleZoom(PaneId::from("w1:p4")),
+                    ctx,
+                );
+            });
+        });
+
+        assert_eventually!(
+            600 => shown_panes(&app, &view) == ["w1:p4"],
+            "shown panes were {:?}", shown_panes(&app, &view)
+        );
+        assert_eq!(selected_panes(&app, &view), ["w1:p4"]);
+
+        run(&mut app, &view, HerdrPaneCommand::ToggleZoom);
+
+        assert_eventually!(
+            600 => shown_panes(&app, &view) == ["w1:p2", "w1:p3", "w1:p4"],
+            "shown panes were {:?}", shown_panes(&app, &view)
+        );
+        assert_eq!(requests(&session, "pane.zoom"), 2);
+    });
+}
+
+#[test]
+fn a_zoom_another_client_made_is_shown_and_can_be_undone_here() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let _session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t3");
+        assert_eq!(shown_panes(&app, &view), ["w1:p7"]);
+
+        run(&mut app, &view, HerdrPaneCommand::ToggleZoom);
+
+        assert_eventually!(
+            600 => shown_panes(&app, &view) == ["w1:p5", "w1:p6", "w1:p7"],
+            "shown panes were {:?}", shown_panes(&app, &view)
+        );
+    });
+}
+
+#[test]
+fn resizing_moves_herdrs_divider_next_to_the_selected_pane() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        select_pane(&mut app, &view, "w1:p2");
+        assert_eq!(logs_pane_width(&app, "w1:p2"), Some(36));
+
+        run(&mut app, &view, HerdrPaneCommand::Resize(Direction::Right));
+
+        assert_eventually!(
+            600 => logs_pane_width(&app, "w1:p2") == Some(42),
+            "w1:p2 is {:?} wide", logs_pane_width(&app, "w1:p2")
+        );
+        assert_eq!(requests(&session, "pane.resize"), 1);
+    });
+}
+
+#[test]
+fn moving_the_selection_by_direction_stays_in_the_view_and_asks_herdr_nothing() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        select_pane(&mut app, &view, "w1:p2");
+        let served = session.served_methods().len();
+
+        run(
+            &mut app,
+            &view,
+            HerdrPaneCommand::SelectTowards(Direction::Left),
+        );
+        assert_eq!(
+            selected_panes(&app, &view),
+            ["w1:p2"],
+            "nothing is left of it"
+        );
+
+        run(
+            &mut app,
+            &view,
+            HerdrPaneCommand::SelectTowards(Direction::Right),
+        );
+        assert_eq!(selected_panes(&app, &view), ["w1:p3"]);
+
+        run(
+            &mut app,
+            &view,
+            HerdrPaneCommand::SelectTowards(Direction::Down),
+        );
+        assert_eq!(selected_panes(&app, &view), ["w1:p4"]);
+
+        let asked: Vec<_> = session.served_methods()[served..]
+            .iter()
+            .filter(|method| method.starts_with("pane."))
+            .cloned()
+            .collect();
+        assert!(asked.is_empty(), "Herdr was asked {asked:?}");
+    });
+}
+
+#[test]
+fn a_layout_change_herdr_rejects_shows_the_error_and_leaves_the_panes_as_they_were() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+        select_pane(&mut app, &view, "w1:p3");
+
+        for (command, error) in [
+            (
+                HerdrPaneCommand::Split(Direction::Down),
+                "Could not split the pane:",
+            ),
+            (HerdrPaneCommand::ToggleZoom, "Could not zoom the pane:"),
+            (
+                HerdrPaneCommand::Resize(Direction::Left),
+                "Could not resize the pane:",
+            ),
+        ] {
+            session.reject_next_layout_change("pane_busy", "try again later");
+
+            run(&mut app, &view, command);
+
+            assert_eventually!(
+                600 => rendered_text(&app, &view).starts_with(error),
+                "rendered text was {:?}", rendered_text(&app, &view)
+            );
+            assert!(
+                rendered_text(&app, &view).contains("try again later"),
+                "{command:?}"
+            );
+            assert_eq!(
+                shown_panes(&app, &view),
+                ["w1:p2", "w1:p3", "w1:p4"],
+                "{command:?}"
+            );
+            assert_eq!(selected_panes(&app, &view), ["w1:p3"], "{command:?}");
+            assert_eq!(logs_pane_width(&app, "w1:p2"), Some(36), "{command:?}");
+        }
+    });
+}
+
 /// The size of the window the test platform opens and the scale factor it reports.
 const TEST_WINDOW_WIDTH: f32 = 1024.;
 const TEST_WINDOW_HEIGHT: f32 = 768.;

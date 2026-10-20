@@ -4,6 +4,7 @@ use warpui::elements::{
     CrossAxisAlignment, Empty, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
     ParentElement as _,
 };
+use warpui::ui_components::components::UiComponent as _;
 
 use super::workspace_view::HerdrWorkspaceViewAction;
 use crate::appearance::Appearance;
@@ -11,6 +12,8 @@ use crate::pane_group::pane::view::StandardHeader;
 use crate::pane_group::pane::view::header::components::{
     header_edge_min_width, render_close_button, render_standard_header_row,
 };
+use crate::ui_components::buttons::icon_button_with_color;
+use crate::ui_components::icons::Icon;
 
 /// The width of the border drawn around each pane.
 pub(super) const PANE_BORDER_WIDTH: f32 = 1.;
@@ -19,6 +22,7 @@ pub(super) const PANE_BORDER_WIDTH: f32 = 1.;
 #[derive(Clone, Default)]
 pub(super) struct PaneHeaderMouseStates {
     hover: MouseStateHandle,
+    zoom_button: MouseStateHandle,
     close_button: MouseStateHandle,
     click: MouseStateHandle,
 }
@@ -55,17 +59,38 @@ pub(super) fn can_close_panes(layout: &PaneLayout) -> bool {
     layout.panes.len() > 1
 }
 
+/// What a pane header's zoom control does when clicked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ZoomControl {
+    Zoom,
+    Unzoom,
+}
+
+/// The zoom control the panes of `layout` offer: none while the Herdr tab holds one pane, which
+/// Herdr does not zoom, and an unzoom control while the tab is zoomed.
+pub(super) fn zoom_control(layout: &PaneLayout) -> Option<ZoomControl> {
+    if layout.panes.len() < 2 {
+        return None;
+    }
+    Some(if layout.zoomed {
+        ZoomControl::Unzoom
+    } else {
+        ZoomControl::Zoom
+    })
+}
+
 /// Whether a pane is drawn dimmed: when the setting is on, it shares its view with other panes
 /// and is not the selected one.
 pub(super) fn dims_pane(setting_on: bool, shown_panes: usize, is_selected: bool) -> bool {
     setting_on && shown_panes > 1 && !is_selected
 }
 
-/// Warp's standard pane header for a Herdr pane: its title centered, and a close button while the
-/// pointer is over the header. Clicking the header selects the pane.
+/// Warp's standard pane header for a Herdr pane: its title centered, and the zoom control and a
+/// close button while the pointer is over the header. Clicking the header selects the pane.
 pub(super) fn render_pane_header(
     pane: &PresentedPane,
     can_close: bool,
+    zoom: Option<ZoomControl>,
     mouse_states: &PaneHeaderMouseStates,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
@@ -76,6 +101,8 @@ pub(super) fn render_pane_header(
         .sub_text_color(appearance.theme().background());
     let close = HerdrWorkspaceViewAction::ClosePane(pane.id.clone());
     let close_button_state = mouse_states.close_button.clone();
+    let toggle_zoom = HerdrWorkspaceViewAction::ToggleZoom(pane.id.clone());
+    let zoom_button_state = mouse_states.zoom_button.clone();
 
     let row = render_standard_header_row(
         header,
@@ -89,6 +116,18 @@ pub(super) fn render_pane_header(
                 .with_main_axis_alignment(MainAxisAlignment::End)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_main_axis_size(MainAxisSize::Max);
+            if let Some(zoom) = zoom.filter(|_| is_hovered) {
+                let icon = match zoom {
+                    ZoomControl::Zoom => Icon::Maximize,
+                    ZoomControl::Unzoom => Icon::Minimize,
+                };
+                controls.add_child(
+                    icon_button_with_color(appearance, icon, false, zoom_button_state, icon_color)
+                        .build()
+                        .on_click(move |ctx, _, _| ctx.dispatch_typed_action(toggle_zoom.clone()))
+                        .finish(),
+                );
+            }
             if has_close_button && is_hovered {
                 controls.add_child(render_close_button(
                     appearance,
@@ -98,7 +137,8 @@ pub(super) fn render_pane_header(
                     close,
                 ));
             }
-            (controls, header_edge_min_width(u32::from(has_close_button)))
+            let buttons = u32::from(zoom.is_some()) + u32::from(has_close_button);
+            (controls, header_edge_min_width(buttons))
         },
     );
 

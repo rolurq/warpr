@@ -86,3 +86,19 @@ fn a_pane_is_dimmed_only_when_the_setting_is_on_it_shares_the_view_and_it_is_not
     assert!(!dims_pane(false, 2, false), "the setting is off");
     assert!(!dims_pane(true, 1, false), "a lone pane is not inactive");
 }
+
+#[test]
+fn the_only_pane_of_a_herdr_tab_offers_no_zoom_and_a_zoomed_tab_offers_to_unzoom() {
+    let alone = layout(vec![pane("w1:p1", None, None)], false);
+    let split = || vec![pane("w1:p1", None, None), pane("w1:p2", None, None)];
+
+    assert_eq!(zoom_control(&alone), None);
+    assert_eq!(
+        zoom_control(&layout(split(), false)),
+        Some(ZoomControl::Zoom)
+    );
+    assert_eq!(
+        zoom_control(&layout(split(), true)),
+        Some(ZoomControl::Unzoom)
+    );
+}

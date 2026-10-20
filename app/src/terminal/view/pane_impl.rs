@@ -704,7 +704,9 @@ impl BackingView for TerminalView {
         }
 
         // Split-pane related items.
-        if self.split_pane_state(ctx).is_in_split_pane() {
+        if self.split_pane_state(ctx).is_in_split_pane()
+            && !FeatureFlag::DisableLocalPaneLayout.is_enabled()
+        {
             if !items.is_empty() {
                 items.push(MenuItem::Separator);
             }

@@ -11,7 +11,10 @@ use std::time::Duration;
 use parking_lot::{Condvar, Mutex};
 use serde_json::{Value, json};
 
-use crate::{AgentState, SessionScript};
+use crate::{AgentState, SessionScript, SplitDirection};
+
+/// How far `pane.resize` moves a divider when it is given no amount, as a share of the split.
+const RESIZE_STEP: f32 = 0.05;
 
 /// Subscription types Herdr accepts without naming a pane.
 const LIFECYCLE_SUBSCRIPTIONS: [&str; 24] = [
@@ -117,6 +120,9 @@ struct Shared {
     creation_rejection: Mutex<Option<(String, String)>>,
     /// The error the next `pane.close` request is answered with, if one is armed.
     close_rejection: Mutex<Option<(String, String)>>,
+    /// The error the next `pane.split`, `pane.zoom` or `pane.resize` request is answered with, if
+    /// one is armed.
+    layout_rejection: Mutex<Option<(String, String)>>,
 }
 
 impl Shared {
@@ -191,22 +197,14 @@ impl Shared {
         let snapshot = script.snapshot();
         drop(script);
 
-        let find = |list: &str, key: &str, wanted: &str| {
-            snapshot[list]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|entry| entry[key] == wanted)
-                .cloned()
-                .unwrap_or(Value::Null)
-        };
         let mut result = json!({
             "type": event,
-            "tab": find("tabs", "tab_id", &tab_id),
-            "root_pane": find("panes", "tab_id", &tab_id),
+            "tab": find_entry(&snapshot, "tabs", "tab_id", &tab_id),
+            "root_pane": find_entry(&snapshot, "panes", "tab_id", &tab_id),
         });
         if event == "workspace_created" {
-            result["workspace"] = find("workspaces", "workspace_id", &workspace_id);
+            result["workspace"] =
+                find_entry(&snapshot, "workspaces", "workspace_id", &workspace_id);
         }
         self.emit(event, &result);
         ok(id, result)
@@ -234,6 +232,169 @@ impl Shared {
             &json!({ "type": "pane_closed", "pane_id": pane_id, "workspace_id": workspace_id }),
         );
         ok(id, json!({ "type": "ok" }))
+    }
+
+    /// Serves `pane.split`: splits the pane as Herdr does without `focus`, announces the new pane
+    /// and the changed layout to subscribers and answers with the new pane.
+    fn split_pane(&self, id: &Value, params: &Value) -> Value {
+        let Some(pane_id) = params["target_pane_id"].as_str() else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `target_pane_id`",
+            );
+        };
+        let direction = match params["direction"].as_str() {
+            Some("right") => SplitDirection::Right,
+            Some("down") => SplitDirection::Down,
+            other => {
+                return error(
+                    id,
+                    "invalid_request",
+                    &format!(
+                        "invalid request: unknown variant {other:?}, expected `right` or `down`"
+                    ),
+                );
+            }
+        };
+        if let Some((code, message)) = self.layout_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let mut script = self.script.lock();
+        let Some(new_pane_id) = script.split_pane(pane_id, direction) else {
+            return error(id, "pane_not_found", &format!("pane {pane_id} not found"));
+        };
+        let snapshot = script.snapshot();
+        drop(script);
+
+        let pane = find_entry(&snapshot, "panes", "pane_id", &new_pane_id);
+        self.emit(
+            "pane_created",
+            &json!({ "type": "pane_created", "pane": pane }),
+        );
+        self.emit_layout_updated(&snapshot, &new_pane_id);
+        ok(id, json!({ "type": "pane_info", "pane": pane }))
+    }
+
+    /// Serves `pane.zoom`: zooms the pane or unzooms its tab as Herdr does, announces a moved
+    /// focus and the layout to subscribers and answers with the outcome.
+    fn zoom_pane(&self, id: &Value, params: &Value) -> Value {
+        let Some(pane_id) = params["pane_id"].as_str() else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `pane_id`",
+            );
+        };
+        let zoomed = match params["mode"].as_str() {
+            None | Some("toggle") => None,
+            Some("on") => Some(true),
+            Some("off") => Some(false),
+            Some(other) => {
+                return error(
+                    id,
+                    "invalid_request",
+                    &format!("invalid request: unknown variant `{other}`"),
+                );
+            }
+        };
+        if let Some((code, message)) = self.layout_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let mut script = self.script.lock();
+        let Some(change) = script.zoom_pane(pane_id, zoomed) else {
+            return error(id, "pane_not_found", &format!("pane {pane_id} not found"));
+        };
+        let snapshot = script.snapshot();
+        drop(script);
+
+        if change.focus_changed {
+            let workspace_id =
+                find_entry(&snapshot, "panes", "pane_id", pane_id)["workspace_id"].clone();
+            self.emit(
+                "pane_focused",
+                &json!({ "type": "pane_focused", "pane_id": pane_id, "workspace_id": workspace_id }),
+            );
+        }
+        let layout = self.emit_layout_updated(&snapshot, pane_id);
+        ok(
+            id,
+            json!({
+                "type": "pane_zoom",
+                "zoom": {
+                    "changed": change.zoom_changed || change.focus_changed,
+                    "zoom_changed": change.zoom_changed,
+                    "focus_changed": change.focus_changed,
+                    "pane_id": pane_id,
+                    "focused_pane_id": layout["focused_pane_id"],
+                    "zoomed": change.zoomed,
+                    "layout": layout,
+                },
+            }),
+        )
+    }
+
+    /// Serves `pane.resize`: moves the divider by Herdr's default step, announces the layout to
+    /// subscribers and answers with the outcome.
+    fn resize_pane(&self, id: &Value, params: &Value) -> Value {
+        let Some(pane_id) = params["pane_id"].as_str() else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `pane_id`",
+            );
+        };
+        let (direction, step) = match params["direction"].as_str() {
+            Some("left") => (SplitDirection::Right, -RESIZE_STEP),
+            Some("right") => (SplitDirection::Right, RESIZE_STEP),
+            Some("up") => (SplitDirection::Down, -RESIZE_STEP),
+            Some("down") => (SplitDirection::Down, RESIZE_STEP),
+            other => {
+                return error(
+                    id,
+                    "invalid_request",
+                    &format!("invalid request: unknown variant {other:?}"),
+                );
+            }
+        };
+        if let Some((code, message)) = self.layout_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let mut script = self.script.lock();
+        let Some(changed) = script.move_divider(pane_id, direction, step) else {
+            return error(id, "pane_not_found", &format!("pane {pane_id} not found"));
+        };
+        let snapshot = script.snapshot();
+        drop(script);
+
+        let layout = self.emit_layout_updated(&snapshot, pane_id);
+        let mut resize = json!({
+            "changed": changed,
+            "pane_id": pane_id,
+            "focused_pane_id": layout["focused_pane_id"],
+            "layout": layout,
+        });
+        if !changed {
+            resize["reason"] = json!("unchanged");
+        }
+        ok(id, json!({ "type": "pane_resize", "resize": resize }))
+    }
+
+    /// Announces `layout_updated` for the Herdr tab holding `pane_id` and returns its layout as
+    /// `snapshot` reports it.
+    fn emit_layout_updated(&self, snapshot: &Value, pane_id: &str) -> Value {
+        let tab_id = &find_entry(snapshot, "panes", "pane_id", pane_id)["tab_id"];
+        let layout = find_entry(
+            snapshot,
+            "layouts",
+            "tab_id",
+            tab_id.as_str().unwrap_or_default(),
+        );
+        self.emit(
+            "layout_updated",
+            &json!({ "type": "layout_updated", "layout": layout }),
+        );
+        layout
     }
 
     /// Serves `worktree.create`: adds the linked worktree as a workspace, announces it to
@@ -352,6 +513,7 @@ impl FakeSession {
                 subscriptions_to_lose: Mutex::new(0),
                 creation_rejection: Mutex::new(None),
                 close_rejection: Mutex::new(None),
+                layout_rejection: Mutex::new(None),
             }),
             listener: Mutex::new(None),
         };
@@ -471,6 +633,12 @@ impl FakeSession {
     /// closing anything, as Herdr does for a request it refuses.
     pub fn reject_next_close(&self, code: &str, message: &str) {
         *self.shared.close_rejection.lock() = Some((code.to_owned(), message.to_owned()));
+    }
+
+    /// Answers the next `pane.split`, `pane.zoom` or `pane.resize` request with the error `code`
+    /// and `message` instead of changing anything, as Herdr does for a request it refuses.
+    pub fn reject_next_layout_change(&self, code: &str, message: &str) {
+        *self.shared.layout_rejection.lock() = Some((code.to_owned(), message.to_owned()));
     }
 
     /// How many connections are subscribed to events.
@@ -613,6 +781,9 @@ fn serve_connection(stream: UnixStream, shared: &Shared, connection_id: u64) {
             "workspace.create" | "tab.create" => shared.create(&id, method, &request["params"]),
             "worktree.create" => shared.create_worktree(&id, &request["params"]),
             "pane.close" => shared.close_pane(&id, &request["params"]),
+            "pane.split" => shared.split_pane(&id, &request["params"]),
+            "pane.zoom" => shared.zoom_pane(&id, &request["params"]),
+            "pane.resize" => shared.resize_pane(&id, &request["params"]),
             "pane.list" => {
                 let panes = shared.script.lock().snapshot()["panes"].clone();
                 ok(&id, json!({ "type": "pane_list", "panes": panes }))
@@ -674,6 +845,17 @@ fn ok(id: &Value, result: Value) -> Value {
 
 fn error(id: &Value, code: &str, message: &str) -> Value {
     json!({ "id": id, "error": { "code": code, "message": message } })
+}
+
+/// The entry of the `list` array of a snapshot whose `key` is `wanted`, or null.
+fn find_entry(snapshot: &Value, list: &str, key: &str, wanted: &str) -> Value {
+    snapshot[list]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry[key] == wanted)
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
