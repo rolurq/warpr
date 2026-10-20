@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use herdr_client::{
-    AgentJump, ConnectionFailure, ConnectionStatus, Contest, HerdrTabId, PaneDirection, PaneId,
-    PaneInput, PaneLayout, PaneOwnership, PresentedAgent, PresentedHerdrTab, PresentedPane,
-    PresentedWorkspace, SessionTarget, SplitDirection,
+    AgentJump, ConnectionFailure, ConnectionStatus, Contest, HerdrTabId, MetadataToken,
+    PaneDirection, PaneId, PaneInput, PaneLayout, PaneOwnership, PresentedAgent, PresentedHerdrTab,
+    PresentedPane, PresentedWorkspace, SessionTarget, SplitDirection,
 };
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warpui::elements::{
@@ -89,6 +89,18 @@ pub struct HerdrSidebarDetails<'a> {
     pub git: Option<DirectoryGitContext>,
     /// What Herdr says is running in the selected pane.
     pub command: Option<String>,
+}
+
+/// What Herdr presents about a workspace as a whole, rather than about its selected pane.
+pub struct HerdrWorkspaceOverview {
+    pub label: String,
+    /// Sorted by name.
+    pub tokens: Vec<MetadataToken>,
+    /// Every agent in the workspace, in the order Herdr lists them.
+    pub agents: Vec<PresentedAgent>,
+    /// The labels of the linked worktrees nested under the workspace; empty unless it leads a
+    /// group of them.
+    pub worktrees: Vec<String>,
 }
 
 /// A pane of the Herdr tab a workspace's view shows, as the vertical tabs list it.
@@ -366,6 +378,42 @@ impl HerdrWorkspaceView {
             directory,
             git: directory.and_then(|directory| self.directory_git_context(directory, app)),
             command,
+        }
+    }
+
+    /// What the session presents about this workspace as a whole. A workspace the session does
+    /// not present yet has only its label.
+    pub fn overview(&self, app: &AppContext) -> HerdrWorkspaceOverview {
+        let Some(workspace) = self.presented_workspace(app) else {
+            return HerdrWorkspaceOverview {
+                label: self.contents.title().to_owned(),
+                tokens: Vec::new(),
+                agents: Vec::new(),
+                worktrees: Vec::new(),
+            };
+        };
+        let session = HerdrSessionModel::as_ref(app);
+        let presented = session.presented();
+        let worktrees = presented
+            .workspace_groups()
+            .into_iter()
+            .find(|group| group.first().is_some_and(|lead| **lead == workspace.id))
+            .into_iter()
+            .flat_map(|group| group.into_iter().skip(1))
+            .filter_map(|member| presented.workspace(member))
+            .map(|member| member.label.clone())
+            .collect();
+        HerdrWorkspaceOverview {
+            label: workspace.label.clone(),
+            tokens: workspace.tokens.clone(),
+            agents: session
+                .agents()
+                .agents
+                .iter()
+                .filter(|agent| agent.workspace == workspace.id)
+                .cloned()
+                .collect(),
+            worktrees,
         }
     }
 

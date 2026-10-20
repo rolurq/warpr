@@ -52,7 +52,7 @@ use crate::context_chips::github_pr_display_text_from_url;
 use crate::drive::DriveObjectType;
 use crate::drive::cloud_object_styling::warp_drive_icon_color;
 use crate::editor::EditorView;
-use crate::herdr::{DirectoryGitContext, HerdrPaneRow};
+use crate::herdr::{DirectoryGitContext, HerdrPaneRow, HerdrWorkspaceOverview};
 use crate::pane_group::pane::IPaneType;
 use crate::pane_group::{
     CodePane, HerdrWorkspacePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, TerminalPane,
@@ -140,6 +140,20 @@ fn vtab_pane_row_position_id(pane_group_id: EntityId, pane_id: PaneId) -> String
     format!("vertical_tabs:pane_row:{pane_group_id:?}:{pane_id}")
 }
 
+/// The position id a row saves: a Herdr pane's row has an id of its own, as it is one of several
+/// rows of the same workspace pane.
+fn vtab_row_position_id(
+    pane_group_id: EntityId,
+    pane_id: PaneId,
+    herdr_pane: Option<&HerdrPaneId>,
+) -> String {
+    let base = vtab_pane_row_position_id(pane_group_id, pane_id);
+    match herdr_pane {
+        Some(herdr_pane) => format!("{base}:{}", herdr_pane.as_str()),
+        None => base,
+    }
+}
+
 /// Save-position id for a tab group header's kebab button; anchors the group menu.
 pub(crate) fn vtab_group_kebab_position_id(tab_group_id: TabGroupId) -> String {
     format!("vertical_tabs:group_kebab:{tab_group_id:?}")
@@ -173,11 +187,13 @@ fn detail_target_for_hovered_row(
     pane_group_id: EntityId,
     pane_id: PaneId,
     granularity: VerticalTabsDisplayGranularity,
+    herdr_pane: Option<&HerdrPaneId>,
 ) -> VerticalTabsDetailTarget {
     match granularity {
         VerticalTabsDisplayGranularity::Panes => VerticalTabsDetailTarget::Pane {
             pane_group_id,
             pane_id,
+            herdr_pane: herdr_pane.cloned(),
         },
         VerticalTabsDisplayGranularity::Tabs => VerticalTabsDetailTarget::Tab {
             pane_group_id,
@@ -186,7 +202,7 @@ fn detail_target_for_hovered_row(
     }
 }
 
-fn detail_target_kind(target: VerticalTabsDetailTarget) -> VerticalTabsDetailTargetKind {
+fn detail_target_kind(target: &VerticalTabsDetailTarget) -> VerticalTabsDetailTargetKind {
     match target {
         VerticalTabsDetailTarget::Pane { .. } => VerticalTabsDetailTargetKind::Pane,
         VerticalTabsDetailTarget::Tab { .. } => VerticalTabsDetailTargetKind::Tab,
@@ -250,7 +266,7 @@ where
 
 fn pane_ids_for_detail_target(
     pane_group: &PaneGroup,
-    target: VerticalTabsDetailTarget,
+    target: &VerticalTabsDetailTarget,
     app: &AppContext,
 ) -> Option<Vec<PaneId>> {
     let visible_pane_ids = pane_group.visible_pane_ids();
@@ -384,13 +400,14 @@ fn render_pane_row_element(
             props.pane_group_id,
             props.pane_id,
             props.display_granularity,
+            props.herdr_pane.as_ref().map(|herdr_pane| &herdr_pane.pane),
         )
     });
-    let base_row_position_id = vtab_pane_row_position_id(props.pane_group_id, props.pane_id);
-    let row_position_id = match &props.herdr_pane {
-        Some(herdr_pane) => format!("{base_row_position_id}:{}", herdr_pane.pane.as_str()),
-        None => base_row_position_id,
-    };
+    let row_position_id = vtab_row_position_id(
+        props.pane_group_id,
+        props.pane_id,
+        props.herdr_pane.as_ref().map(|herdr_pane| &herdr_pane.pane),
+    );
     let PaneProps {
         pane_id,
         pane_group_id,
@@ -535,7 +552,7 @@ fn render_pane_row_element(
         let mut changed = false;
         if is_hovered {
             if !suppress_hover && overlay_state.active_target != detail_target {
-                overlay_state.active_target = detail_target;
+                overlay_state.active_target = detail_target.clone();
                 if detail_target.is_none() {
                     overlay_state.safe_triangle.set_target_rect(None);
                 }
@@ -607,11 +624,14 @@ struct PaneRowBadgeMouseStates {
     pull_request: MouseStateHandle,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum VerticalTabsDetailTarget {
     Pane {
         pane_group_id: EntityId,
         pane_id: PaneId,
+        /// The Herdr pane whose row of the workspace pane was hovered, which anchors the
+        /// sidecar to that row.
+        herdr_pane: Option<HerdrPaneId>,
     },
     Tab {
         pane_group_id: EntityId,
@@ -631,6 +651,21 @@ impl VerticalTabsDetailTarget {
             Self::Pane { pane_id, .. } => *pane_id,
             Self::Tab { source_pane_id, .. } => *source_pane_id,
         }
+    }
+
+    fn herdr_pane(&self) -> Option<&HerdrPaneId> {
+        match self {
+            Self::Pane { herdr_pane, .. } => herdr_pane.as_ref(),
+            Self::Tab { .. } => None,
+        }
+    }
+
+    fn anchor_position_id(&self) -> String {
+        vtab_row_position_id(
+            self.pane_group_id(),
+            self.source_pane_id(),
+            self.herdr_pane(),
+        )
     }
 }
 
@@ -671,16 +706,13 @@ impl VerticalTabsDetailHoverState {
             .overlay_state
             .lock()
             .expect("vertical tabs detail overlay lock poisoned");
-        let Some(active_target) = overlay_state.active_target else {
+        let Some(active_target) = overlay_state.active_target.clone() else {
             return false;
         };
 
         let row_rect = app.element_position_by_id_at_last_frame(
             self.window_id,
-            vtab_pane_row_position_id(
-                active_target.pane_group_id(),
-                active_target.source_pane_id(),
-            ),
+            active_target.anchor_position_id(),
         );
         let sidecar_rect = app.element_position_by_id_at_last_frame(
             self.window_id,
@@ -836,6 +868,7 @@ impl VerticalTabsPanelState {
             .map(|overlay_state| {
                 overlay_state
                     .active_target
+                    .as_ref()
                     .is_some_and(|target| target.pane_group_id() == pane_group_id)
             })
             .unwrap_or(false);
@@ -1204,6 +1237,48 @@ fn herdr_details_search_fragments(details: HerdrRowDetails) -> Vec<String> {
         fragments.extend(entry.diff_stats.as_ref().map(vtab_diff_stats_text));
     }
     fragments
+}
+
+/// Everything the details sidecar says about a Herdr workspace, whatever its row leaves out.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct HerdrWorkspaceDetail {
+    label: Option<String>,
+    working_directory: Option<String>,
+    branch_entry: Option<VerticalTabsSummaryBranchEntry>,
+    /// Each as `name: value`.
+    tokens: Vec<String>,
+    /// Each as [`herdr_agent_line`] says.
+    agents: Vec<String>,
+    worktrees: Vec<String>,
+}
+
+fn herdr_workspace_detail(
+    overview: HerdrWorkspaceOverview,
+    row: HerdrRowDetails,
+) -> HerdrWorkspaceDetail {
+    HerdrWorkspaceDetail {
+        label: normalize_summary_text(&overview.label),
+        working_directory: row.working_directory,
+        branch_entry: row.branch_entry,
+        tokens: overview
+            .tokens
+            .iter()
+            .map(|token| format!("{}: {}", token.name, token.value))
+            .collect(),
+        agents: overview.agents.iter().map(herdr_agent_line).collect(),
+        worktrees: overview.worktrees,
+    }
+}
+
+fn herdr_workspace_detail_of(
+    workspace_pane: &HerdrWorkspacePane,
+    app: &AppContext,
+) -> HerdrWorkspaceDetail {
+    let view = workspace_pane.workspace_view(app);
+    herdr_workspace_detail(
+        view.as_ref(app).overview(app),
+        herdr_row_details(workspace_pane, app),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -4046,8 +4121,10 @@ impl TypedPane<'_> {
     }
 
     fn supports_vertical_tabs_detail_sidecar(&self) -> bool {
-        matches!(self, TypedPane::Terminal(_) | TypedPane::Code(_))
-            || self.warp_drive_object_type().is_some()
+        matches!(
+            self,
+            TypedPane::Terminal(_) | TypedPane::Code(_) | TypedPane::HerdrWorkspace(_)
+        ) || self.warp_drive_object_type().is_some()
     }
     fn kind_label(&self) -> &'static str {
         match self {
@@ -7671,6 +7748,108 @@ fn typed_pane_warp_drive_object_type(typed: &TypedPane<'_>) -> Option<DriveObjec
     }
 }
 
+fn render_herdr_workspace_detail_section(
+    props: &PaneProps<'_>,
+    workspace_pane: &HerdrWorkspacePane,
+    appearance: &Appearance,
+    app: &AppContext,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let text_colors = detail_sidecar_text_colors(theme);
+    let detail = herdr_workspace_detail_of(workspace_pane, app);
+
+    let mut section = Flex::column()
+        .with_cross_axis_alignment(CrossAxisAlignment::Start)
+        .with_spacing(DETAIL_SIDECAR_SECTION_GAP);
+    if let Some(label) = detail.label {
+        section.add_child(render_detail_wrapping_text(
+            label,
+            12.,
+            text_colors.main,
+            None,
+            appearance,
+        ));
+    }
+    if let Some(working_directory) = detail.working_directory {
+        section.add_child(render_detail_wrapping_text(
+            working_directory,
+            12.,
+            text_colors.main,
+            None,
+            appearance,
+        ));
+    }
+    if let Some(entry) = detail.branch_entry {
+        section.add_child(render_git_branch_text(
+            &entry.branch_name,
+            text_colors.main,
+            12.,
+            appearance,
+        ));
+        let mut badges = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.);
+        let mut has_badges = false;
+        if let Some(diff_stats) = &entry.diff_stats {
+            badges.add_child(render_passive_terminal_diff_stats_badge(
+                diff_stats, appearance,
+            ));
+            has_badges = true;
+        }
+        if let Some(pull_request_label) = &entry.pull_request_label {
+            badges.add_child(render_passive_terminal_pull_request_badge(
+                pull_request_label,
+                appearance,
+            ));
+            has_badges = true;
+        }
+        if has_badges {
+            section.add_child(badges.finish());
+        }
+    }
+    for token in detail.tokens {
+        section.add_child(render_detail_wrapping_text(
+            token,
+            12.,
+            text_colors.sub,
+            None,
+            appearance,
+        ));
+    }
+    for (caption, lines) in [("Agents", detail.agents), ("Worktrees", detail.worktrees)] {
+        if lines.is_empty() {
+            continue;
+        }
+        section.add_child(render_detail_badge(
+            caption,
+            None,
+            None,
+            text_colors.disabled,
+            appearance,
+        ));
+        for line in lines {
+            section.add_child(render_detail_wrapping_text(
+                line,
+                12.,
+                text_colors.sub,
+                None,
+                appearance,
+            ));
+        }
+    }
+    section.add_child(render_detail_badge(
+        props.typed.kind_label(),
+        Some(render_detail_kind_badge_icon(props, appearance, app)),
+        None,
+        text_colors.disabled,
+        appearance,
+    ));
+
+    Container::new(section.finish())
+        .with_padding(Padding::uniform(DETAIL_SIDECAR_SECTION_PADDING))
+        .finish()
+}
+
 fn render_detail_section(
     props: &PaneProps<'_>,
     appearance: &Appearance,
@@ -7689,12 +7868,14 @@ fn render_detail_section(
         | TypedPane::EnvVarCollection
         | TypedPane::AIFact
         | TypedPane::AIDocument => render_warp_drive_object_detail_section(props, appearance, app),
+        TypedPane::HerdrWorkspace(workspace_pane) => {
+            render_herdr_workspace_detail_section(props, workspace_pane, appearance, app)
+        }
         TypedPane::CodeDiff
         | TypedPane::File
         | TypedPane::Settings
         | TypedPane::EnvironmentManagement
         | TypedPane::ExecutionProfileEditor
-        | TypedPane::HerdrWorkspace(_)
         | TypedPane::Other => Empty::new().finish(),
     }
 }
@@ -7724,7 +7905,7 @@ pub(super) fn render_detail_sidecar(
         .detail_overlay_state
         .lock()
         .ok()
-        .and_then(|overlay_state| overlay_state.active_target)?;
+        .and_then(|overlay_state| overlay_state.active_target.clone())?;
     let Some(tab) = workspace
         .tabs
         .iter()
@@ -7748,7 +7929,7 @@ pub(super) fn render_detail_sidecar(
         return None;
     }
     let pane_group = tab.pane_group.as_ref(app);
-    let Some(pane_ids) = pane_ids_for_detail_target(pane_group, active_target, app) else {
+    let Some(pane_ids) = pane_ids_for_detail_target(pane_group, &active_target, app) else {
         state.clear_detail_sidecar();
         return None;
     };
@@ -7760,17 +7941,17 @@ pub(super) fn render_detail_sidecar(
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
     let sidecar_background = detail_sidecar_background(theme);
-    let anchor_position_id = vtab_pane_row_position_id(
-        active_target.pane_group_id(),
-        active_target.source_pane_id(),
-    );
+    let anchor_position_id = active_target.anchor_position_id();
     let (offset, max_height, width, bounds, parent_anchor, child_anchor) =
         detail_sidecar_offset_and_max_height(&anchor_position_id, side, workspace.window_id, app);
-    let source_row_mouse_state = state
-        .pane_row_mouse_states
-        .borrow()
-        .get(&active_target.source_pane_id())
-        .cloned();
+    let source_row_mouse_state = match active_target.herdr_pane() {
+        Some(herdr_pane) => Some(state.herdr_pane_row_states(herdr_pane).mouse_state),
+        None => state
+            .pane_row_mouse_states
+            .borrow()
+            .get(&active_target.source_pane_id())
+            .cloned(),
+    };
     let detail_overlay_state = state.detail_overlay_state.clone();
     let window_id = workspace.window_id;
 
@@ -7849,7 +8030,7 @@ pub(super) fn render_detail_sidecar(
                     .expect("vertical tabs source row hover lock poisoned")
                     .is_mouse_over_element()
             });
-            if !row_hovered && overlay_state.active_target == Some(active_target) {
+            if !row_hovered && overlay_state.active_target.as_ref() == Some(&active_target) {
                 overlay_state.active_target = None;
                 overlay_state.safe_triangle.set_target_rect(None);
                 ctx.notify();

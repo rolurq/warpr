@@ -30,7 +30,8 @@ pub use session_picker::HerdrSessionPicker;
 use sessions::SessionSelection;
 use warpui::{Entity, ModelContext, SingletonEntity};
 pub use workspace_view::{
-    HerdrBarTab, HerdrPaneCommand, HerdrPaneRow, HerdrWorkspaceView, HerdrWorkspaceViewAction,
+    HerdrBarTab, HerdrPaneCommand, HerdrPaneRow, HerdrWorkspaceOverview, HerdrWorkspaceView,
+    HerdrWorkspaceViewAction,
 };
 
 /// Names the Herdr session to present. Defaults to Herdr's `default` session.

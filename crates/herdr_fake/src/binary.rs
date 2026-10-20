@@ -1,7 +1,9 @@
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+
+use command::blocking::Command;
 
 use crate::terminal_stream::{StreamRuns, recorded_input};
 
@@ -149,17 +151,30 @@ impl ScriptedBinary {
         self.path.parent().expect("binary path has a parent")
     }
 
-    /// Replaces the executable atomically: rewriting a script in place while another thread
-    /// spawns it can fail with "text file busy".
+    /// Replaces the executable atomically, so a run never starts a half-written script.
+    ///
+    /// A child process writes it: a file this process held open for writing would be inherited by
+    /// every child another thread spawns meanwhile, and running the script while any of them still
+    /// had it open fails with "text file busy".
     fn write_script(&self) {
         let dir = self.dir();
         let staged = dir.join("herdr.staged");
-        let mut file = fs::File::create(&staged).expect("create fake herdr script");
-        file.write_all(self.render(dir).as_bytes())
+        let mut writer = Command::new("/bin/sh")
+            .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(&staged)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("start writing fake herdr script");
+        let mut script = writer.stdin.take().expect("stdin is piped");
+        script
+            .write_all(self.render(dir).as_bytes())
             .expect("write fake herdr script");
-        file.set_permissions(fs::Permissions::from_mode(0o755))
-            .expect("make fake herdr executable");
-        drop(file);
+        drop(script);
+        let status = writer.wait().expect("finish writing fake herdr script");
+        assert!(
+            status.success(),
+            "writing fake herdr script failed: {status}"
+        );
         fs::rename(&staged, &self.path).expect("install fake herdr script");
     }
 
