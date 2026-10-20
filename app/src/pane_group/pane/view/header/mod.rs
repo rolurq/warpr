@@ -932,6 +932,9 @@ pub fn render_pane_header_draggable<P: BackingView>(
     draggable_state: DraggableState,
     app: &AppContext,
 ) -> Box<dyn Element> {
+    if FeatureFlag::DisableLocalPaneLayout.is_enabled() {
+        return element;
+    }
     Draggable::new(draggable_state, element)
         .with_drag_bounds_callback(|_, window_size| Some(RectF::new(Vector2F::zero(), window_size)))
         .with_accepted_by_drop_target_fn(move |drop_target_data, _| {

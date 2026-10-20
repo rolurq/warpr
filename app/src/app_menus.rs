@@ -512,13 +512,28 @@ fn make_new_view_menu(ctx: &AppContext) -> Menu {
 }
 
 fn make_new_tab_menu(ctx: &AppContext) -> Menu {
-    let items = vec![
+    let mut items = vec![
         updateable_custom_item_without_checkmark(CustomAction::RenameTab, ctx),
         MenuItem::Separator,
         updateable_custom_item_without_checkmark(CustomAction::SplitPaneRight, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::SplitPaneLeft, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::SplitPaneDown, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::SplitPaneUp, ctx),
+    ];
+    if !FeatureFlag::DisableLocalPaneLayout.is_enabled() {
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::SplitPaneLeft,
+            ctx,
+        ));
+    }
+    items.push(updateable_custom_item_without_checkmark(
+        CustomAction::SplitPaneDown,
+        ctx,
+    ));
+    if !FeatureFlag::DisableLocalPaneLayout.is_enabled() {
+        items.push(updateable_custom_item_without_checkmark(
+            CustomAction::SplitPaneUp,
+            ctx,
+        ));
+    }
+    items.extend([
         MenuItem::Separator,
         updateable_custom_item_without_checkmark(CustomAction::MoveTabLeft, ctx),
         updateable_custom_item_without_checkmark(CustomAction::MoveTabRight, ctx),
@@ -534,7 +549,7 @@ fn make_new_tab_menu(ctx: &AppContext) -> Menu {
         updateable_custom_item_without_checkmark(CustomAction::CloseTab, ctx),
         updateable_custom_item_without_checkmark(CustomAction::CloseOtherTabs, ctx),
         updateable_custom_item_without_checkmark(CustomAction::CloseTabsRight, ctx),
-    ];
+    ]);
     Menu::new("Tab", items)
 }
 

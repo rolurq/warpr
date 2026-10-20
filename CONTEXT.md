@@ -28,6 +28,10 @@ _Avoid_: split, terminal, session
 The name Herdr gives a pane (`herdr pane rename`). A pane without one is titled by the folder of its working directory.
 _Avoid_: pane label, pane title
 
+**Pane zoom**:
+Herdr's state of a Herdr tab that shows only its focused pane, filling the tab. It is Herdr's, so every client sees it; warpr offers it in place of Warp's maximize.
+_Avoid_: maximize, fullscreen
+
 **Pane owner**:
 The one client that currently sets a pane's size and sends its input. warpr is the owner of the panes it shows when no other client is.
 _Avoid_: controller, attached client, lock holder

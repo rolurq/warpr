@@ -93,7 +93,7 @@ use crate::drive::items::WarpDriveItemId;
 use crate::drive::{CloudObjectTypeAndId, OpenWarpDriveObjectArgs};
 use crate::env_vars::EnvVarCollectionType;
 use crate::features::FeatureFlag;
-use crate::herdr::HerdrWorkspaceView;
+use crate::herdr::{HerdrPaneCommand, HerdrWorkspaceView};
 use crate::launch_configs::launch_config::{self, PaneMode, PaneTemplateType};
 use crate::notebooks::file::FileNotebookView;
 use crate::palette::PaletteMode;
@@ -362,7 +362,10 @@ pub fn init(app: &mut AppContext) {
         )
         .with_context_predicate(id!("PaneGroup") & !id!("PaneGroup_PaneDragging"))
         .with_custom_action(CustomAction::SplitPaneLeft)
-        .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
+        .with_enabled(|| {
+            ContextFlag::CreateNewSession.is_enabled()
+                && !FeatureFlag::DisableLocalPaneLayout.is_enabled()
+        }),
         EditableBinding::new(
             "pane_group:add_up",
             "Split pane up",
@@ -370,7 +373,10 @@ pub fn init(app: &mut AppContext) {
         )
         .with_context_predicate(id!("PaneGroup") & !id!("PaneGroup_PaneDragging"))
         .with_custom_action(CustomAction::SplitPaneUp)
-        .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
+        .with_enabled(|| {
+            ContextFlag::CreateNewSession.is_enabled()
+                && !FeatureFlag::DisableLocalPaneLayout.is_enabled()
+        }),
         EditableBinding::new(
             "pane_group:navigate_left",
             "Switch panes left",
@@ -470,7 +476,7 @@ pub fn init(app: &mut AppContext) {
         .with_enabled(|| ContextFlag::CreateNewSession.is_enabled()),
         EditableBinding::new(
             TOGGLE_MAXIMIZE_PANE_BINDING_NAME,
-            "Toggle Maximize Active Pane",
+            "Toggle pane zoom",
             PaneGroupAction::ToggleMaximizePane,
         )
         .with_context_predicate(id!("PaneGroup") & !id!("PaneGroup_PaneDragging"))
@@ -5833,23 +5839,6 @@ impl PaneGroup {
         }
     }
 
-    fn navigate_pane_by_direction(&mut self, direction: Direction, ctx: &mut ViewContext<Self>) {
-        let ids = self
-            .panes
-            .panes_by_direction(self.focused_pane_id(ctx), direction, ctx);
-        if !ids.is_empty() {
-            // If there is more than one candidate pane in the direction of travel, pick the one that was most recently
-            // focused.  This makes a better experience when navigating back and forth between two panes.
-            let recent_id = self
-                .pane_history
-                .iter()
-                .rfind(|id| ids.contains(*id))
-                .unwrap_or_else(|| &ids[0]);
-            self.focus_pane_and_record_in_history(*recent_id, ctx);
-            ctx.emit(Event::AppStateChanged);
-        }
-    }
-
     /// Whether or not the focused pane is maximized.
     pub fn is_focused_pane_maximized(&self, ctx: &AppContext) -> bool {
         self.focus_state.as_ref(ctx).is_focused_pane_maximized()
@@ -7992,6 +7981,15 @@ impl PaneGroup {
             .map(|pane| pane.workspace_view(ctx))
     }
 
+    /// Applies a Warp pane action to the Herdr workspace this pane group shows: Herdr owns the
+    /// layout, so the pane tree here never changes for it. Nothing happens when the pane group
+    /// shows no Herdr workspace.
+    fn run_herdr_pane_command(&self, command: HerdrPaneCommand, ctx: &mut ViewContext<Self>) {
+        if let Some(view) = self.herdr_workspace_view(ctx) {
+            view.update(ctx, |view, ctx| view.run_pane_command(command, ctx));
+        }
+    }
+
     /// Get all terminal CWDs for this pane group.
     /// This is used by the Workspace to refresh the active directories model.
     pub fn terminal_view_working_directories<'a>(
@@ -8249,18 +8247,7 @@ impl TypedActionView for PaneGroup {
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         use PaneGroupAction::*;
         match action {
-            Add(direction) => {
-                let chosen_shell = {
-                    match self.active_session_terminal_model(ctx) {
-                        Some(model) => {
-                            let model = model.lock();
-                            model.shell_launch_state().available_shell()
-                        }
-                        _ => None,
-                    }
-                };
-                self.add_terminal_pane(*direction, chosen_shell, ctx);
-            }
+            Add(direction) => self.run_herdr_pane_command(HerdrPaneCommand::Split(*direction), ctx),
             Remove(view_id) => self.close_pane_with_confirmation(*view_id, ctx),
             RemoveActive => self.close_active_pane_with_confirmation(ctx),
             Activate(view_id, reason) => self.focus_pane_on_mouse_event(*view_id, *reason, ctx),
@@ -8268,17 +8255,31 @@ impl TypedActionView for PaneGroup {
             StartResizing(border) => self.start_resizing(*border, ctx),
             ResetPaneSizes(border_id) => self.reset_pane_sizes(*border_id, ctx),
             EndResizing => self.end_resizing(ctx),
-            ResizeLeft => self.resize_left(ctx),
-            ResizeRight => self.resize_right(ctx),
-            ResizeUp => self.resize_up(ctx),
-            ResizeDown => self.resize_down(ctx),
+            ResizeLeft => {
+                self.run_herdr_pane_command(HerdrPaneCommand::Resize(Direction::Left), ctx)
+            }
+            ResizeRight => {
+                self.run_herdr_pane_command(HerdrPaneCommand::Resize(Direction::Right), ctx)
+            }
+            ResizeUp => self.run_herdr_pane_command(HerdrPaneCommand::Resize(Direction::Up), ctx),
+            ResizeDown => {
+                self.run_herdr_pane_command(HerdrPaneCommand::Resize(Direction::Down), ctx)
+            }
             NavigatePrev => self.navigate_prev_pane(ctx),
             NavigateNext => self.navigate_next_pane(ctx),
-            NavigateLeft => self.navigate_pane_by_direction(Direction::Left, ctx),
-            NavigateRight => self.navigate_pane_by_direction(Direction::Right, ctx),
-            NavigateUp => self.navigate_pane_by_direction(Direction::Up, ctx),
-            NavigateDown => self.navigate_pane_by_direction(Direction::Down, ctx),
-            ToggleMaximizePane => self.toggle_maximize_pane(ctx),
+            NavigateLeft => {
+                self.run_herdr_pane_command(HerdrPaneCommand::SelectTowards(Direction::Left), ctx)
+            }
+            NavigateRight => {
+                self.run_herdr_pane_command(HerdrPaneCommand::SelectTowards(Direction::Right), ctx)
+            }
+            NavigateUp => {
+                self.run_herdr_pane_command(HerdrPaneCommand::SelectTowards(Direction::Up), ctx)
+            }
+            NavigateDown => {
+                self.run_herdr_pane_command(HerdrPaneCommand::SelectTowards(Direction::Down), ctx)
+            }
+            ToggleMaximizePane => self.run_herdr_pane_command(HerdrPaneCommand::ToggleZoom, ctx),
             Move {
                 id,
                 target_pane_id,

@@ -2191,7 +2191,7 @@ fn test_workspace_sessions_retrieves_panes() {
             // Add a new split pane to the right.
             if let Some(tab_view) = workspace.get_pane_group_view(0) {
                 tab_view.update(ctx, |view, ctx| {
-                    view.handle_action(&PaneGroupAction::Add(Direction::Right), ctx);
+                    view.add_terminal_pane(Direction::Right, None, ctx);
                 })
             }
 
@@ -2241,7 +2241,7 @@ fn setup_session_sharing_test(workspace: &ViewHandle<Workspace>, app: &mut App) 
                     );
                 });
 
-            view.handle_action(&PaneGroupAction::Add(Direction::Right), ctx);
+            view.add_terminal_pane(Direction::Right, None, ctx);
             assert_eq!(view.pane_count(), 2);
 
             view.pane_id_by_index(0).unwrap()
@@ -3094,7 +3094,7 @@ fn test_stop_sharing_all_sessions_in_tab() {
             workspace
                 .active_tab_pane_group()
                 .update(ctx, |pane_group, ctx| {
-                    pane_group.handle_action(&PaneGroupAction::Add(Direction::Right), ctx);
+                    pane_group.add_terminal_pane(Direction::Right, None, ctx);
                     pane_group
                         .terminal_view_at_pane_index(1, ctx)
                         .unwrap()

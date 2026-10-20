@@ -541,7 +541,7 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::CloudAgentShellRespawn,
     ]);
 
-    // warpr never uses Warp's hosted services, and Herdr owns what the last two switches hide;
+    // warpr never uses Warp's hosted services, and Herdr owns what the last three switches hide;
     // removing these lines (or the flag checks they drive) restores the upstream behaviour
     // where the upstream code is still there.
     flags.extend([
@@ -552,6 +552,7 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::DisableWarpUpdates,
         FeatureFlag::DisableUserTabGroups,
         FeatureFlag::DisableLocalSessions,
+        FeatureFlag::DisableLocalPaneLayout,
     ]);
 
     flags

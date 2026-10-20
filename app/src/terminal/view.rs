@@ -18207,7 +18207,9 @@ impl TerminalView {
     ) -> Vec<MenuItem<TerminalAction>> {
         let mut items = vec![];
 
-        if ContextFlag::CreateNewSession.is_enabled() {
+        if ContextFlag::CreateNewSession.is_enabled()
+            && !FeatureFlag::DisableLocalPaneLayout.is_enabled()
+        {
             items.extend(vec![
                 MenuItemFields::new("Split pane right")
                     .with_on_select_action(TerminalAction::SplitRight(shell.clone()))
@@ -18243,15 +18245,17 @@ impl TerminalView {
         let pane_state = self.split_pane_state(ctx);
         if pane_state.is_in_split_pane() {
             let is_maximized = pane_state.is_maximized();
-            items.push(
-                MenuItemFields::toggle_pane_action(is_maximized)
-                    .with_on_select_action(TerminalAction::ToggleMaximizePane)
-                    .with_key_shortcut_label(keybinding_name_to_display_string(
-                        "pane_group:toggle_maximize_pane",
-                        ctx,
-                    ))
-                    .into_item(),
-            );
+            if !FeatureFlag::DisableLocalPaneLayout.is_enabled() {
+                items.push(
+                    MenuItemFields::toggle_pane_action(is_maximized)
+                        .with_on_select_action(TerminalAction::ToggleMaximizePane)
+                        .with_key_shortcut_label(keybinding_name_to_display_string(
+                            "pane_group:toggle_maximize_pane",
+                            ctx,
+                        ))
+                        .into_item(),
+                );
+            }
 
             items.push(
                 MenuItemFields::new("Close pane")
