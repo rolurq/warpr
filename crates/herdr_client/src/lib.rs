@@ -35,6 +35,7 @@ mod pane_size;
 mod pane_stream;
 mod presented;
 mod reconnect;
+mod rename;
 mod session;
 mod sessions;
 mod socket;
@@ -47,7 +48,7 @@ use std::time::Duration;
 pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, PresentedAgents};
 pub use attention::{AgentAttention, AttentionChanges};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
-pub use close::close_pane;
+pub use close::{close_pane, close_tab};
 pub use compat::Refusal;
 pub use create::{NewWorktree, create_herdr_tab, create_workspace, create_worktree};
 pub use desktop::{DesktopAction, DesktopNotifications};
@@ -65,6 +66,7 @@ pub use presented::{
     ConnectionFailure, ConnectionStatus, PresentedSession, PresentedWorkspace, WorkspaceId,
 };
 pub use reconnect::ReconnectPolicy;
+pub use rename::{RenameTarget, rename};
 use serde::Deserialize;
 use serde_json::json;
 pub use session::{DEFAULT_SESSION, InvalidSessionName, SessionName, SessionTarget, config_dir};

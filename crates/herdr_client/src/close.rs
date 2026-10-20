@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::{ConnectionFailure, PaneId, SessionTarget, socket};
+use crate::{ConnectionFailure, HerdrTabId, PaneId, SessionTarget, socket};
 
 /// Asks the session of `target` to close `pane`.
 ///
@@ -12,6 +12,19 @@ pub fn close_pane(target: &SessionTarget, pane: &PaneId) -> Result<(), Connectio
         target.socket_path(),
         "pane.close",
         json!({ "pane_id": pane.as_str() }),
+    )
+    .map(drop)
+}
+
+/// Asks the session of `target` to close the Herdr tab `tab`.
+///
+/// Like [`close_pane`], nothing is returned to present. Herdr closes the workspace along with its
+/// last Herdr tab. A refused request is [`ConnectionFailure::Rejected`].
+pub fn close_tab(target: &SessionTarget, tab: &HerdrTabId) -> Result<(), ConnectionFailure> {
+    socket::request(
+        target.socket_path(),
+        "tab.close",
+        json!({ "tab_id": tab.as_str() }),
     )
     .map(drop)
 }

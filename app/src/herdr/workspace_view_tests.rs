@@ -785,6 +785,127 @@ fn a_close_herdr_rejects_shows_the_error_and_leaves_the_panes_alone() {
     });
 }
 
+fn act(app: &mut App, view: &ViewHandle<HerdrWorkspaceView>, action: HerdrWorkspaceViewAction) {
+    app.update(|ctx| {
+        view.update(ctx, |view, ctx| view.handle_action(&action, ctx));
+    });
+}
+
+fn request_count(session: &FakeSession, method: &str) -> usize {
+    session
+        .served_methods()
+        .iter()
+        .filter(|served| served.as_str() == method)
+        .count()
+}
+
+#[test]
+fn renaming_a_tab_goes_through_herdr_and_the_bar_shows_the_label_herdr_presents() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+
+        act(
+            &mut app,
+            &view,
+            HerdrWorkspaceViewAction::RenameTab {
+                tab: HerdrTabId::from("w1:t2"),
+                label: "build".to_owned(),
+            },
+        );
+
+        assert_eventually!(
+            600 => bar_labels(&app, &view) == ["server", "build", "zoomed"],
+            "the bar listed {:?}", bar_labels(&app, &view)
+        );
+        assert_eq!(request_count(&session, "tab.rename"), 1);
+    });
+}
+
+#[test]
+fn a_rename_herdr_rejects_shows_the_error_and_keeps_the_label() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        session.reject_next_rename("tab_not_found", "tab w1:t2 not found");
+
+        act(
+            &mut app,
+            &view,
+            HerdrWorkspaceViewAction::RenameTab {
+                tab: HerdrTabId::from("w1:t2"),
+                label: "build".to_owned(),
+            },
+        );
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("Could not rename the tab:"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        assert!(rendered_text(&app, &view).contains("tab w1:t2 not found"));
+        assert_eq!(bar_labels(&app, &view), ["server", "logs", "zoomed"]);
+    });
+}
+
+#[test]
+fn closing_a_tab_goes_through_herdr_and_the_bar_drops_it_with_the_others_kept() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        select(&mut app, &view, "w1:t2");
+
+        act(
+            &mut app,
+            &view,
+            HerdrWorkspaceViewAction::CloseTab(HerdrTabId::from("w1:t2")),
+        );
+
+        assert_eventually!(
+            600 => bar_labels(&app, &view) == ["server", "zoomed"],
+            "the bar listed {:?}", bar_labels(&app, &view)
+        );
+        assert_eq!(request_count(&session, "tab.close"), 1);
+        let shown: Vec<_> = view.read(&app, |view, ctx| {
+            view.bar_tabs(ctx)
+                .into_iter()
+                .filter(|tab| tab.is_shown)
+                .map(|tab| tab.label)
+                .collect()
+        });
+        assert_eq!(shown.len(), 1, "a tab is shown instead: {shown:?}");
+    });
+}
+
+#[test]
+fn a_tab_close_herdr_rejects_shows_the_error_and_keeps_every_tab() {
+    App::test((), |mut app| async move {
+        let fake = compatible_fake();
+        let session = api_session(&fake);
+        let view = open_workspace_view(&mut app, &fake);
+        assert_eventually!(200 => is_connected(&app), "Herdr session never connected");
+        session.reject_next_close("tab_not_found", "tab w1:t2 not found");
+
+        act(
+            &mut app,
+            &view,
+            HerdrWorkspaceViewAction::CloseTab(HerdrTabId::from("w1:t2")),
+        );
+
+        assert_eventually!(
+            600 => rendered_text(&app, &view).starts_with("Could not close the tab:"),
+            "rendered text was {:?}", rendered_text(&app, &view)
+        );
+        assert!(rendered_text(&app, &view).contains("tab w1:t2 not found"));
+        assert_eq!(bar_labels(&app, &view), ["server", "logs", "zoomed"]);
+    });
+}
+
 /// The size of the window the test platform opens and the scale factor it reports.
 const TEST_WINDOW_WIDTH: f32 = 1024.;
 const TEST_WINDOW_HEIGHT: f32 = 768.;

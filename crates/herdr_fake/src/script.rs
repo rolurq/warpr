@@ -149,6 +149,10 @@ pub struct TabScript {
     /// workspace is closed: numbers are derived from position until then, and fixed from then on
     /// so that closing a pane does not renumber the others, as in Herdr.
     pub(crate) pane_numbers: Vec<usize>,
+    /// The Herdr tab number, or zero until a tab of the workspace is closed: numbers are derived
+    /// from position until then, and fixed from then on so that closing a tab does not renumber
+    /// the others, as in Herdr.
+    pub(crate) number: usize,
 }
 
 impl TabScript {
@@ -163,6 +167,7 @@ impl TabScript {
             cwds: Vec::new(),
             pane_labels: Vec::new(),
             pane_numbers: Vec::new(),
+            number: 0,
         }
     }
 
@@ -307,6 +312,9 @@ pub(crate) struct WorkspaceScript {
     /// The highest pane number Herdr has given a pane of this workspace once panes have been
     /// closed, so a later pane never takes a closed one's number; zero before that.
     pub(crate) highest_pane_number: usize,
+    /// The highest tab number Herdr has given a tab of this workspace once tabs have been closed,
+    /// so a later tab never takes a closed one's number; zero before that.
+    pub(crate) highest_tab_number: usize,
 }
 
 impl WorkspaceScript {
@@ -357,19 +365,56 @@ impl WorkspaceScript {
         }) else {
             return false;
         };
+        self.pin_pane_numbers();
+        if !self.tabs[tab_index].close_pane(pane_index) {
+            self.remove_tab(tab_index);
+        }
+        true
+    }
+
+    /// The Herdr tab number of each tab, in tab order.
+    pub(crate) fn tab_numbers(&self) -> Vec<usize> {
+        let mut next = 1;
+        self.tabs
+            .iter()
+            .map(|tab| {
+                let number = if tab.number == 0 {
+                    next.max(self.highest_tab_number + 1)
+                } else {
+                    tab.number
+                };
+                next = number + 1;
+                number
+            })
+            .collect()
+    }
+
+    /// Fixes the pane numbers of every tab, so that removing panes leaves the others theirs.
+    fn pin_pane_numbers(&mut self) {
+        let numbers = self.pane_numbers();
         self.highest_pane_number = self
             .highest_pane_number
             .max(numbers.iter().flatten().copied().max().unwrap_or(0));
         for (tab, panes) in self.tabs.iter_mut().zip(numbers) {
             tab.pane_numbers = panes;
         }
-        if !self.tabs[tab_index].close_pane(pane_index) {
-            let closed = self.tabs.remove(tab_index);
-            if self.active_tab_label.as_ref() == Some(&closed.label) {
-                self.active_tab_label = None;
-            }
+    }
+
+    /// Takes the tab at `index` out of the workspace, leaving the others their numbers and the
+    /// numbers of their panes.
+    fn remove_tab(&mut self, index: usize) {
+        self.pin_pane_numbers();
+        let numbers = self.tab_numbers();
+        self.highest_tab_number = self
+            .highest_tab_number
+            .max(numbers.last().copied().unwrap_or(0));
+        for (tab, number) in self.tabs.iter_mut().zip(numbers) {
+            tab.number = number;
         }
-        true
+        let closed = self.tabs.remove(index);
+        if self.active_tab_label.as_ref() == Some(&closed.label) {
+            self.active_tab_label = None;
+        }
     }
 }
 
@@ -418,6 +463,7 @@ impl SessionScript {
             tokens: Vec::new(),
             worktree: None,
             highest_pane_number: 0,
+            highest_tab_number: 0,
         });
         self
     }
@@ -552,6 +598,7 @@ impl SessionScript {
             tokens: Vec::new(),
             worktree: None,
             highest_pane_number: 0,
+            highest_tab_number: 0,
         });
         if focus {
             self.focused_label = Some(label);
@@ -597,7 +644,13 @@ impl SessionScript {
             .workspaces
             .iter_mut()
             .find(|workspace| format!("w{}", workspace.id) == workspace_id)?;
-        let number = workspace.tabs.len() + 1;
+        let number = workspace
+            .tab_numbers()
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .max(workspace.highest_tab_number)
+            + 1;
         let label = label.map_or_else(
             || {
                 (number..)
@@ -629,13 +682,55 @@ impl SessionScript {
         if !self.workspaces[index].close_pane(number) {
             return None;
         }
+        self.drop_workspace_if_empty(index);
+        Some(workspace_id.to_owned())
+    }
+
+    /// The workspace and tab index of the Herdr tab `tab_id`, with the id of its workspace.
+    fn find_tab<'a>(&self, tab_id: &'a str) -> Option<(usize, usize, &'a str)> {
+        let (workspace_id, number) = tab_id.split_once(":t")?;
+        let number: usize = number.parse().ok()?;
+        let workspace = self
+            .workspaces
+            .iter()
+            .position(|workspace| format!("w{}", workspace.id) == workspace_id)?;
+        let tab = self.workspaces[workspace]
+            .tab_numbers()
+            .iter()
+            .position(|candidate| *candidate == number)?;
+        Some((workspace, tab, workspace_id))
+    }
+
+    /// Gives the Herdr tab `tab_id` the label `label` as `tab.rename` does and returns the id of
+    /// its workspace, or `None` when there is no such tab.
+    pub(crate) fn rename_tab(&mut self, tab_id: &str, label: &str) -> Option<String> {
+        let (workspace, tab, workspace_id) = self.find_tab(tab_id)?;
+        let workspace_id = workspace_id.to_owned();
+        let workspace = &mut self.workspaces[workspace];
+        let previous = std::mem::replace(&mut workspace.tabs[tab].label, label.to_owned());
+        if workspace.active_tab_label.as_ref() == Some(&previous) {
+            workspace.active_tab_label = Some(label.to_owned());
+        }
+        Some(workspace_id)
+    }
+
+    /// Closes the Herdr tab `tab_id` as `tab.close` does and returns the id of its workspace, or
+    /// `None` when there is no such tab. A workspace left with no tabs goes too.
+    pub(crate) fn close_tab(&mut self, tab_id: &str) -> Option<String> {
+        let (workspace, tab, workspace_id) = self.find_tab(tab_id)?;
+        let workspace_id = workspace_id.to_owned();
+        self.workspaces[workspace].remove_tab(tab);
+        self.drop_workspace_if_empty(workspace);
+        Some(workspace_id)
+    }
+
+    fn drop_workspace_if_empty(&mut self, index: usize) {
         if self.workspaces[index].tabs.is_empty() {
             let closed = self.workspaces.remove(index);
             if self.focused_label.as_ref() == Some(&closed.label) {
                 self.focused_label = None;
             }
         }
-        Some(workspace_id.to_owned())
     }
 
     fn focused_index(&self) -> Option<usize> {
@@ -668,7 +763,9 @@ impl SessionScript {
             let number = index + 1;
             let workspace_id = format!("w{}", workspace.id);
             let active_tab = workspace.active_tab_index();
-            let tab_id_of = |tab_index: usize| format!("{workspace_id}:t{}", tab_index + 1);
+            let tab_numbers = workspace.tab_numbers();
+            let tab_id_of =
+                |tab_index: usize| format!("{workspace_id}:t{}", tab_numbers[tab_index]);
             let pane_numbers = workspace.pane_numbers();
             let mut pane_count = 0;
 
@@ -688,7 +785,7 @@ impl SessionScript {
                 tabs.push(json!({
                     "tab_id": tab_id,
                     "workspace_id": workspace_id,
-                    "number": tab_index + 1,
+                    "number": tab_numbers[tab_index],
                     "label": tab.label,
                     "focused": is_active,
                     "pane_count": pane_ids.len(),

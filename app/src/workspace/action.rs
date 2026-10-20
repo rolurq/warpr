@@ -176,6 +176,11 @@ pub enum WorkspaceAction {
     },
     /// Asks Herdr to create a Herdr tab in the workspace this window shows.
     CreateHerdrTab,
+    /// Opens the inline editor to rename a Herdr tab of the workspace this window shows; the new
+    /// label is sent to Herdr when the edit is confirmed.
+    RenameHerdrTab(HerdrTabId),
+    /// Asks Herdr to close a Herdr tab of the workspace this window shows.
+    CloseHerdrTab(HerdrTabId),
     ToggleWelcomeTips,
     CloseTab(usize),
     CloseActiveTab,
@@ -1066,6 +1071,8 @@ impl WorkspaceAction {
             | SelectHerdrTab(_)
             | SelectHerdrPane { .. }
             | CreateHerdrTab
+            | RenameHerdrTab(_)
+            | CloseHerdrTab(_)
             | CheckForUpdate
             | SetA11yVerbosityLevel(_)
             | ToggleNotifications

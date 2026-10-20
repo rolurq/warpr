@@ -1291,6 +1291,193 @@ mod tab_bar {
         });
     }
 
+    fn served(session: &FakeSession, method: &str) -> usize {
+        session
+            .served_methods()
+            .iter()
+            .filter(|served| served.as_str() == method)
+            .count()
+    }
+
+    /// Types `text` into the bar's rename editor and ends the edit with `event`.
+    fn edit_label(
+        app: &mut App,
+        workspace: &ViewHandle<Workspace>,
+        text: &str,
+        event: EditorEvent,
+    ) {
+        app.update(|ctx| {
+            workspace.update(ctx, |workspace, ctx| {
+                workspace
+                    .herdr_tab_bar
+                    .rename_editor
+                    .update(ctx, |editor, ctx| {
+                        editor.clear_buffer_and_reset_undo_stack(ctx);
+                        editor.insert_selected_text(text, ctx);
+                    });
+                workspace.handle_herdr_tab_rename_editor_event(&event, ctx);
+            });
+        });
+    }
+
+    fn is_renaming(app: &App, workspace: &ViewHandle<Workspace>) -> bool {
+        workspace.read(app, |workspace, _| {
+            workspace.herdr_tab_bar.renaming.is_some()
+        })
+    }
+
+    #[test]
+    fn renaming_a_bar_tab_sends_the_confirmed_label_to_herdr_and_the_bar_follows_herdrs_state() {
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::RenameHerdrTab(HerdrTabId::from("w1:t2")),
+            );
+            assert!(is_renaming(&app, &workspace));
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server"),
+                "nothing is renamed before the edit is confirmed"
+            );
+            edit_label(&mut app, &workspace, "  build  ", EditorEvent::Enter);
+
+            assert!(!is_renaming(&app, &workspace));
+            assert_eventually!(
+                600 => bar_tabs(&app, &workspace) == shown(&["server", "build"], "server"),
+                "the bar listed {:?}", bar_tabs(&app, &workspace)
+            );
+            assert_eq!(served(&session, "tab.rename"), 1);
+        });
+    }
+
+    #[test]
+    fn a_cancelled_blank_or_unchanged_rename_sends_nothing_to_herdr() {
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            let rename = WorkspaceAction::RenameHerdrTab(HerdrTabId::from("w1:t2"));
+
+            dispatch(&mut app, &workspace, rename.clone());
+            edit_label(&mut app, &workspace, "build", EditorEvent::Escape);
+            dispatch(&mut app, &workspace, rename.clone());
+            edit_label(&mut app, &workspace, "   ", EditorEvent::Enter);
+            dispatch(&mut app, &workspace, rename);
+            edit_label(&mut app, &workspace, "logs", EditorEvent::Blurred);
+
+            assert!(!is_renaming(&app, &workspace));
+            assert_eq!(served(&session, "tab.rename"), 0);
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server")
+            );
+        });
+    }
+
+    #[test]
+    fn a_refused_rename_leaves_the_bar_alone() {
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            session.reject_next_rename("tab_not_found", "tab w1:t2 not found");
+
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::RenameHerdrTab(HerdrTabId::from("w1:t2")),
+            );
+            edit_label(&mut app, &workspace, "build", EditorEvent::Enter);
+
+            assert_eventually!(
+                600 => served(&session, "tab.rename") == 1,
+                "Herdr was never asked to rename the tab"
+            );
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server")
+            );
+        });
+    }
+
+    #[test]
+    fn closing_a_bar_tab_goes_through_herdr_and_the_bar_updates_from_herdrs_state() {
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::CloseHerdrTab(HerdrTabId::from("w1:t1")),
+            );
+
+            assert_eventually!(
+                600 => bar_tabs(&app, &workspace) == shown(&["logs"], "logs"),
+                "the bar listed {:?}", bar_tabs(&app, &workspace)
+            );
+            assert_eq!(served(&session, "tab.close"), 1);
+        });
+    }
+
+    #[test]
+    fn closing_the_last_herdr_tab_of_a_workspace_leaves_the_tabs_as_herdr_reports_them() {
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::CloseHerdrTab(HerdrTabId::from("w1:t1")),
+            );
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::CloseHerdrTab(HerdrTabId::from("w1:t2")),
+            );
+
+            assert_eventually!(
+                600 => tab_titles(&app, &workspace) == ["web"],
+                "tabs were {:?}", tab_titles(&app, &workspace)
+            );
+            assert_eq!(bar_tabs(&app, &workspace), shown(&["site"], "site"));
+            assert_eq!(served(&session, "tab.close"), 2);
+        });
+    }
+
+    #[test]
+    fn a_refused_close_leaves_the_bar_alone() {
+        App::test((), |mut app| async move {
+            let fake = fake_with(HerdrStatus::compatible());
+            let session = fake.start_session("default", two_workspaces());
+            let workspace = open_workspace_window(&mut app, &fake).await;
+            session.reject_next_close("tab_not_found", "tab w1:t1 not found");
+
+            dispatch(
+                &mut app,
+                &workspace,
+                WorkspaceAction::CloseHerdrTab(HerdrTabId::from("w1:t1")),
+            );
+
+            assert_eventually!(
+                600 => served(&session, "tab.close") == 1,
+                "Herdr was never asked to close the tab"
+            );
+            assert_eq!(
+                bar_tabs(&app, &workspace),
+                shown(&["server", "logs"], "server")
+            );
+        });
+    }
+
     #[test]
     fn the_bar_lists_no_tabs_while_the_agent_panel_covers_the_workspace() {
         App::test((), |mut app| async move {

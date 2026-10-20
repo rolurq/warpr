@@ -420,6 +420,146 @@ fn a_pane_that_does_not_exist_or_a_rejected_close_changes_nothing_and_announces_
     );
 }
 
+/// The `(tab_id, label)` of every Herdr tab the session reports.
+fn tabs(client: &mut Client) -> Vec<(String, String)> {
+    client.send("t", "session.snapshot", json!({}));
+    let response = client.read().expect("a snapshot");
+    response["result"]["snapshot"]["tabs"]
+        .as_array()
+        .expect("tabs")
+        .iter()
+        .map(|tab| {
+            (
+                tab["tab_id"].as_str().expect("tab_id").to_owned(),
+                tab["label"].as_str().expect("label").to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn renaming_a_herdr_tab_announces_tab_renamed_and_keeps_the_active_tab_active() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe("w", json!([{ "type": "tab.renamed" }]));
+    let mut client = Client::connect(&session);
+
+    client.send(
+        "r",
+        "tab.rename",
+        json!({ "tab_id": "w1:t1", "label": "build" }),
+    );
+    let response = client.read().expect("a response");
+
+    assert_eq!(response["result"]["type"], "tab_info");
+    assert_eq!(response["result"]["tab"]["label"], "build");
+    assert_eq!(watcher.read().expect("an event")["event"], "tab_renamed");
+    assert_eq!(
+        tabs(&mut client),
+        [
+            ("w1:t1".to_owned(), "build".to_owned()),
+            ("w1:t2".to_owned(), "two".to_owned())
+        ]
+    );
+    client.send("s", "session.snapshot", json!({}));
+    let snapshot = client.read().expect("a snapshot");
+    assert_eq!(snapshot["result"]["snapshot"]["tabs"][0]["focused"], true);
+}
+
+#[test]
+fn closing_a_herdr_tab_announces_tab_closed_and_the_others_keep_their_ids() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe("w", json!([{ "type": "tab.closed" }]));
+    let mut client = Client::connect(&session);
+
+    client.send("c", "tab.close", json!({ "tab_id": "w1:t1" }));
+    let response = client.read().expect("a response");
+
+    assert_eq!(response["result"], json!({ "type": "ok" }));
+    let event = watcher.read().expect("an event");
+    assert_eq!(event["event"], "tab_closed");
+    assert_eq!(
+        event["data"],
+        json!({ "type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1" })
+    );
+    assert_eq!(tabs(&mut client), [("w1:t2".to_owned(), "two".to_owned())]);
+    assert_eq!(pane_ids(&mut client), ["w1:p3"]);
+
+    client.send("n", "tab.create", json!({ "workspace_id": "w1" }));
+    client.read().expect("a response");
+    let ids: Vec<_> = tabs(&mut client).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids, ["w1:t2", "w1:t3"], "a closed tab's id is not reused");
+}
+
+#[test]
+fn closing_the_last_herdr_tab_of_a_workspace_closes_the_workspace() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut client = Client::connect(&session);
+
+    client.send("c", "tab.close", json!({ "tab_id": "w1:t1" }));
+    client.read().expect("a response");
+    assert_eq!(client.snapshot_labels(), ["api"]);
+    client.send("c", "tab.close", json!({ "tab_id": "w1:t2" }));
+    client.read().expect("a response");
+
+    assert_eq!(client.snapshot_labels(), Vec::<String>::new());
+    assert_eq!(tabs(&mut client), []);
+}
+
+#[test]
+fn a_herdr_tab_that_does_not_exist_or_a_rejected_request_changes_nothing_and_announces_nothing() {
+    let fake = FakeHerdr::new();
+    let session = session_with_two_tabs(&fake);
+    let mut watcher = Client::connect(&session);
+    watcher.subscribe(
+        "w",
+        json!([{ "type": "tab.closed" }, { "type": "tab.renamed" }]),
+    );
+    let mut client = Client::connect(&session);
+
+    client.send(
+        "a",
+        "tab.rename",
+        json!({ "tab_id": "w1:t9", "label": "x" }),
+    );
+    let missing_rename = client.read().expect("a response");
+    client.send("b", "tab.close", json!({ "tab_id": "w9:t1" }));
+    let missing_close = client.read().expect("a response");
+    session.reject_next_rename("tab_busy", "try again later");
+    client.send(
+        "c",
+        "tab.rename",
+        json!({ "tab_id": "w1:t1", "label": "x" }),
+    );
+    let rejected_rename = client.read().expect("a response");
+    session.reject_next_close("tab_busy", "try again later");
+    client.send("d", "tab.close", json!({ "tab_id": "w1:t1" }));
+    let rejected_close = client.read().expect("a response");
+
+    assert_eq!(missing_rename["error"]["code"], "tab_not_found");
+    assert_eq!(missing_rename["error"]["message"], "tab w1:t9 not found");
+    assert_eq!(missing_close["error"]["code"], "tab_not_found");
+    assert_eq!(rejected_rename["error"]["code"], "tab_busy");
+    assert_eq!(rejected_close["error"]["code"], "tab_busy");
+    assert_eq!(
+        tabs(&mut client),
+        [
+            ("w1:t1".to_owned(), "one".to_owned()),
+            ("w1:t2".to_owned(), "two".to_owned())
+        ]
+    );
+    assert_eq!(session.emit_event("tab_closed", json!({})), 1);
+    assert_eq!(
+        watcher.read().expect("the probe event")["data"],
+        json!({}),
+        "nothing was announced before the probe"
+    );
+}
+
 #[test]
 fn a_scripted_pane_name_is_reported_as_the_panes_label() {
     let fake = FakeHerdr::new();

@@ -115,8 +115,10 @@ struct Shared {
     subscriptions_to_lose: Mutex<usize>,
     /// The error the next creation request is answered with, if one is armed.
     creation_rejection: Mutex<Option<(String, String)>>,
-    /// The error the next `pane.close` request is answered with, if one is armed.
+    /// The error the next `pane.close` or `tab.close` request is answered with, if one is armed.
     close_rejection: Mutex<Option<(String, String)>>,
+    /// The error the next `tab.rename` request is answered with, if one is armed.
+    rename_rejection: Mutex<Option<(String, String)>>,
 }
 
 impl Shared {
@@ -236,6 +238,61 @@ impl Shared {
         ok(id, json!({ "type": "ok" }))
     }
 
+    /// Serves `tab.close`: closes the Herdr tab as Herdr would, announces `tab_closed` to
+    /// subscribers and answers `ok`.
+    fn close_tab(&self, id: &Value, params: &Value) -> Value {
+        let Some(tab_id) = params["tab_id"].as_str() else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `tab_id`",
+            );
+        };
+        if let Some((code, message)) = self.close_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let closed = self.script.lock().close_tab(tab_id);
+        let Some(workspace_id) = closed else {
+            return error(id, "tab_not_found", &format!("tab {tab_id} not found"));
+        };
+        self.emit(
+            "tab_closed",
+            &json!({ "type": "tab_closed", "tab_id": tab_id, "workspace_id": workspace_id }),
+        );
+        ok(id, json!({ "type": "ok" }))
+    }
+
+    /// Serves `tab.rename`: relabels the Herdr tab as Herdr would, announces `tab_renamed` to
+    /// subscribers and answers with the tab.
+    fn rename_tab(&self, id: &Value, params: &Value) -> Value {
+        let (Some(tab_id), Some(label)) = (params["tab_id"].as_str(), params["label"].as_str())
+        else {
+            return error(
+                id,
+                "invalid_request",
+                "invalid request: missing field `tab_id` or `label`",
+            );
+        };
+        if let Some((code, message)) = self.rename_rejection.lock().take() {
+            return error(id, code.as_str(), &message);
+        }
+        let mut script = self.script.lock();
+        if script.rename_tab(tab_id, label).is_none() {
+            return error(id, "tab_not_found", &format!("tab {tab_id} not found"));
+        }
+        let tab = script.snapshot()["tabs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["tab_id"] == tab_id)
+            .cloned()
+            .unwrap_or(Value::Null);
+        drop(script);
+        let result = json!({ "type": "tab_renamed", "tab": tab });
+        self.emit("tab_renamed", &result);
+        ok(id, json!({ "type": "tab_info", "tab": tab }))
+    }
+
     /// Serves `worktree.create`: adds the linked worktree as a workspace, announces it to
     /// subscribers and answers with it. Like Herdr, it refuses a directory that is not in a
     /// repository.
@@ -352,6 +409,7 @@ impl FakeSession {
                 subscriptions_to_lose: Mutex::new(0),
                 creation_rejection: Mutex::new(None),
                 close_rejection: Mutex::new(None),
+                rename_rejection: Mutex::new(None),
             }),
             listener: Mutex::new(None),
         };
@@ -467,10 +525,16 @@ impl FakeSession {
         *self.shared.creation_rejection.lock() = Some((code.to_owned(), message.to_owned()));
     }
 
-    /// Answers the next `pane.close` request with the error `code` and `message` instead of
-    /// closing anything, as Herdr does for a request it refuses.
+    /// Answers the next `pane.close` or `tab.close` request with the error `code` and `message`
+    /// instead of closing anything, as Herdr does for a request it refuses.
     pub fn reject_next_close(&self, code: &str, message: &str) {
         *self.shared.close_rejection.lock() = Some((code.to_owned(), message.to_owned()));
+    }
+
+    /// Answers the next `tab.rename` request with the error `code` and `message` instead of
+    /// renaming anything, as Herdr does for a request it refuses.
+    pub fn reject_next_rename(&self, code: &str, message: &str) {
+        *self.shared.rename_rejection.lock() = Some((code.to_owned(), message.to_owned()));
     }
 
     /// How many connections are subscribed to events.
@@ -613,6 +677,8 @@ fn serve_connection(stream: UnixStream, shared: &Shared, connection_id: u64) {
             "workspace.create" | "tab.create" => shared.create(&id, method, &request["params"]),
             "worktree.create" => shared.create_worktree(&id, &request["params"]),
             "pane.close" => shared.close_pane(&id, &request["params"]),
+            "tab.close" => shared.close_tab(&id, &request["params"]),
+            "tab.rename" => shared.rename_tab(&id, &request["params"]),
             "pane.list" => {
                 let panes = shared.script.lock().snapshot()["panes"].clone();
                 ok(&id, json!({ "type": "pane_list", "panes": panes }))

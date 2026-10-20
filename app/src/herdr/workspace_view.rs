@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use herdr_client::{
-    AgentJump, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput, PaneOwnership,
-    PresentedAgent, PresentedHerdrTab, PresentedPane, PresentedWorkspace,
+    AgentJump, ConnectionFailure, ConnectionStatus, Contest, HerdrTabId, PaneId, PaneInput,
+    PaneOwnership, PresentedAgent, PresentedHerdrTab, PresentedPane, PresentedWorkspace,
+    RenameTarget,
 };
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warpui::elements::{
@@ -55,6 +56,12 @@ pub enum HerdrWorkspaceViewAction {
     /// Asks Herdr to close a pane. Nothing is removed here: the pane leaves the view once the
     /// session stops presenting it. A refused request is shown in the view.
     ClosePane(PaneId),
+    /// Asks Herdr to rename a Herdr tab. Nothing is renamed here: the label is shown once the
+    /// session presents it. A refused request is shown in the view.
+    RenameTab { tab: HerdrTabId, label: String },
+    /// Asks Herdr to close a Herdr tab. Nothing is removed here: the tab leaves the view once the
+    /// session stops presenting it. A refused request is shown in the view.
+    CloseTab(HerdrTabId),
 }
 
 /// What the Warp sidebar shows for a Herdr workspace beyond its label.
@@ -770,6 +777,56 @@ impl HerdrWorkspaceView {
             },
         );
     }
+
+    /// Asks Herdr to rename `tab` to `label`. Nothing is renamed here: the label is shown once the
+    /// session presents it. A refused request is shown in the view.
+    fn rename_tab(&mut self, tab: &HerdrTabId, label: &str, ctx: &mut ViewContext<Self>) {
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.request_error =
+                Some("Could not rename the tab: no Herdr session is connected".to_owned());
+            ctx.notify();
+            return;
+        };
+        let what = RenameTarget::Tab(tab.clone());
+        let label = label.to_owned();
+        ctx.spawn(
+            async move { herdr_client::rename(&target, &what, &label) },
+            |me, result, ctx| me.finish_tab_request(result, "rename the tab", ctx),
+        );
+    }
+
+    /// Asks Herdr to close `tab`. Nothing is removed here: the tab leaves the view once the
+    /// session stops presenting it. A refused request is shown in the view.
+    fn close_tab(&mut self, tab: &HerdrTabId, ctx: &mut ViewContext<Self>) {
+        let Some(target) = HerdrSessionModel::as_ref(ctx).session_target() else {
+            self.request_error =
+                Some("Could not close the tab: no Herdr session is connected".to_owned());
+            ctx.notify();
+            return;
+        };
+        let tab = tab.clone();
+        ctx.spawn(
+            async move { herdr_client::close_tab(&target, &tab) },
+            |me, result, ctx| me.finish_tab_request(result, "close the tab", ctx),
+        );
+    }
+
+    /// Shows why Herdr refused a request to `action` a tab, or clears the last refusal.
+    fn finish_tab_request(
+        &mut self,
+        result: Result<(), ConnectionFailure>,
+        action: &str,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match result {
+            Ok(()) => self.request_error = None,
+            Err(failure) => {
+                log::error!("Could not {action}: {failure}");
+                self.request_error = Some(format!("Could not {action}: {failure}"));
+            }
+        }
+        ctx.notify();
+    }
 }
 
 impl Entity for HerdrWorkspaceView {
@@ -804,6 +861,8 @@ impl TypedActionView for HerdrWorkspaceView {
         match action {
             HerdrWorkspaceViewAction::CreateTab => self.create_tab(ctx),
             HerdrWorkspaceViewAction::ClosePane(pane) => self.close_pane(pane, ctx),
+            HerdrWorkspaceViewAction::RenameTab { tab, label } => self.rename_tab(tab, label, ctx),
+            HerdrWorkspaceViewAction::CloseTab(tab) => self.close_tab(tab, ctx),
             HerdrWorkspaceViewAction::Paste(pane) => {
                 let text = ctx
                     .clipboard()

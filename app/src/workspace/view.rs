@@ -3473,7 +3473,7 @@ impl Workspace {
             server_api,
             auth_state: AuthStateProvider::as_ref(ctx).get().clone(),
             server_time,
-            herdr_tab_bar: Default::default(),
+            herdr_tab_bar: herdr_tabs::HerdrTabBarState::new(ctx),
             herdr_session_picker: ctx.add_typed_action_view(crate::herdr::HerdrSessionPicker::new),
             tab_bar_overflow_menu,
             show_tab_bar_overflow_menu: false,
@@ -24076,6 +24076,11 @@ impl TypedActionView for Workspace {
             CreateHerdrTab => {
                 self.forward_to_herdr_workspace_view(HerdrWorkspaceViewAction::CreateTab, ctx)
             }
+            RenameHerdrTab(tab_id) => self.start_herdr_tab_rename(tab_id, ctx),
+            CloseHerdrTab(tab_id) => self.forward_to_herdr_workspace_view(
+                HerdrWorkspaceViewAction::CloseTab(tab_id.clone()),
+                ctx,
+            ),
             ToggleBlockSnackbar => self.toggle_block_snackbar(ctx),
             ToggleWelcomeTips => self.toggle_welcome_tips_visiblity(ctx),
             CloseTab(index) => self.close_tab(*index, false, true, ctx),

@@ -10,24 +10,29 @@ use herdr_client::{
 use warp_core::features::FeatureFlag;
 use warp_util::worktree_names::generate_worktree_branch_name;
 use warpui::elements::{
-    Align, Border, ChildView, Clipped, Container, Element, Expanded, Flex, Hoverable,
-    MouseStateHandle, ParentElement as _, Text,
+    Align, Border, ChildView, Clipped, ConstrainedBox, Container, CrossAxisAlignment, Element,
+    Empty, Expanded, Flex, Hoverable, MouseStateHandle, ParentElement as _, Text,
 };
 use warpui::platform::Cursor;
+use warpui::ui_components::components::UiComponent as _;
 use warpui::{
     AppContext, EntityId, SingletonEntity as _, TypedActionView as _, ViewContext, ViewHandle,
 };
 
 use super::Workspace;
+use super::vertical_tabs::render_inline_tab_rename_editor;
 use crate::app_state::{
     HerdrWorkspaceContents, HerdrWorkspaceSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot,
 };
 use crate::appearance::Appearance;
+use crate::editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions};
 use crate::herdr::repository_root::repository_root;
 use crate::herdr::{
     HerdrBarTab, HerdrSessionEvent, HerdrSessionModel, HerdrWorkspaceView, HerdrWorkspaceViewAction,
 };
 use crate::pane_group::PanesLayout;
+use crate::ui_components::buttons::icon_button;
+use crate::ui_components::icons::{ICON_DIMENSIONS, Icon};
 use crate::util::git::list_local_branches_sync;
 use crate::view_components::DismissibleToast;
 use crate::workspace::WorkspaceAction;
@@ -36,6 +41,8 @@ use crate::workspace::tab_group::TabGroup;
 const TAB_FONT_SIZE: f32 = 13.;
 const TAB_HORIZONTAL_PADDING: f32 = 12.;
 const TAB_VERTICAL_PADDING: f32 = 6.;
+const TAB_CLOSE_BUTTON_GAP: f32 = 6.;
+const RENAME_EDITOR_WIDTH: f32 = 140.;
 
 /// The repositories of the session's workspaces.
 pub(super) struct HerdrRepositories {
@@ -78,65 +85,173 @@ impl HerdrRepositories {
     }
 }
 
+/// The mouse states of one Herdr tab in the bar.
+#[derive(Clone, Default)]
+struct HerdrTabMouseStates {
+    tab: MouseStateHandle,
+    close: MouseStateHandle,
+}
+
 /// What the tab bar keeps between renders to draw the Herdr tabs it lists.
-#[derive(Default)]
 pub(super) struct HerdrTabBarState {
     /// Filled while rendering, because Herdr decides which tabs exist and `render` only has
     /// shared access to the workspace.
-    tab_mouse_states: RefCell<HashMap<HerdrTabId, MouseStateHandle>>,
+    tab_mouse_states: RefCell<HashMap<HerdrTabId, HerdrTabMouseStates>>,
     new_tab_mouse_state: MouseStateHandle,
+    /// The Herdr tab whose label is being edited.
+    renaming: Option<HerdrTabId>,
+    rename_editor: ViewHandle<EditorView>,
 }
 
 impl HerdrTabBarState {
+    pub(super) fn new(ctx: &mut ViewContext<Workspace>) -> Self {
+        let rename_editor = ctx.add_typed_action_view(|ctx| {
+            let options = SingleLineEditorOptions {
+                text: TextOptions::ui_text(Some(TAB_FONT_SIZE), Appearance::as_ref(ctx)),
+                ..Default::default()
+            };
+            EditorView::single_line(options, ctx)
+        });
+        ctx.subscribe_to_view(&rename_editor, |me, _, event, ctx| {
+            me.handle_herdr_tab_rename_editor_event(event, ctx);
+        });
+        Self {
+            tab_mouse_states: RefCell::default(),
+            new_tab_mouse_state: MouseStateHandle::default(),
+            renaming: None,
+            rename_editor,
+        }
+    }
+
     /// The Herdr tabs in a row, followed by the button that creates one.
-    fn render(&self, tabs: &[HerdrBarTab], appearance: &Appearance) -> Box<dyn Element> {
-        let theme = appearance.theme();
-        let mut mouse_states = self.tab_mouse_states.borrow_mut();
+    fn render(
+        &self,
+        tabs: &[HerdrBarTab],
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
         let tabs = tabs.iter().map(|tab| {
-            let is_shown = tab.is_shown;
-            let tab_id = tab.id.clone();
-            let mouse_state = mouse_states.entry(tab.id.clone()).or_default().clone();
-            Hoverable::new(mouse_state, |state| {
-                let background = if is_shown {
-                    theme.surface_2()
-                } else if state.is_hovered() {
-                    theme.surface_1()
-                } else {
-                    theme.background()
-                };
-                let text_color = if is_shown {
-                    theme.main_text_color(background)
-                } else {
-                    theme.sub_text_color(background)
-                };
-                let label = Text::new_inline(
-                    tab.label.clone(),
-                    appearance.ui_font_family(),
-                    TAB_FONT_SIZE,
-                )
-                .with_color(text_color.into())
-                .finish();
-                let underline = if is_shown {
-                    Border::bottom(2.).with_border_fill(theme.accent())
-                } else {
-                    Border::bottom(2.).with_border_fill(background)
-                };
-                Container::new(label)
-                    .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
-                    .with_vertical_padding(TAB_VERTICAL_PADDING)
-                    .with_background(background)
-                    .with_border(underline)
-                    .finish()
-            })
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::SelectHerdrTab(tab_id.clone()));
-            })
-            .with_cursor(Cursor::PointingHand)
-            .finish()
+            if self.renaming.as_ref() == Some(&tab.id) {
+                return self.render_rename_editor(appearance, app);
+            }
+            self.render_tab(tab, appearance)
         });
         Flex::row()
             .with_children(tabs)
             .with_child(self.render_new_tab_button(appearance))
+            .finish()
+    }
+
+    fn render_tab(&self, tab: &HerdrBarTab, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let is_shown = tab.is_shown;
+        let states = self
+            .tab_mouse_states
+            .borrow_mut()
+            .entry(tab.id.clone())
+            .or_default()
+            .clone();
+        let close_state = states.close.clone();
+        let close_state_for_rename = states.close.clone();
+        let select = WorkspaceAction::SelectHerdrTab(tab.id.clone());
+        let rename = WorkspaceAction::RenameHerdrTab(tab.id.clone());
+        Hoverable::new(states.tab, |state| {
+            let background = if is_shown {
+                theme.surface_2()
+            } else if state.is_hovered() {
+                theme.surface_1()
+            } else {
+                theme.background()
+            };
+            let text_color = if is_shown {
+                theme.main_text_color(background)
+            } else {
+                theme.sub_text_color(background)
+            };
+            let label = Text::new_inline(
+                tab.label.clone(),
+                appearance.ui_font_family(),
+                TAB_FONT_SIZE,
+            )
+            .with_color(text_color.into())
+            .finish();
+            let underline = if is_shown {
+                Border::bottom(2.).with_border_fill(theme.accent())
+            } else {
+                Border::bottom(2.).with_border_fill(background)
+            };
+            let row = Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(label)
+                .with_child(Self::render_close_slot(
+                    tab,
+                    states.close.clone(),
+                    state.is_hovered(),
+                    appearance,
+                ));
+            Container::new(row.finish())
+                .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+                .with_vertical_padding(TAB_VERTICAL_PADDING)
+                .with_background(background)
+                .with_border(underline)
+                .finish()
+        })
+        .on_click(move |ctx, _, _| {
+            if !close_state.lock().expect("lock acquired").is_hovered() {
+                ctx.dispatch_typed_action(select.clone());
+            }
+        })
+        .on_double_click(move |ctx, _, _| {
+            if !close_state_for_rename
+                .lock()
+                .expect("lock acquired")
+                .is_hovered()
+            {
+                ctx.dispatch_typed_action(rename.clone());
+            }
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+    }
+
+    /// The close button while the tab is hovered, and an empty slot of the same size otherwise
+    /// so that hovering does not move the tabs.
+    fn render_close_slot(
+        tab: &HerdrBarTab,
+        close_state: MouseStateHandle,
+        is_hovered: bool,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let button = if is_hovered {
+            let close = WorkspaceAction::CloseHerdrTab(tab.id.clone());
+            icon_button(appearance, Icon::X, false, close_state)
+                .build()
+                .on_click(move |ctx, _, _| ctx.dispatch_typed_action(close.clone()))
+                .finish()
+        } else {
+            Empty::new().finish()
+        };
+        Container::new(
+            ConstrainedBox::new(button)
+                .with_width(ICON_DIMENSIONS)
+                .with_height(ICON_DIMENSIONS)
+                .finish(),
+        )
+        .with_margin_left(TAB_CLOSE_BUTTON_GAP)
+        .finish()
+    }
+
+    fn render_rename_editor(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let editor = render_inline_tab_rename_editor(&self.rename_editor, appearance, app);
+        let editor = ConstrainedBox::new(editor)
+            .with_width(RENAME_EDITOR_WIDTH)
+            .finish();
+        Container::new(editor)
+            .with_horizontal_padding(TAB_HORIZONTAL_PADDING)
+            .with_vertical_padding(TAB_VERTICAL_PADDING)
+            .with_background(theme.surface_2())
+            .with_border(Border::bottom(2.).with_border_fill(theme.accent()))
             .finish()
     }
 
@@ -204,7 +319,7 @@ impl Workspace {
         if tabs.is_empty() {
             return None;
         }
-        let strip = self.herdr_tab_bar.render(&tabs, appearance);
+        let strip = self.herdr_tab_bar.render(&tabs, appearance, ctx);
         // Twice the weight of the header's search bar slot, so the tabs get most of the room the
         // toolbar buttons and the right-hand controls leave.
         Some(Expanded::new(2., Clipped::new(Align::new(strip).left().finish()).finish()).finish())
@@ -221,6 +336,74 @@ impl Workspace {
             return;
         };
         view.update(ctx, |view, ctx| view.handle_action(&action, ctx));
+    }
+
+    /// Opens the inline editor on the label of the Herdr tab `tab`. The label only changes once
+    /// Herdr presents it.
+    pub(super) fn start_herdr_tab_rename(&mut self, tab: &HerdrTabId, ctx: &mut ViewContext<Self>) {
+        let Some(label) = self
+            .herdr_bar_tabs(ctx)
+            .into_iter()
+            .find_map(|bar_tab| (bar_tab.id == *tab).then_some(bar_tab.label))
+        else {
+            return;
+        };
+        self.herdr_tab_bar.renaming = Some(tab.clone());
+        self.herdr_tab_bar.rename_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+            editor.insert_selected_text(&label, ctx);
+        });
+        ctx.focus(&self.herdr_tab_bar.rename_editor);
+        ctx.notify();
+    }
+
+    pub(super) fn handle_herdr_tab_rename_editor_event(
+        &mut self,
+        event: &EditorEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.herdr_tab_bar.renaming.is_none() {
+            return;
+        }
+        match event {
+            EditorEvent::Blurred | EditorEvent::Enter => self.finish_herdr_tab_rename(ctx),
+            EditorEvent::Escape => {
+                self.end_herdr_tab_rename(ctx);
+                self.focus_active_tab(ctx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Asks Herdr to rename the tab being edited, unless the label is blank or unchanged.
+    fn finish_herdr_tab_rename(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(tab) = self.end_herdr_tab_rename(ctx) else {
+            return;
+        };
+        let label = self
+            .herdr_tab_bar
+            .rename_editor
+            .as_ref(ctx)
+            .buffer_text(ctx);
+        let label = label.trim().to_owned();
+        let is_unchanged = self
+            .herdr_bar_tabs(ctx)
+            .iter()
+            .any(|bar_tab| bar_tab.id == tab && bar_tab.label == label);
+        if !label.is_empty() && !is_unchanged {
+            self.forward_to_herdr_workspace_view(
+                HerdrWorkspaceViewAction::RenameTab { tab, label },
+                ctx,
+            );
+        }
+    }
+
+    /// Closes the inline editor and returns the tab it was editing. The editor keeps its text
+    /// until the next rename starts.
+    fn end_herdr_tab_rename(&mut self, ctx: &mut ViewContext<Self>) -> Option<HerdrTabId> {
+        let tab = self.herdr_tab_bar.renaming.take();
+        ctx.notify();
+        tab
     }
 
     /// Shows the workspace whose tab is `pane_group_id`, closing the agent panel, with its Herdr
