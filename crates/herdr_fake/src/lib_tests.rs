@@ -1,5 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::process::Stdio;
+use std::time::Duration;
 
 use command::blocking::Command;
 use serde_json::{Value, json};
@@ -387,4 +389,35 @@ fn scripting_a_command_again_replaces_what_it_did_before() {
 
     assert_eq!(String::from_utf8_lossy(&output.stdout), "second\n");
     assert_eq!(output.status.code(), Some(3));
+}
+
+#[test]
+fn control_input_leaves_out_a_line_the_control_run_is_still_receiving() {
+    let mut fake = FakeHerdr::new();
+    fake.script_terminal_stream(StreamKind::Control, "w1:p1", [TerminalStreamScript::new()]);
+    let mut control = Command::new(fake.binary_path())
+        .args(["terminal", "session", "control", "w1:p1"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = control.stdin.take().unwrap();
+
+    // One write, so the recorder copies the whole line and the start of the next one together.
+    stdin
+        .write_all(b"{\"type\":\"terminal.input\",\"text\":\"a\"}\n{\"type\":\"term")
+        .unwrap();
+
+    let wanted = [json!({ "type": "terminal.input", "text": "a" })];
+    let mut input = Vec::new();
+    for _ in 0..1000 {
+        input = fake.control_input("w1:p1");
+        if input == wanted {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(input, wanted);
+    drop(stdin);
+    control.wait().unwrap();
 }
