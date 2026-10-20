@@ -155,12 +155,13 @@ impl ScriptedBinary {
     ///
     /// A child process writes it: a file this process held open for writing would be inherited by
     /// every child another thread spawns meanwhile, and running the script while any of them still
-    /// had it open fails with "text file busy".
+    /// had it open fails with "text file busy". The tools are named by absolute path because tests
+    /// elsewhere in the process change `PATH` while this runs.
     fn write_script(&self) {
         let dir = self.dir();
         let staged = dir.join("herdr.staged");
         let mut writer = Command::new("/bin/sh")
-            .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .args(["-c", "/bin/cat > \"$1\" && /bin/chmod 755 \"$1\"", "sh"])
             .arg(&staged)
             .stdin(Stdio::piped())
             .spawn()
