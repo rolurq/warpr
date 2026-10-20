@@ -1774,3 +1774,60 @@ mod vertical_tabs_rows {
         });
     }
 }
+
+#[test]
+fn pane_actions_on_a_herdr_workspace_go_to_herdr_and_never_add_a_warp_pane() {
+    use crate::pane_group::{Direction, PaneGroupAction};
+
+    App::test((), |mut app| async move {
+        initialize_app_without_herdr(&mut app);
+        let fake = fake_with(HerdrStatus::compatible());
+        let split = PaneTree::split(
+            herdr_fake::SplitDirection::Right,
+            0.5,
+            PaneTree::pane(),
+            PaneTree::pane(),
+        );
+        let session = fake.start_session(
+            "default",
+            SessionScript::new().workspace_with_tabs("api", [TabScript::new("1", split)]),
+        );
+        connect_to(&mut app, &fake, "default");
+        let workspace = mock_workspace(&mut app);
+        assert_eventually!(
+            600 => tab_titles(&app, &workspace) == ["api"],
+            "tabs were {:?}", tab_titles(&app, &workspace)
+        );
+        let pane_group = workspace.read(&app, |workspace, _| {
+            workspace.active_tab_pane_group().clone()
+        });
+        let requests = |method: &str| {
+            session
+                .served_methods()
+                .iter()
+                .filter(|served| served.as_str() == method)
+                .count()
+        };
+
+        pane_group.update(&mut app, |pane_group, ctx| {
+            for action in [
+                PaneGroupAction::Add(Direction::Left),
+                PaneGroupAction::Add(Direction::Up),
+                PaneGroupAction::Add(Direction::Right),
+                PaneGroupAction::ResizeLeft,
+                PaneGroupAction::ToggleMaximizePane,
+            ] {
+                pane_group.handle_action(&action, ctx);
+            }
+        });
+
+        assert_eventually!(
+            600 => requests("pane.split") == 1 && requests("pane.resize") == 1 && requests("pane.zoom") == 1,
+            "Herdr was asked {:?}", session.served_methods()
+        );
+        pane_group.read(&app, |pane_group, ctx| {
+            assert_eq!(pane_group.pane_count(), 1, "a Warp pane was added");
+            assert!(!pane_group.is_focused_pane_maximized(ctx));
+        });
+    });
+}

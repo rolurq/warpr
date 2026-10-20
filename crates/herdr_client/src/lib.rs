@@ -10,6 +10,7 @@
 //! consulted.
 
 mod agents;
+mod arrange;
 mod attention;
 mod cli;
 mod close;
@@ -46,6 +47,7 @@ mod worktree;
 use std::time::Duration;
 
 pub use agents::{AgentJump, AgentLocation, AgentState, PresentedAgent, PresentedAgents};
+pub use arrange::{PaneDirection, SplitDirection, resize_pane, set_pane_zoom, split_pane};
 pub use attention::{AgentAttention, AttentionChanges};
 pub use cli::{HERDR_BINARY_ENV, HerdrCli};
 pub use close::{close_pane, close_tab};

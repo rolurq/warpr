@@ -1037,6 +1037,12 @@ pub enum FeatureFlag {
     /// warpr kill switch: when enabled, warpr does not offer to start local shell sessions, which
     /// belong to Herdr.
     DisableLocalSessions,
+
+    /// warpr kill switch: when enabled, Warp does not offer the pane actions that would lay out
+    /// panes itself where Herdr has no request for them: splitting a pane left or up, the split
+    /// and maximize items of Warp's own pane menus, and dragging a pane header to rearrange,
+    /// move or detach panes. Herdr owns the layout.
+    DisableLocalPaneLayout,
 }
 
 static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =

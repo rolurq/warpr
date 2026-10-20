@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use herdr_fake::{FakeHerdr, HerdrStatus, PaneTree, SessionScript, SplitDirection, TabScript};
 
 use crate::{
-    CellRect, ConnectionStatus, HerdrCli, HerdrTabId, PaneId, PresentedHerdrTab, PresentedSession,
-    SessionName, SessionTarget, present_session,
+    CellRect, ConnectionStatus, HerdrCli, HerdrTabId, PaneDirection, PaneId, PaneLayout,
+    PresentedHerdrTab, PresentedPane, PresentedSession, SessionName, SessionTarget,
+    present_session,
 };
 
 fn compatible_fake() -> FakeHerdr {
@@ -509,4 +510,125 @@ fn a_zoomed_pane_keeps_its_title() {
         .as_ref()
         .unwrap();
     assert_eq!(layout.frames()[0].title.as_deref(), Some("htop"));
+}
+
+/// A layout of the panes `(id, rect)` in that order in a 120×40 area, focused on the first.
+fn layout_of(panes: &[(&str, CellRect)], zoomed: bool) -> PaneLayout {
+    PaneLayout {
+        area: rect(0, 0, 120, 40),
+        panes: panes
+            .iter()
+            .enumerate()
+            .map(|(index, (id, rect))| PresentedPane {
+                id: PaneId::from(*id),
+                rect: *rect,
+                focused: index == 0,
+                cwd: None,
+                name: None,
+                title: None,
+            })
+            .collect(),
+        zoomed,
+        focused_pane: PaneId::from(panes[0].0),
+    }
+}
+
+fn neighbor(layout: &PaneLayout, pane: &str, direction: PaneDirection) -> Option<String> {
+    layout
+        .neighbor(&PaneId::from(pane), direction)
+        .map(|pane| pane.id.as_str().to_owned())
+}
+
+#[test]
+fn a_neighbor_is_the_pane_level_with_it_across_the_shared_edge() {
+    let layout = layout_of(
+        &[
+            ("w1:p1", rect(0, 0, 36, 40)),
+            ("w1:p2", rect(36, 0, 84, 20)),
+            ("w1:p3", rect(36, 20, 84, 20)),
+        ],
+        false,
+    );
+
+    assert_eq!(
+        neighbor(&layout, "w1:p3", PaneDirection::Left).as_deref(),
+        Some("w1:p1")
+    );
+    assert_eq!(
+        neighbor(&layout, "w1:p2", PaneDirection::Down).as_deref(),
+        Some("w1:p3")
+    );
+    assert_eq!(
+        neighbor(&layout, "w1:p3", PaneDirection::Up).as_deref(),
+        Some("w1:p2")
+    );
+    assert_eq!(
+        neighbor(&layout, "w1:p1", PaneDirection::Right).as_deref(),
+        Some("w1:p2"),
+        "two panes as near: the first in Herdr's order"
+    );
+    assert_eq!(neighbor(&layout, "w1:p1", PaneDirection::Left), None);
+    assert_eq!(neighbor(&layout, "w1:p2", PaneDirection::Up), None);
+}
+
+#[test]
+fn of_panes_as_near_the_one_sharing_more_of_the_edge_wins_over_herdrs_order() {
+    let layout = layout_of(
+        &[
+            ("w1:p2", rect(0, 30, 60, 10)),
+            ("w1:p1", rect(0, 0, 60, 30)),
+            ("w1:p3", rect(60, 0, 60, 40)),
+        ],
+        false,
+    );
+
+    assert_eq!(
+        neighbor(&layout, "w1:p3", PaneDirection::Left).as_deref(),
+        Some("w1:p1")
+    );
+}
+
+#[test]
+fn the_nearer_pane_wins_and_a_pane_beside_but_not_level_is_no_neighbor() {
+    let layout = layout_of(
+        &[
+            ("w1:p1", rect(0, 0, 40, 20)),
+            ("w1:p2", rect(40, 0, 40, 20)),
+            ("w1:p3", rect(80, 0, 40, 40)),
+            ("w1:p4", rect(0, 20, 80, 20)),
+        ],
+        false,
+    );
+
+    assert_eq!(
+        neighbor(&layout, "w1:p1", PaneDirection::Right).as_deref(),
+        Some("w1:p2")
+    );
+    assert_eq!(
+        neighbor(&layout, "w1:p4", PaneDirection::Up).as_deref(),
+        Some("w1:p1")
+    );
+    assert_eq!(
+        neighbor(&layout, "w1:p2", PaneDirection::Down).as_deref(),
+        Some("w1:p4"),
+    );
+    assert_eq!(
+        neighbor(&layout, "w1:p3", PaneDirection::Down),
+        None,
+        "w1:p4 is below the area but not below w1:p3"
+    );
+}
+
+#[test]
+fn a_zoomed_layout_has_no_neighbors_and_a_pane_not_drawn_has_none() {
+    let layout = layout_of(
+        &[
+            ("w1:p1", rect(0, 0, 60, 40)),
+            ("w1:p2", rect(60, 0, 60, 40)),
+        ],
+        true,
+    );
+
+    assert_eq!(neighbor(&layout, "w1:p1", PaneDirection::Right), None);
+    assert_eq!(neighbor(&layout, "w1:p2", PaneDirection::Left), None);
 }

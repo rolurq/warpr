@@ -201,6 +201,8 @@ impl StreamRuns {
 }
 
 /// The lines `terminal session control` runs of command `index` received on stdin, oldest first.
+///
+/// The recorder copies stdin as it arrives, so a line the run is still receiving is left out.
 pub(crate) fn recorded_input(dir: &Path, index: usize) -> Vec<serde_json::Value> {
     let streams = dir.join("streams");
     let runs: usize = std::fs::read_to_string(streams.join(format!("{index}.runs")))
@@ -211,7 +213,8 @@ pub(crate) fn recorded_input(dir: &Path, index: usize) -> Vec<serde_json::Value>
         .flat_map(|run| {
             std::fs::read_to_string(streams.join(format!("{index}.{run}.stdin")))
                 .unwrap_or_default()
-                .lines()
+                .split_inclusive('\n')
+                .filter_map(|line| line.strip_suffix('\n'))
                 .filter(|line| !line.trim().is_empty())
                 .map(|line| serde_json::from_str(line).expect("recorded input is JSON"))
                 .collect::<Vec<_>>()

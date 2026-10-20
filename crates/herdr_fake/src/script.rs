@@ -81,6 +81,61 @@ impl PaneTree {
             }
         }
     }
+
+    /// The tree with its pane at `index` in tree order split in half along `direction`: the pane
+    /// keeps the first half and a new pane, next in tree order, takes the second.
+    fn with_split(self, index: usize, direction: SplitDirection) -> PaneTree {
+        match self {
+            Self::Pane => Self::split(direction, 0.5, Self::Pane, Self::Pane),
+            Self::Split {
+                direction: own,
+                ratio,
+                first,
+                second,
+            } => {
+                let first_count = first.pane_count();
+                if index < first_count {
+                    Self::split(own, ratio, first.with_split(index, direction), *second)
+                } else {
+                    Self::split(
+                        own,
+                        ratio,
+                        *first,
+                        second.with_split(index - first_count, direction),
+                    )
+                }
+            }
+        }
+    }
+
+    /// Moves the divider of the innermost split along `direction` that holds the pane at `index`
+    /// in tree order by `step` of the split's extent, keeping a tenth of it on each side. Returns
+    /// `false` when no such split holds the pane.
+    fn move_divider(&mut self, index: usize, direction: SplitDirection, step: f32) -> bool {
+        let Self::Split {
+            direction: own,
+            ratio,
+            first,
+            second,
+        } = self
+        else {
+            return false;
+        };
+        let first_count = first.pane_count();
+        let moved_inside = if index < first_count {
+            first.move_divider(index, direction, step)
+        } else {
+            second.move_divider(index - first_count, direction, step)
+        };
+        if moved_inside {
+            return true;
+        }
+        if *own != direction {
+            return false;
+        }
+        *ratio = (*ratio + step).clamp(0.1, 0.9);
+        true
+    }
 }
 
 /// An agent state as Herdr reports it.
@@ -233,6 +288,41 @@ impl TabScript {
         true
     }
 
+    /// Splits the pane at `index` as `pane.split` does without `focus`: the new pane, numbered
+    /// `number`, follows it in the tree's order with nothing reported for it but defaults, the
+    /// focus stays on its pane and the tab is unzoomed.
+    fn split_pane(&mut self, index: usize, direction: SplitDirection, number: usize) {
+        let tree = std::mem::replace(&mut self.tree, PaneTree::Pane);
+        self.tree = tree.with_split(index, direction);
+        let new = index + 1;
+        make_room(&mut self.agents, new);
+        make_room(&mut self.cwds, new);
+        make_room(&mut self.pane_labels, new);
+        make_room(&mut self.terminal_titles, new);
+        self.pane_numbers.insert(new, number);
+        if self.focused_pane >= new {
+            self.focused_pane += 1;
+        }
+        self.zoomed = false;
+    }
+
+    /// Zooms the pane at `index` and focuses it, or unzooms the tab, as `pane.zoom` does; `None`
+    /// toggles. A tab's only pane is focused but never zoomed.
+    fn set_zoom(&mut self, index: usize, zoomed: Option<bool>) -> ZoomChange {
+        let wanted = zoomed.unwrap_or(!self.zoomed);
+        let focus_changed = wanted && self.focused_pane != index;
+        if wanted {
+            self.focused_pane = index;
+        }
+        let was_zoomed = self.zoomed;
+        self.zoomed = wanted && self.tree.pane_count() > 1;
+        ZoomChange {
+            zoomed: self.zoomed,
+            zoom_changed: self.zoomed != was_zoomed,
+            focus_changed,
+        }
+    }
+
     /// Puts `agent` in the pane at `index` in the tree's order, replacing any agent there.
     pub fn agent(mut self, index: usize, agent: AgentScript) -> Self {
         assert!(
@@ -352,24 +442,19 @@ impl WorkspaceScript {
             .collect()
     }
 
-    /// Closes the pane numbered `number`, as `pane.close` does: the Herdr tab goes with its only
-    /// pane, and the workspace is left with no tabs when that was its last one. Returns `false`
-    /// when the workspace has no such pane.
-    pub(crate) fn close_pane(&mut self, number: usize) -> bool {
+    /// Where the pane numbered `number` is: the index of its tab and its index in that tab's tree
+    /// order. Finding it fixes every pane's number, as the first change to a workspace's panes
+    /// does in Herdr, so that later changes renumber nothing.
+    fn locate_pane(&mut self, number: usize) -> Option<(usize, usize)> {
         let numbers = self.pane_numbers();
-        let Some((tab_index, pane_index)) = numbers.iter().enumerate().find_map(|(tab, panes)| {
+        let location = numbers.iter().enumerate().find_map(|(tab, panes)| {
             Some((
                 tab,
                 panes.iter().position(|candidate| *candidate == number)?,
             ))
-        }) else {
-            return false;
-        };
+        })?;
         self.pin_pane_numbers();
-        if !self.tabs[tab_index].close_pane(pane_index) {
-            self.remove_tab(tab_index);
-        }
-        true
+        Some(location)
     }
 
     /// The Herdr tab number of each tab, in tab order.
@@ -400,6 +485,19 @@ impl WorkspaceScript {
         }
     }
 
+    /// Closes the pane numbered `number`, as `pane.close` does: the Herdr tab goes with its only
+    /// pane, and the workspace is left with no tabs when that was its last one. Returns `false`
+    /// when the workspace has no such pane.
+    pub(crate) fn close_pane(&mut self, number: usize) -> bool {
+        let Some((tab_index, pane_index)) = self.locate_pane(number) else {
+            return false;
+        };
+        if !self.tabs[tab_index].close_pane(pane_index) {
+            self.remove_tab(tab_index);
+        }
+        true
+    }
+
     /// Takes the tab at `index` out of the workspace, leaving the others their numbers and the
     /// numbers of their panes.
     fn remove_tab(&mut self, index: usize) {
@@ -416,6 +514,22 @@ impl WorkspaceScript {
             self.active_tab_label = None;
         }
     }
+
+    /// Splits the pane numbered `number` as `pane.split` does and returns the number of the new
+    /// pane, or `None` when the workspace has no such pane.
+    fn split_pane(&mut self, number: usize, direction: SplitDirection) -> Option<usize> {
+        let (tab_index, pane_index) = self.locate_pane(number)?;
+        self.highest_pane_number += 1;
+        let new = self.highest_pane_number;
+        self.tabs[tab_index].split_pane(pane_index, direction, new);
+        Some(new)
+    }
+
+    /// The tab holding the pane numbered `number`, and that pane's index in its tree order.
+    fn tab_of_pane(&mut self, number: usize) -> Option<(&mut TabScript, usize)> {
+        let (tab_index, pane_index) = self.locate_pane(number)?;
+        Some((&mut self.tabs[tab_index], pane_index))
+    }
 }
 
 /// Drops the entry for the pane at `removed` and moves those of the panes after it up by one.
@@ -426,6 +540,23 @@ fn shift_entries<T>(entries: &mut Vec<(usize, T)>, removed: usize) {
             *index -= 1;
         }
     }
+}
+
+/// Moves the entries of the pane at `inserted` and of those after it down by one, freeing
+/// `inserted` for a new pane.
+fn make_room<T>(entries: &mut [(usize, T)], inserted: usize) {
+    for (index, _) in entries.iter_mut() {
+        if *index >= inserted {
+            *index += 1;
+        }
+    }
+}
+
+/// How `pane.zoom` changed a Herdr tab.
+pub(crate) struct ZoomChange {
+    pub(crate) zoomed: bool,
+    pub(crate) zoom_changed: bool,
+    pub(crate) focus_changed: bool,
 }
 
 /// What a [`crate::FakeSession`] reports about its Herdr session.
@@ -673,17 +804,13 @@ impl SessionScript {
     /// Closes the pane `pane_id` as `pane.close` does and returns the id of its workspace, or
     /// `None` when there is no such pane. A workspace left with no panes goes too.
     pub(crate) fn close_pane(&mut self, pane_id: &str) -> Option<String> {
-        let (workspace_id, number) = pane_id.split_once(":p")?;
-        let number = number.parse().ok()?;
-        let index = self
-            .workspaces
-            .iter()
-            .position(|workspace| format!("w{}", workspace.id) == workspace_id)?;
+        let (index, number) = self.workspace_of_pane(pane_id)?;
         if !self.workspaces[index].close_pane(number) {
             return None;
         }
+        let workspace_id = format!("w{}", self.workspaces[index].id);
         self.drop_workspace_if_empty(index);
-        Some(workspace_id.to_owned())
+        Some(workspace_id)
     }
 
     /// The workspace and tab index of the Herdr tab `tab_id`, with the id of its workspace.
@@ -731,6 +858,53 @@ impl SessionScript {
                 self.focused_label = None;
             }
         }
+    }
+
+    /// Splits the pane `pane_id` as `pane.split` does without `focus` and returns the id of the
+    /// new pane, or `None` when there is no such pane.
+    pub(crate) fn split_pane(
+        &mut self,
+        pane_id: &str,
+        direction: SplitDirection,
+    ) -> Option<String> {
+        let (index, number) = self.workspace_of_pane(pane_id)?;
+        let workspace = &mut self.workspaces[index];
+        let new = workspace.split_pane(number, direction)?;
+        Some(format!("w{}:p{new}", workspace.id))
+    }
+
+    /// Zooms the pane `pane_id` or unzooms its tab as `pane.zoom` does, toggling for `None`.
+    /// `None` when there is no such pane.
+    pub(crate) fn zoom_pane(&mut self, pane_id: &str, zoomed: Option<bool>) -> Option<ZoomChange> {
+        let (index, number) = self.workspace_of_pane(pane_id)?;
+        let (tab, pane_index) = self.workspaces[index].tab_of_pane(number)?;
+        Some(tab.set_zoom(pane_index, zoomed))
+    }
+
+    /// Moves the divider of the innermost split along `direction` around the pane `pane_id` by
+    /// `step`, as `pane.resize` does, and returns whether there was one. `None` when there is no
+    /// such pane.
+    pub(crate) fn move_divider(
+        &mut self,
+        pane_id: &str,
+        direction: SplitDirection,
+        step: f32,
+    ) -> Option<bool> {
+        let (index, number) = self.workspace_of_pane(pane_id)?;
+        let (tab, pane_index) = self.workspaces[index].tab_of_pane(number)?;
+        Some(tab.tree.move_divider(pane_index, direction, step))
+    }
+
+    /// The index of the workspace a pane id names, and the pane's number within it. The pane may
+    /// not exist.
+    fn workspace_of_pane(&self, pane_id: &str) -> Option<(usize, usize)> {
+        let (workspace_id, number) = pane_id.split_once(":p")?;
+        let number = number.parse().ok()?;
+        let index = self
+            .workspaces
+            .iter()
+            .position(|workspace| format!("w{}", workspace.id) == workspace_id)?;
+        Some((index, number))
     }
 
     fn focused_index(&self) -> Option<usize> {
